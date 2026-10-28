@@ -1,7 +1,8 @@
 <Solution>
   <Configurations>
     <Platform Name="x64" />
-    <Platform Name="x86" />
   </Configurations>
-  <Project Path="DUI.vcxproj" Id="99107d7a-9262-4878-b843-6a4ddb9dd0c9" />
+  <Project Path="DUI/DUI.vcxproj" Id="99107d7a-9262-4878-b843-6a4ddb9dd0c9" />
+  <Project Path="Samples/Samples.vcxproj" Id="7c3f1e52-9a4b-4c8d-9e6a-2b5d8f10a3c7" />
+  <Project Path="Samples/ListSelect.vcxproj" Id="a4d9c6b1-3f2e-4b8a-9c51-7e0d2f6a8b34" />
 </Solution>

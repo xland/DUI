@@ -19,11 +19,11 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ 
 | 模块 | 职责 |
 | --- | --- |
 | Memory | Arena、Pool/Slab、对象池；热路径分配入口 |
-| Containers | 侵入式链表、小容量向量、开放寻址哈希表（替代 STL 时提供） |
-| String | UTF-8 / UTF-16 视图与转换、SSO 字符串 |
+| Containers | 内核内部用的侵入式链表、小容量向量、开放寻址哈希表（**公开 API 边界用标准库容器/字符串视图**，见 ADR-007） |
+| String | UTF-16 为主（SSO），UTF-8 视图与转换只用于外部边界（ADR-026） |
 | Math | Vec2、Rect、Mat3x2、Color（预乘 alpha） |
 | Log / Assert | 日志与断言，Release 下可整体编译掉 |
-| Ref | 引用计数与作用域句柄（是否用原子计数见 ADR-007） |
+| Ref | 非原子引用计数与作用域句柄；可引用对象仅 UI 线程持有（ADR-025） |
 | Time | 时间戳、计时器、动画时钟基础 |
 
 ### Platform（Win32）
@@ -33,10 +33,11 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ 
 | Window | HWND 封装、窗口样式、创建/销毁 |
 | MessageLoop | 消息泵、消息翻译与分发 |
 | Input | 鼠标/键盘/触摸/触控笔 → 归一化输入事件 |
-| Dpi | 显示器信息、DPI 变化、缩放换算 |
+| Dpi | 显示器信息、DPI 变化、DIP↔像素换算（见 [12-Windowing.md](./12-Windowing.md)） |
 | Ime | 输入法候选窗定位与组合串处理 |
 | Clipboard / DragDrop | 剪贴板与拖放 |
 | Cursor | 光标资源管理 |
+| Threading | 后台线程池、Dispatcher 任务队列、UI 线程回投（见 [07-Threading.md](./07-Threading.md)） |
 
 ### Graphics（Direct3D 11 + DXGI）
 
@@ -59,17 +60,18 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ 
 | Layout | 段落排版、度量、命中测试（文本坐标 ↔ 字符索引） |
 | Raster | 字形光栅化（方案见 ADR-003） |
 | GlyphAtlas | 字形缓存与淘汰策略 |
+| RichText | 富文本文档模型：属性区间、内联对象、序列化（见 [11-Text.md](./11-Text.md)） |
 
 ### UI
 
 | 模块 | 职责 |
 | --- | --- |
 | Element | 元素树（父子关系、Z 序、可见性、裁剪） |
-| Layout | 布局算法（见 ADR-005 / ADR-006） |
-| Style | 样式解析与继承、主题 |
-| Event | 事件路由、命中测试、焦点、键盘导航 |
+| Layout | 布局算法（Flex 子集 + Grid + 绝对定位，HTML 风格语义见 ADR-005 / ADR-006 / [04-Layout.md](./04-Layout.md)） |
+| Style | 样式属性表、级联解析、共享与派生、主题（见 [03-Style.md](./03-Style.md)） |
+| Event | 事件路由、命中测试、焦点、键盘导航、处理器绑定（见 [06-Events.md](./06-Events.md)） |
 | Invalidate | 脏区标记与合并、重绘调度 |
-| Animation | 属性动画、缓动、合成器驱动 |
+| Animation | 过渡与关键帧动画、缓动、时序引擎（合成器级为 P2，见 [05-Animation.md](./05-Animation.md)） |
 | Widgets | 具体控件实现（可裁剪） |
 
 ### App
@@ -77,21 +79,25 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ 
 | 模块 | 职责 |
 | --- | --- |
 | Application | 进程级初始化、全局资源、退出流程 |
-| Theme | 默认主题与资源（颜色、字号、图标） |
-| HighWindow | 高层窗口封装（组合 Platform.Window + UI + Graphics） |
+| Theme | 默认主题与资源（颜色、字号、图标），属性默认值兜底（见 [03-Style.md](./03-Style.md)） |
+| HighWindow | 高层窗口基类（组合 Platform.Window + UI + Graphics；派生类重写 `OnCreate` / `OnDpiChanged`，见 [12-Windowing.md](./12-Windowing.md) §6） |
 
 ## 3. 一帧的生命周期
 
 ```
+[调度]  排空 UI Dispatcher 队列（后台完成回投的任务，见 [07-Threading.md](./07-Threading.md)）
+   ↓
 [输入]  Win32 消息 → 归一化输入事件
    ↓
 [分发]  命中测试 → 事件沿元素树冒泡/隧道 → 处理器
+   ↓
+[动画]  推进活动动画 → 写入动画值槽（级联最高层）→ 按属性标志标脏
    ↓
 [失效]  处理器修改状态 → 标记脏元素 / 脏矩形
    ↓
 [布局]  仅对受影响的脏子树做 Layout（自底向上度量，自顶向下排列）
    ↓
-[收集]  遍历脏区域内的元素 → 生成绘制指令（显示列表）
+[收集]  有脏区/动画 → Arena 重置 → 重建整帧显示列表（遍历可见树；见 10-Rendering §3）
    ↓
 [光栅]  指令排序 → 批合并 → 顶点生成 → 提交 Draw Call
    ↓

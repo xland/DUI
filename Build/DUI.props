@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    DUI 公共编译基线（ADR-007 / 008 / 009 / 015 / 016）
+    库工程与示例工程共同 import，避免选项漂移 —— 尤其 /MT 与 /MD 混用会触发 LNK2038。
+
+    使用方式（各工程内，位于 Microsoft.Cpp.props 之后）：
+      <Import Project="..\Build\DUI.props" />
+  -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <!-- 同目录多工程共享 $(IntDir) 时避免 vc14x.pdb 写入冲突 -->
+      <ProgramDataBaseFileName>$(IntDir)$(ProjectName).pdb</ProgramDataBaseFileName>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <!-- /EHs-c-：异常关闭（ADR-007 已定） -->
+      <ExceptionHandling>false</ExceptionHandling>
+      <!-- /GR-：RTTI 关闭（ADR-007 草案，暂按关闭执行） -->
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <!-- 静态 CRT（ADR-008 已定）：Debug 用 /MTd，Release 用 /MT -->
+      <RuntimeLibrary Condition="'$(Configuration)' == 'Debug'">MultiThreadedDebug</RuntimeLibrary>
+      <RuntimeLibrary Condition="'$(Configuration)' == 'Release'">MultiThreaded</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <!-- 源码统一 UTF-8 -->
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <!-- 精简 Win32 头 + 禁止 min/max 宏 -->
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+</Project>

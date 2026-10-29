@@ -256,14 +256,16 @@ for (int i = 0; i < n; ++i) {
 ### 6.3 读取（自定义绘制钩子，对应 ADR-018 定制点 2）
 
 ```cpp
-void MyWidget::OnPaint(Painter& p, const StyleContext& s) const {
-    p.RoundedRect(Bounds(),
-                  s.Get<Prop::CornerRadius>(),
-                  s.Get<Prop::BackgroundColor>());
+// 真实签名（已落地，Element/UI.h）：收集期在背景之后、子元素之前调用
+void MyWidget::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) {
+    const StyleValue radius = ResolveProperty(this, Prop::CornerRadius, ctx);
+    p.FillRoundedRect(Bounds(), radius.f, ResolveProperty(this, Prop::BackgroundColor, ctx).u, 1.f, scale);
 }
 ```
 
-`s.Get<Prop::X>()` 为编译期模板，返回类型由属性表萃取 —— 类型安全且不依赖 RTTI。
+- `Painter` 的指令收 **DIP 坐标 + scale**（内部换算物理像素）；形状指令另走 SDF 批。
+- 钩子默认空实现，普通元素不参与；`Canvas` 控件即基于此钩子实现（见 `UI/Canvas.h`）。
+- 属性读取走 `ResolveProperty(element, prop, ctx)`（遍历内完整解析）；`StyleContext` 已携带继承态。
 
 **遍历外**（事件处理器、命中测试、动画器）：
 

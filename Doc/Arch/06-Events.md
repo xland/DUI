@@ -101,7 +101,8 @@ class Handler {                            // 16 B：fn 指针 + ctx 指针
 
 ```cpp
 struct EventBase {
-    Element* source;      // 命中目标
+    Element* source;      // 处理器宿主：冒泡路由中当前收到事件的元素（M3 起按此实现——
+                          // 点击落在子元素上时，source 是绑定处理器并收到事件的祖先）
     bool     handled;     // 处理器可置 true 终止后续路由
     uint64_t timestamp;
 };

@@ -81,31 +81,37 @@
 ## 6. 当前工程状态
 
 ```
-DUI.slnx                 解决方案：x64 单一平台，三个工程
+DUI.slnx                 解决方案：x64 单一平台，四个工程
 DUI/                     库工程（DUI.vcxproj，静态库）
   DUI.h                  公共入口（业务代码唯一 include）
   Core/                  Result、String/Color/Rect/Thickness、协程 Task（M1 骨架）
-  UI/                    Element、Style/StyleBuilder、Panel/Text/Button/ScrollView、事件（M1 骨架）
+  UI/                    Element、Style/StyleBuilder、Panel/Text/Button/ScrollView/Canvas、事件（M1 骨架）
   App/                   Application、Window/WindowOptions（M1 骨架）
-Samples/                 示例工程（控制台子系统，每个示例一个工程）
-  main.cpp               三栏阅读器示例（Samples.vcxproj）—— 目标 API 的可执行规格
-  ListSelect.cpp         单选列表示例（ListSelect.vcxproj）
-Build/DUI.props          公共编译基线（库与示例共同 import）
+  Platform/              NativeWindow（HWND 封装、窗口过程、DPI 感知清单）（M2）
+  Graphics/              Device（D3D11/Flip Model/BGRA8）+ Painter（SDF 圆角矩形 + 字形批 + 形状批）（M3/M5）
+  Text/                  DWrite 排版 + GlyphAtlas 灰度图集（M5）
+Samples/                 示例工程（每个示例一个子目录 = 一个工程）
+  HelloWorld/            最小示例：窗口正中一行“你好，World”
+  LayoutFlex/            Flex 布局能力演示（grow/shrink/对齐/gap/嵌套）
+  Canvas/                2D 绘图控件演示（直线/折线/多边形/矩形/圆角矩形/圆/椭圆/圆弧）
+Build/                   产物根：Build\<工程>\<配置>\ 最终产物；Build\Temp\<工程>\<配置>\ 中间产物
+DUI.props                公共编译基线（库与子工程共同 import，根目录）
 Doc/Arch/                本文档集
 ```
 
-**里程碑 1 已完成（M1：API 骨架冻结）**：文档定案的 API 已落成可编译的代码骨架，
-两个示例编译 / 链接 / 运行通过（Debug + Release），编译器成为 API 规格的第一道校验。
-`Application::Run` 当前打印提示后返回 0。
+**里程碑 1–4 已完成**（M1 API 骨架；M2 窗口/消息循环/PMv2 清单；M3 样式级联 + Flex +
+D3D11 矩形渲染 + 最小输入；M4 Dispatcher + 线程池 + 真协程 + Click 阈值合成）。
+示例界面按样式真实呈现（圆角矩形、hover/selected 状态切换、点击命中），
+异步加载经真实线程池回投，空闲时零 CPU（按需渲染 + WaitMessage）。
 
 后续里程碑（每个里程碑不改变既有签名，只填实现）：
 
 | 里程碑 | 内容 | 对应文档 |
 | --- | --- | --- |
-| M2 | Platform.Window（HWND）+ 消息循环 + 交换链 + OnCreate/Show 时序 | 12-Windowing |
-| M3 | 样式解析（级联/状态优先级）+ Flex 布局 + 失效标脏 + 矩形绘制 | 03-Style / 04-Layout / 10-Rendering |
-| M4 | Dispatcher + 线程池 + 协程真实异步 + 输入命中/路由 | 06-Events / 07-Threading |
-| M5 | DirectWrite 文本 + 字形图集 + DPI 切换全流程 | 11-Text / 12-Windowing |
+| M2 | ✅ Platform.Window（HWND）+ 消息循环 + OnCreate/Show 时序（交换链归 M3） | 12-Windowing |
+| M3 | ✅ 样式解析（级联/状态优先级）+ Flex 布局 + 失效标脏 + 矩形绘制 | 03-Style / 04-Layout / 10-Rendering |
+| M4 | ✅ Dispatcher + 线程池 + 协程真实异步 + 输入命中/路由（隧道部分顺延，见 Todo M4 偏差 2） | 06-Events / 07-Threading |
+| M5 | ✅ DirectWrite 文本（shape/layout/raster + 灰度图集）+ DPI 切换分级失效（完整字形重光栅随窗口 DPI 走，见 Todo M5） | 11-Text / 12-Windowing |
 | M6 | 过渡动画 + 观测指标 | 05-Animation / 10-Rendering |
 
 编译基线**已落地并验证**（Debug/Release 均可构建，产物 `DUI.lib`）：

@@ -9,17 +9,25 @@
 //    · 无边框/自定义标题栏 = 构造里换 Chrome + OnCreate 里加标题栏
 //      （12-Windowing §6）。
 //
-//  M1 骨架：Run 返回 0 并打印提示；M2 落地 Platform.Window + 消息循环 +
-//  交换链，M5 落地 OnDpiChanged 完整流程。
+//  M1 骨架已被 M2 替换：Platform.Window（HWND）+ 消息循环已落地；M5 落地
+//  OnDpiChanged 完整流程（交换链重建 / 字形重光栅）。
 // ============================================================================
 
 #pragma once
 
 #include <memory>
 
+#include "Core/Dispatcher.h"
 #include "UI/UI.h"
 
 namespace dui {
+
+namespace platform {
+class NativeWindow;      // App/Frame.cpp 组装层使用（App.h 不带 windows.h）
+}
+namespace graphics {
+class Device;
+}
 
 // 窗口装饰（12-Windowing §6：无边框 + 自定义标题栏的同一扩展点）
 enum class Chrome : uint8_t {
@@ -63,11 +71,18 @@ protected:
 
 private:
     friend class Application;
+    friend class WindowHostAdapter;    // App.cpp：平台事件 → 本类事件的适配器
 
     WindowOptions options_;
     float scale_ = 1.f;
+    void* native_ = nullptr;           // 平台窗口句柄（非 HWND 类型，避免公共头带 windows.h）
     std::unique_ptr<Panel> root_;
+
+    // M2 内部用（M3 交换链创建也需要）；不进公共 API
+    void* NativeHandle() const noexcept { return native_; }
 };
+
+class WindowHostAdapter;                 // App.cpp：平台事件适配器（拖拽就地渲染用）
 
 class Application {
 public:
@@ -81,6 +96,13 @@ public:
     const String& LastError() const noexcept { return lastError_; }
 
 private:
+    friend class WindowHostAdapter;      // App.cpp：拖拽尺寸变化的就地渲染（OnResized）
+
+    // 帧路径（App/Frame.cpp）：尺寸同步 → 失效检查 → 重排 → 收集 → 光栅 → Present。
+    // static：不依赖实例状态，供 Run 主循环与 OnResized 就地渲染共用
+    static void RenderFrame(Window& window, const platform::NativeWindow& native, graphics::Device& device);
+
+    Dispatcher dispatcher_;   // UI 任务队列（07-Threading：[调度] 步排空）
     String lastError_;
 };
 

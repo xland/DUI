@@ -10,4 +10,5 @@
 #include "Core/Core.h"
 #include "Core/Threading.h"
 #include "UI/UI.h"
+#include "UI/Canvas.h"
 #include "App/App.h"

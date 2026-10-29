@@ -49,6 +49,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `fontFamily` | StringId | ✓ | Layout·Text | ✗ | 系统 UI 字体 | 排版缓存键 |
 | `fontSize` | Length | ✓ | Layout·Text | ✓ | 14 dip | 排版缓存键；动画慎用 |
 | `fontWeight` | Enum | ✓ | Layout·Text | ✗ | Normal | 排版缓存键 |
+| `fontFamily` | String（`const wchar_t*` 指针） | ✓ | Layout·Text | ✓ | Microsoft YaHei | 框架默认微软雅黑；开发者可指定系统已安装任意字体族，指针生命周期由调用方保证（建议字面量）；未安装时 DWrite 自动回退默认 |
 | `fontStyle` | Enum | ✓ | Layout·Text | ✗ | Normal | 排版缓存键 |
 | `textAlign` | Enum | ✓ | Layout·Text | ✗ | Start | |
 | `lineHeight` | Length（倍数） | ✓ | Layout·Text | ✓ | 1.2 | |
@@ -134,13 +135,16 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 ### 5.1 遍历内（布局 / 绘制）
 
 ```cpp
-void Widget::OnPaint(Painter& p, const StyleContext& s) const {
-    p.RoundedRect(Bounds(), s.Get<Prop::CornerRadius>(), s.Get<Prop::BackgroundColor>());
+// 真实签名（已落地，Element/UI.h）
+void Widget::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) {
+    const StyleValue radius = ResolveProperty(this, Prop::CornerRadius, ctx);
+    p.FillRoundedRect(Bounds(), radius.f, ResolveProperty(this, Prop::BackgroundColor, ctx).u, 1.f, scale);
 }
 ```
 
-- 继承属性：`StyleContext` 已携带父计算值，`Get` 为 O(1)。
-- 非继承属性：`Get` 查元素自身链（本地覆盖 → Style 派生链 → 主题），通常 1–3 跳。
+- 继承属性：`StyleContext` 已携带父计算值，读取为 O(1)。
+- 非继承属性：`ResolveProperty` 查元素自身链（本地覆盖 → Style 派生链 → 主题），通常 1–3 跳。
+- 钩子默认空实现；收集期在背景之后、子元素之前调用（`App/Frame.cpp`）。
 
 ### 5.2 遍历外（事件 / 命中测试 / 动画 / 任意代码）
 

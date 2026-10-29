@@ -24,6 +24,24 @@
     <Filter Include="源文件\App">
       <UniqueIdentifier>{a1b2c3d4-0005-4c8d-9e6a-2b5d8f10a3cc}</UniqueIdentifier>
     </Filter>
+    <Filter Include="头文件\Platform">
+      <UniqueIdentifier>{a1b2c3d4-0006-4c8d-9e6a-2b5d8f10a3cd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\Platform">
+      <UniqueIdentifier>{a1b2c3d4-0007-4c8d-9e6a-2b5d8f10a3ce}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\Graphics">
+      <UniqueIdentifier>{a1b2c3d4-0008-4c8d-9e6a-2b5d8f10a3cf}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\Graphics">
+      <UniqueIdentifier>{a1b2c3d4-0009-4c8d-9e6a-2b5d8f10a3d0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\Text">
+      <UniqueIdentifier>{a1b2c3d4-000a-4c8d-9e6a-2b5d8f10a3d1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\Text">
+      <UniqueIdentifier>{a1b2c3d4-000b-4c8d-9e6a-2b5d8f10a3d2}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DUI.h">
@@ -32,22 +50,70 @@
     <ClInclude Include="Core\Core.h">
       <Filter>头文件\Core</Filter>
     </ClInclude>
+    <ClInclude Include="Core\Dispatcher.h">
+      <Filter>头文件\Core</Filter>
+    </ClInclude>
     <ClInclude Include="Core\Threading.h">
       <Filter>头文件\Core</Filter>
     </ClInclude>
     <ClInclude Include="UI\UI.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
+    <ClInclude Include="UI\Canvas.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
     <ClInclude Include="App\App.h">
       <Filter>头文件\App</Filter>
     </ClInclude>
+    <ClInclude Include="Platform\Window.h">
+      <Filter>头文件\Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Graphics.h">
+      <Filter>头文件\Graphics</Filter>
+    </ClInclude>
+    <ClInclude Include="Text\GlyphAtlas.h">
+      <Filter>头文件\Text</Filter>
+    </ClInclude>
+    <ClInclude Include="Text\TextEngine.h">
+      <Filter>头文件\Text</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Core\Dispatcher.cpp">
+      <Filter>源文件\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Text\GlyphAtlas.cpp">
+      <Filter>源文件\Text</Filter>
+    </ClCompile>
+    <ClCompile Include="Text\TextEngine.cpp">
+      <Filter>源文件\Text</Filter>
+    </ClCompile>
     <ClCompile Include="UI\UI.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\Canvas.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\StyleResolve.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\Layout.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\Event.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
     <ClCompile Include="App\App.cpp">
       <Filter>源文件\App</Filter>
+    </ClCompile>
+    <ClCompile Include="App\Frame.cpp">
+      <Filter>源文件\App</Filter>
+    </ClCompile>
+    <ClCompile Include="Platform\Window.cpp">
+      <Filter>源文件\Platform</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Graphics.cpp">
+      <Filter>源文件\Graphics</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

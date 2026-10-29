@@ -7,7 +7,8 @@
 *.VC.db
 *.VC.opendb
 
-# 构建输出（解决方案级与工程级中间目录）
+# 构建输出（Build 布局：Build\<工程>\<配置> + Build\Temp\<工程>\<配置>）
+Build/
 [xX]64/
 Debug/
 Release/

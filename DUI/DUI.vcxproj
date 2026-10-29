@@ -32,6 +32,12 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <!-- 产物统一迁入 Build（仅 x64，不再分平台子目录）：
+       中间产物 Build\Temp\<工程>\<配置>，最终产物 Build\<工程>\<配置>\ -->
+  <PropertyGroup>
+    <OutDir>$(SolutionDir)Build\$(ProjectName)\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)Build\Temp\$(ProjectName)\$(Configuration)\</IntDir>
+  </PropertyGroup>
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
   <ImportGroup Label="Shared">
@@ -44,7 +50,7 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <!-- 公共编译基线：/MT、/EHs-c-、/GR-、/utf-8、/W4、C++20（ADR-007/008/016） -->
-  <Import Project="..\Build\DUI.props" />
+  <Import Project="..\DUI.props" />
   <ItemDefinitionGroup>
     <ClCompile>
       <!-- 库内源码按层相对 include（"UI/UI.h"），业务侧经 $(SolutionDir) 用 "DUI/DUI.h" -->
@@ -66,13 +72,29 @@
   <ItemGroup>
     <ClInclude Include="DUI.h" />
     <ClInclude Include="Core\Core.h" />
+    <ClInclude Include="Core\Dispatcher.h" />
     <ClInclude Include="Core\Threading.h" />
+    <ClInclude Include="Text\GlyphAtlas.h" />
+    <ClInclude Include="Text\TextEngine.h" />
     <ClInclude Include="UI\UI.h" />
+    <ClInclude Include="UI\Canvas.h" />
     <ClInclude Include="App\App.h" />
+    <ClInclude Include="Platform\Window.h" />
+    <ClInclude Include="Graphics\Graphics.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Core\Dispatcher.cpp" />
+    <ClCompile Include="Text\GlyphAtlas.cpp" />
+    <ClCompile Include="Text\TextEngine.cpp" />
     <ClCompile Include="UI\UI.cpp" />
+    <ClCompile Include="UI\Canvas.cpp" />
+    <ClCompile Include="UI\StyleResolve.cpp" />
+    <ClCompile Include="UI\Layout.cpp" />
+    <ClCompile Include="UI\Event.cpp" />
     <ClCompile Include="App\App.cpp" />
+    <ClCompile Include="App\Frame.cpp" />
+    <ClCompile Include="Platform\Window.cpp" />
+    <ClCompile Include="Graphics\Graphics.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

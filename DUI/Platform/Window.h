@@ -33,6 +33,9 @@ public:
     virtual void OnPointerMove(Vec2 ptDip) = 0;
     virtual void OnPointerButton(Vec2 ptDip, bool down) = 0;   // M3：仅左键
     virtual void OnPointerLeave() = 0;
+    // 滚轮：ptDip = 指针位置（客户区 DIP）；delta = 滚轮格数（正 = 向上滚）
+    // horizontal = true 时应横向滚动（Shift + 滚轮由平台层判定）
+    virtual void OnMouseWheel(Vec2 ptDip, float delta, bool horizontal) = 0;
     virtual void OnResized() = 0;
 };
 

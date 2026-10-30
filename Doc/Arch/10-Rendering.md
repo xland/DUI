@@ -167,6 +167,13 @@ float alpha = 1.0f - smoothstep(-w, w, d);
 
 - `Clip` 栈与元素树的 `overflow` 联动：`Hidden` → `PushClip(RoundedRect)`；`Scroll` → 裁剪 + 内容偏移（不重排，04-Layout §6.1）。
 - 矩形裁剪优先 scissor（零成本），圆角裁剪走片元 SDF；同一批内裁剪状态一致才可合并。
+- **实现形态（M5.6 落地）**：绘制单元 = 一个 `Painter` + 一个裁剪矩形（物理像素），
+  `Device::Render(const DrawUnit*, uint32_t)` 按单元顺序提交；每个单元先
+  `RSSetScissorRects` 再画三批，嵌套裁剪区域取交集。
+  - 滚动容器的内容单独成单元：`Painter::SetOrigin(-offsetX, -offsetY, scale)`
+    只平移绘制坐标（布局结果不变），裁剪 = 视口 ∩ 外层裁剪；
+  - 滚动条画在内容之上的父级单元（不随内容滚动）；
+  - 单元顺序即 Z 序（`Painter` 池跨帧复用，稳态零分配）。
 
 ---
 

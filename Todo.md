@@ -2,7 +2,8 @@
 
 > 最后更新：2026-10-29。
 > 当前进度：**M5 已完成**（DirectWrite 真实文字渲染 + 灰度字形图集 + DPI 切换分级失效）；
-> **M5.5 已完成**（2D 绘图控件 `dui::Canvas` + Graphics 形状批 + `Samples/Canvas` 示例）。
+> **M5.5 已完成**（2D 绘图控件 `dui::Canvas` + Graphics 形状批 + `Samples/Canvas` 示例）；
+> **M5.6 已完成**（滚动容器 `dui::Scroller`：横纵滚动条 + 绘制单元裁剪 + `Samples/Scroller` 示例）。
 > 示例已由 Samples（三栏阅读器 / 单选列表）**替换为 HelloWorld**（居中文字最小示例），
 > 旧示例的交互验收描述见各里程碑历史记录。构建产物统一迁入 `Build\`（见 §0）。
 > 从 **M6** 开始。本文档自包含：环境、约定、每阶段的步骤与验收标准都在这里。
@@ -339,6 +340,59 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 - Debug + Release 全量重建零警告。
 
 参考：`10-Rendering §3/§6.1/§6.2`、`03-Style §6.3`、`15-Properties §5.1`、ADR-018。
+
+---
+
+## M5.6 — 滚动容器 Scroller + 绘制单元裁剪 ✅（2026-10-29 完成）
+
+**目标**：提供基础的滚动容器控件（支持横向与纵向滚动条），并配套示例 `Samples/Scroller`。
+
+完成情况与实现说明：
+- **控件 `dui::Scroller`**（`DUI/UI/Scroller.h/.cpp`，派生 `Panel`，`Kind::Scroller`）：
+  滚动**只改绘制坐标、不改布局结果**——子项按自然尺寸排布并溢出，绘制期用 scissor 裁到视口。
+  - API：`ScrollOffset/SetScrollOffset/ScrollBy`、`Viewport`、`ContentSize`（内容实际范围）、
+    `NaturalSize`（内容自然尺寸）、`MaxScrollX/Y`、`HitScrollBar`、
+    `BeginBarDrag/UpdateBarDrag/EndBarDrag`、`ClampScroll`、`PaintScrollBars`；
+  - 滚动条外观为基础版固定常量（10 DIP 厚、2 DIP 边距、28 DIP 最小滑块），**未接入样式系统**。
+- **Graphics 支持多绘制单元 + 裁剪**：
+  - `Painter::SetOrigin(dipX, dipY, scale)`：整段绘制平移（滚动内容用）；
+  - `struct DrawUnit { const Painter* painter; Rect clipPx; }`，
+    `Device::Render(const DrawUnit*, uint32_t)` 逐单元 `RSSetScissorRects` + 三批绘制；
+  - 光栅状态开启 `ScissorEnable`；一次 Map/Unmap 上传多单元顶点（按各批真实 stride 累加字节偏移）。
+- **App 层收集改造**（`App/Frame.cpp`）：`DrawList`（`Painter` 池跨帧复用 + 单元表，单元顺序即 Z 序）
+  + `Collector`：
+  - 滚动容器 → 封存父级单元 → 内容单元（原点 = −滚动偏移，裁剪 = 视口 ∩ 外层裁剪）
+    → 回到父级单元 → 画滚动条（压在内容之上）；
+  - 嵌套滚动容器自然形成"内容被切成多个单元"的序列，Z 序正确。
+- **布局**（`UI/Layout.cpp`）：滚动容器主轴 = 内容自然尺寸（子项不参与 flex 收缩），
+  交叉轴 = 视口尺寸；排布后回写**内容实际范围**（子项外接盒）→ 滚动量 = 内容范围 − 视口。
+  用实际范围而非自然尺寸，嵌套时不会把外层滚动量算大。
+- **事件**（`Platform/Window.*` + `App/App.cpp` + `UI/Event.cpp`）：
+  - `WM_MOUSEWHEEL` → `NativeWindowHost::OnMouseWheel(ptDip, delta, horizontal)`；
+    App 沿祖先链找最近的 `Scroller`（`FindScroller`）→ 纵向滚动，Shift + 滚轮横向；
+  - 滚动条滑块拖拽：按下命中滚动条 → `BeginBarDrag`（轨道空白处跳页）→ 移动 `UpdateBarDrag`
+    → 抬起 `EndBarDrag`；拖拽中不参与 Click 合成；
+  - 命中测试进入滚动容器时把指针换算到内容坐标（`+滚动偏移`），视口外归容器自身；
+    滚动条区域优先命中容器本身（不穿透到被裁剪的内容）。
+- **示例 `Samples/Scroller`**：纵向长列表 / 双向滚动（横向卡片行，卡片高于视口）/ 嵌套滚动
+  （外层纵向容器内嵌两个横向容器），按 HelloWorld 模板建工程并挂入 `DUI.slnx`。
+- **踩坑记录**：
+  - `D3D11_RASTERIZER_DESC` **没有** `ScissorBox` 字段，裁剪矩形只能用
+    `ID3D11DeviceContext::RSSetScissorRects`（复数）设置；
+  - 收集结束必须提交**最后一个绘制单元**，否则末尾元素与滚动条会整段丢失；
+  - 命中测试曾把绝对坐标与相对坐标混用（递归时 `pt - b.x` 与 `Bounds()` 混算），
+    嵌套两层以上命中错位 —— 已统一为全程绝对坐标。
+- **已知限制**（后续项）：
+  - 无平滑滚动 / 惯性（`UI.Animation` 联动列 P1）；无键盘滚动（PageUp/Down / 方向键）；
+  - 滚动条不随悬停淡出、不接入样式系统；
+  - 滚动量按像素（无行滚动 / 吸附）；
+  - **视口外的内容仍参与收集**（MVP 未做视口剔除，10-Rendering §2 的"裁剪剔除"待补）
+    → 收集量与内容总量成正比，长列表需自行控制条目数；
+  - 静态索引缓冲上限 16384 quad（沿用 M5.5 的既有约束，超出需扩索引缓冲）；
+  - 三批分离导致跨批 Z 序不严格（沿用 M5.5 的既有结论）。
+- Debug + Release 全量重建零警告。
+
+参考：`04-Layout §6.3`、`06-Events §3.1`、`10-Rendering §6.3`。
 
 ---
 

@@ -65,6 +65,14 @@ struct ShapeVertex {
 class Painter {
 public:
     void Reset();
+    // 原点偏移（滚动内容整体平移；DIP）。设置后本 Painter 收集的所有图元
+    // 都会加上该偏移 —— 滚动不改布局结果，只改绘制坐标。
+    void SetOrigin(float dipX, float dipY, float scale) noexcept {
+        originDipX_ = dipX;
+        originDipY_ = dipY;
+        originPxX_ = dipX * scale;
+        originPxY_ = dipY * scale;
+    }
     void FillRoundedRect(const Rect& dipRect, float radiusDip, Color color, float opacity, float scale);
     void AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
                       float u0, float v0, float u1, float v1, Color color);
@@ -92,6 +100,15 @@ private:
     std::vector<GlyphVertex> gverts_;
     std::vector<GlyphGroup> ggroups_;
     std::vector<ShapeVertex> sverts_;
+    float originDipX_ = 0.f, originDipY_ = 0.f;   // 原点偏移（DIP）
+    float originPxX_ = 0.f, originPxY_ = 0.f;     // 原点偏移（物理像素）
+};
+
+// 一个绘制单元 = 一个 Painter + 裁剪矩形（物理像素）。
+// 滚动容器的内容单独成单元，用 scissor 裁到视口内；单元顺序即绘制顺序。
+struct DrawUnit {
+    const Painter* painter = nullptr;
+    Rect clipPx{};        // 物理像素裁剪矩形；w/h <= 0 表示整单元不绘制
 };
 
 class Device {
@@ -107,7 +124,7 @@ public:
     void Resize(const Vec2& clientPx);
 
     Painter& GetPainter() noexcept { return painter_; }
-    void Render();      // 清屏 + 提交 Painter 顶点（矩形批 + 字形图集批）
+    void Render(const DrawUnit* units, uint32_t unitCount);      // 清屏 + 提交 Painter 顶点（矩形批 + 字形图集批）
     void Present();
 
     // 字形图集页（R8）：创建或全量更新；页被 LRU 整页释放后调 Release

@@ -66,8 +66,8 @@ enum class Align : uint8_t { Stretch, Start, Center };      // 交叉轴对齐�
 enum class FontWeight : uint8_t { Normal, Medium, SemiBold, Bold };
 enum class Easing : uint8_t { Linear, EaseIn, EaseOut, EaseInOut };
 
-// 元素类别（收集时区分文本/容器；/GR- 下不用 RTTI，用虚函数判定）
-enum class Kind : uint8_t { Node, Text };
+// 元素类别（收集时区分文本/容器/滚动容器；/GR- 下不用 RTTI，用虚函数判定）
+enum class Kind : uint8_t { Node, Text, Scroller };
 
 // 样式值：prop + 主值（f/u）+ Thickness 扩展槽。
 // 注：15-Properties §2 原案 StyleValue 为 8B 定长；M3 为内嵌四边 Thickness
@@ -168,6 +168,10 @@ Element* HitTest(Element* root, const Vec2& ptDip);
 void DispatchClick(Element* hit);
 void UpdateHoverChain(Element* previous, Element* current);
 void SetPressedChain(Element* hit, bool on);
+
+// 沿祖先链找最近的滚动容器（滚轮路由目标；Event.cpp）
+class Scroller;
+Scroller* FindScroller(Element* e);
 
 // ---------------------------------------------------------------------------
 // StyleBuilder：链式构造，Build() 一次固化。When 的参数是 Builder 而非 Style

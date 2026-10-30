@@ -9,6 +9,10 @@
 
 #include "UI/UI.h"
 
+#include <algorithm>
+
+#include "UI/Scroller.h"
+
 namespace dui {
 
 namespace {
@@ -72,10 +76,17 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
 
     const StyleContext ctx = parentCtx.Child(e);
     const Thickness pad = ElementPadding(e, ctx);
-    const Rect content{slot.x + pad.left, slot.y + pad.top,
-                       slot.w - pad.left - pad.right, slot.h - pad.top - pad.bottom};
+    Rect content{slot.x + pad.left, slot.y + pad.top,
+                  slot.w - pad.left - pad.right, slot.h - pad.top - pad.bottom};
     const bool row = ResolveProperty(e, Prop::FlexDirection, ctx).u ==
                      static_cast<uint32_t>(FlexDirection::Row);
+    if (e->GetKind() == Kind::Scroller) {
+        // 滚动容器：主轴按内容自然尺寸（可溢出 → 可滚动；子项不参与收缩），
+        // 交叉轴保持视口尺寸（子项比视口宽时溢出 → 横向也可滚）
+        const Vec2 nat = static_cast<Scroller*>(e)->NaturalSize();
+        if (row) content.w = nat.x;
+        else     content.h = nat.y;
+    }
     const float gap = ResolveProperty(e, Prop::Gap, ctx).f;
     const uint32_t just = ResolveProperty(e, Prop::JustifyContent, ctx).u;
     const uint32_t align = ResolveProperty(e, Prop::AlignItems, ctx).u;
@@ -135,6 +146,7 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
                 (just == static_cast<uint32_t>(Justify::Center) && freeSpace > 0.f
                      ? freeSpace * 0.5f : 0.f);
     const float crossLen = row ? content.h : content.w;
+    Vec2 extent{};          // 子项外接范围（相对内容盒原点）→ 滚动容器的内容尺寸
     for (Element* c : items) {
         const float main = row ? c->measured_.x : c->measured_.y;
         float cross;
@@ -153,6 +165,11 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
                                    : Rect{content.x + crossPos, pos, cross, main};
         ArrangeElement(c, childSlot, ctx, depth + 1);
         pos += main + gap;
+        extent.x = std::max(extent.x, c->bounds_.Right() - content.x);
+        extent.y = std::max(extent.y, c->bounds_.Bottom() - content.y);
+    }
+    if (e->GetKind() == Kind::Scroller) {
+        static_cast<Scroller*>(e)->SetContentExtent(extent);
     }
 }
 

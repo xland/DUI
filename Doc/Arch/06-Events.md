@@ -66,6 +66,19 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 
 > 触摸/触控笔在 Platform 层归一化为指针事件 + 压力/倾斜扩展字段，UI 层不区分设备类型（与 [01-Layering.md](./01-Layering.md) 输入归一化一致）。
 
+### 3.1 滚轮与滚动条拖拽（M5.6 落地）
+
+`Wheel` 事件与滚动条交互当前**不进入通用事件路由**（双阶段路由属 M4 后续），
+而是由 App 层适配器直接路由到滚动容器：
+
+| 输入 | 平台层 | App 层路由 |
+| --- | --- | --- |
+| 滚轮 | `WM_MOUSEWHEEL` → `NativeWindowHost::OnMouseWheel(ptDip, delta, horizontal)`（屏幕坐标换算客户区 DIP；`horizontal` 由 Shift 判定） | 命中元素沿祖先链找最近的 `Scroller`（`FindScroller`）→ 纵向滚动（Shift → 横向） |
+| 滑块拖拽 | 复用指针按下/移动/抬起 | 按下命中滚动条 → `BeginBarDrag`（轨道空白处跳页）；移动 → `UpdateBarDrag`；抬起 → `EndBarDrag`。拖拽中**不参与 Click 合成** |
+
+- 滚动条区域在命中测试里**优先命中滚动容器自身**（否则会穿透到被裁剪的内容）。
+- 命中测试进入滚动容器时把指针换算到内容坐标（`+滚动偏移`，见 [04-Layout.md](./04-Layout.md) §6.3）。
+
 ---
 
 ## 4. 绑定 API

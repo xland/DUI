@@ -9,7 +9,8 @@
 msbuild DUI.slnx /p:Configuration=Release /p:Platform=x64
 ```
 
-产物：`DUI.lib`（静态库）与 `x64\Release\Samples.exe`、`ListSelect.exe` 两个示例。
+产物：`DUI.lib`（静态库）与 `Samples/` 下的示例可执行文件
+（`HelloWorld` / `LayoutFlex` / `Canvas` / `Scroller`），统一在 `Build\<工程>\<配置>\`。
 
 ## 文档
 

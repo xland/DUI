@@ -11,4 +11,5 @@
 #include "Core/Threading.h"
 #include "UI/UI.h"
 #include "UI/Canvas.h"
+#include "UI/Scroller.h"
 #include "App/App.h"

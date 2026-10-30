@@ -9,6 +9,7 @@
 
 #include "Graphics/Graphics.h"
 #include "Platform/Window.h"
+#include "UI/Scroller.h"
 
 #include <cstdio>
 
@@ -59,6 +60,11 @@ public:
     // ---- 指针输入（M3 最小形态；归一化事件与完整路由在 M4）----
 
     void OnPointerMove(Vec2 pt) override {
+        if (dragging_ != nullptr) {          // 滑块拖拽中：只更新滑块位置
+            dragging_->UpdateBarDrag(pt);
+            RequestFrame();
+            return;
+        }
         Element* hit = HitTest(window_.Root(), pt);
         UpdateHoverChain(hover_, hit);
         hover_ = hit;
@@ -66,12 +72,29 @@ public:
     }
 
     void OnPointerButton(Vec2 pt, bool down) override {
-        Element* hit = HitTest(window_.Root(), pt);
         if (down) {
+            // 命中滚动条 → 进入滑块拖拽（不参与 Click 合成）
+            Element* hit = HitTest(window_.Root(), pt);
+            Scroller* sc = FindScroller(hit);
+            bool vertical = false;
+            if (sc != nullptr && sc->HitScrollBar(pt, vertical)) {
+                sc->BeginBarDrag(vertical, pt);
+                dragging_ = sc;
+                dragVertical_ = vertical;
+                RequestFrame();
+                return;
+            }
             pressPt_ = pt;
             pressed_ = hit;
             SetPressedChain(hit, true);
         } else {
+            if (dragging_ != nullptr) {
+                dragging_->EndBarDrag();
+                dragging_ = nullptr;
+                RequestFrame();
+                return;
+            }
+            Element* hit = HitTest(window_.Root(), pt);
             SetPressedChain(pressed_, false);
             // Click 合成：按下抬起同元素且拖出在阈值内（06-Events §3：4 dip）
             constexpr float kDragThreshold = 4.f;
@@ -82,6 +105,17 @@ public:
             }
             pressed_ = nullptr;
         }
+        RequestFrame();
+    }
+
+    // 滚轮：沿祖先链找最近的滚动容器（纵向；Shift + 滚轮横向）
+    void OnMouseWheel(Vec2 pt, float delta, bool horizontal) override {
+        Element* hit = HitTest(window_.Root(), pt);
+        Scroller* sc = FindScroller(hit);
+        if (sc == nullptr) return;
+        constexpr float kWheelStep = 48.f;   // 每格滚动量（DIP）
+        if (horizontal) sc->ScrollBy(-delta * kWheelStep, 0.f);
+        else            sc->ScrollBy(0.f, -delta * kWheelStep);
         RequestFrame();
     }
 
@@ -110,6 +144,8 @@ private:
     Element* hover_ = nullptr;
     Element* pressed_ = nullptr;
     Vec2     pressPt_{};   // 按下位置（DIP），Click 拖出阈值判定用
+    Scroller* dragging_ = nullptr;      // 正在拖拽的滚动条（滑块）
+    bool      dragVertical_ = false;
 };
 
 Window::Window(const WindowOptions& options) : options_(options) {

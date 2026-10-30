@@ -78,6 +78,7 @@
     <ClInclude Include="Text\TextEngine.h" />
     <ClInclude Include="UI\UI.h" />
     <ClInclude Include="UI\Canvas.h" />
+    <ClInclude Include="UI\Scroller.h" />
     <ClInclude Include="App\App.h" />
     <ClInclude Include="Platform\Window.h" />
     <ClInclude Include="Graphics\Graphics.h" />
@@ -88,6 +89,7 @@
     <ClCompile Include="Text\TextEngine.cpp" />
     <ClCompile Include="UI\UI.cpp" />
     <ClCompile Include="UI\Canvas.cpp" />
+    <ClCompile Include="UI\Scroller.cpp" />
     <ClCompile Include="UI\StyleResolve.cpp" />
     <ClCompile Include="UI\Layout.cpp" />
     <ClCompile Include="UI\Event.cpp" />

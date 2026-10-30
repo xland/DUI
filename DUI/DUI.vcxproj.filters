@@ -62,6 +62,9 @@
     <ClInclude Include="UI\Canvas.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
+    <ClInclude Include="UI\Scroller.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
     <ClInclude Include="App\App.h">
       <Filter>头文件\App</Filter>
     </ClInclude>
@@ -92,6 +95,9 @@
       <Filter>源文件\UI</Filter>
     </ClCompile>
     <ClCompile Include="UI\Canvas.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\Scroller.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
     <ClCompile Include="UI\StyleResolve.cpp">

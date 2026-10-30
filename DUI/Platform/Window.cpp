@@ -140,6 +140,15 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         case WM_MOUSELEAVE:
             self->host_->OnPointerLeave();
             return 0;
+        case WM_MOUSEWHEEL: {
+            // 滚轮坐标是屏幕坐标 → 客户区 DIP
+            POINT pt{static_cast<short>(LOWORD(lp)), static_cast<short>(HIWORD(lp))};
+            ScreenToClient(hwnd, &pt);
+            const float delta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp)) / WHEEL_DELTA;
+            const bool horizontal = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            self->host_->OnMouseWheel(Vec2{pt.x / self->scale_, pt.y / self->scale_}, delta, horizontal);
+            return 0;
+        }
         case WM_LBUTTONDOWN:
             SetCapture(hwnd);               // 窗口外抬起也能收到（06-Events R6 的最小形态）
             self->host_->OnPointerButton(self->DipFromLParam(lp), true);

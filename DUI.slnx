@@ -6,4 +6,5 @@
   <Project Path="Samples/HelloWorld/HelloWorld.vcxproj" Id="3f7a9c21-8d54-4e6b-9a12-5c8d0f4e7b31" />
   <Project Path="Samples/LayoutFlex/LayoutFlex.vcxproj" Id="5e2b8f47-1c63-4d9a-b7e8-2a4f6c9d0e15" />
   <Project Path="Samples/Canvas/Canvas.vcxproj" Id="7c1d4e29-8b53-4f6a-9d02-3e5a71c4b8f6" />
+  <Project Path="Samples/Scroller/Scroller.vcxproj" Id="4a8f2c13-6d5e-4b7a-9c31-2f6e8d0a5b47" />
 </Solution>

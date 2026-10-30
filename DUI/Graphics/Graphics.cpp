@@ -226,6 +226,10 @@ void Painter::Reset() {
     gverts_.clear();
     ggroups_.clear();
     sverts_.clear();
+    originDipX_ = 0.f;
+    originDipY_ = 0.f;
+    originPxX_ = 0.f;
+    originPxY_ = 0.f;
 }
 
 void Painter::AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
@@ -241,6 +245,8 @@ void Painter::AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
     // 0xAARRGGBB（straight）→ R8G8B8A8 内存序（与 FillRoundedRect 一致）
     const uint32_t packed = ((color & 0xFFu) << 16) | (color & 0xFF00u) |
                             ((color & 0xFF0000u) >> 16) | ((color >> 24) << 24);
+    x += originPxX_;   // 滚动内容整体平移（像素空间）
+    y += originPxY_;
     const GlyphVertex quad[4] = {
         {x,     y,     u0, v0, packed},
         {x + w, y,     u1, v0, packed},
@@ -282,6 +288,10 @@ void Painter::PushShapeQuad(float cx, float cy, float hw, float hh,
 
 // 线段：胶囊 SDF（圆头端点），线宽 = widthDip
 void Painter::StrokeLine(Vec2 p0, Vec2 p1, Color color, float widthDip, float scale) {
+    p0.x += originDipX_;
+    p0.y += originDipY_;
+    p1.x += originDipX_;
+    p1.y += originDipY_;
     const float x0 = p0.x * scale;
     const float y0 = p0.y * scale;
     const float x1 = p1.x * scale;
@@ -297,6 +307,8 @@ void Painter::StrokeLine(Vec2 p0, Vec2 p1, Color color, float widthDip, float sc
 
 // 椭圆填充
 void Painter::FillEllipse(Vec2 center, float rxDip, float ryDip, Color color, float scale) {
+    center.x += originDipX_;
+    center.y += originDipY_;
     const float rx = rxDip * scale;
     const float ry = ryDip * scale;
     if (rx <= 0.f || ry <= 0.f) return;
@@ -308,6 +320,8 @@ void Painter::FillEllipse(Vec2 center, float rxDip, float ryDip, Color color, fl
 // 椭圆描边：等距线偏移 halfStroke
 void Painter::StrokeEllipse(Vec2 center, float rxDip, float ryDip, Color color,
                             float widthDip, float scale) {
+    center.x += originDipX_;
+    center.y += originDipY_;
     const float rx = rxDip * scale;
     const float ry = ryDip * scale;
     const float half = std::max(widthDip * scale, 1.f) * 0.5f;
@@ -320,6 +334,8 @@ void Painter::StrokeEllipse(Vec2 center, float rxDip, float ryDip, Color color,
 // 圆角矩形描边
 void Painter::StrokeRoundRect(const Rect& dipRect, float radiusDip, float widthDip,
                               Color color, float scale) {
+    const float ox = (dipRect.x + originDipX_) * scale;
+    const float oy = (dipRect.y + originDipY_) * scale;
     const float w = dipRect.w * scale;
     const float h = dipRect.h * scale;
     if (w <= 0.f || h <= 0.f) return;
@@ -328,16 +344,16 @@ void Painter::StrokeRoundRect(const Rect& dipRect, float radiusDip, float widthD
     if (radius < 1.f) radius = 0.f;
     if (radius > w * 0.5f) radius = w * 0.5f;
     if (radius > h * 0.5f) radius = h * 0.5f;
-    const float cx = (dipRect.x + dipRect.w * 0.5f) * scale;
-    const float cy = (dipRect.y + dipRect.h * 0.5f) * scale;
+    const float cx = ox + w * 0.5f;
+    const float cy = oy + h * 0.5f;
     const float hw = w * 0.5f;
     const float hh = h * 0.5f;
     PushShapeQuad(cx, cy, hw + half, hh + half, hw, hh, 0.f, 0.f, radius, half, color, 2);
 }
 
 void Painter::FillRoundedRect(const Rect& dipRect, float radiusDip, Color color, float opacity, float scale) {
-    const float x = dipRect.x * scale;
-    const float y = dipRect.y * scale;
+    const float x = (dipRect.x + originDipX_) * scale;
+    const float y = (dipRect.y + originDipY_) * scale;
     const float w = dipRect.w * scale;
     const float h = dipRect.h * scale;
     if (w <= 0.f || h <= 0.f) return;
@@ -593,6 +609,8 @@ bool Device::Init(HWND hwnd, String& error) {
     rd.FillMode = D3D11_FILL_SOLID;
     rd.CullMode = D3D11_CULL_NONE;
     rd.DepthClipEnable = TRUE;
+    // 裁剪（scissor）：滚动容器的内容裁到视口内（每单元 RSSetScissorRects）
+    rd.ScissorEnable = TRUE;
     hr = dev_->CreateRasterizerState(&rd, &raster_);
     if (FAILED(hr)) {
         error = L"CreateRasterizerState failed";
@@ -656,34 +674,49 @@ void Device::EnsureVertexBuffer(uint32_t vertexCount) {
     if (FAILED(dev_->CreateBuffer(&bd, nullptr, &vb_))) return;
 }
 
-void Device::Render() {
+void Device::Render(const DrawUnit* units, uint32_t unitCount) {
     if (rtv_ == nullptr) return;
     constexpr float kBlack[4] = {0.f, 0.f, 0.f, 1.f};
     ctx_->ClearRenderTargetView(rtv_, kBlack);
+    if (units == nullptr || unitCount == 0) return;
 
-    const uint32_t quads = painter_.QuadCount();
-    const uint32_t gquads = painter_.GlyphQuadCount();
-    const uint32_t squads = painter_.ShapeQuadCount();
-    const uint32_t total = quads + gquads + squads;
-    if (total == 0 || total > kMaxQuads) return;
+    // 顶点总量（各单元三批之和）
+    uint32_t totalVerts = 0;
+    uint32_t totalQuads = 0;
+    for (uint32_t i = 0; i < unitCount; ++i) {
+        const Painter& p = *units[i].painter;
+        totalVerts += (p.QuadCount() + p.GlyphQuadCount() + p.ShapeQuadCount()) * 4;
+        totalQuads += p.QuadCount() + p.GlyphQuadCount() + p.ShapeQuadCount();
+    }
+    if (totalVerts == 0) return;
 
-    EnsureVertexBuffer(total * 4);
+    EnsureVertexBuffer(totalVerts);
     if (vb_ == nullptr) return;
 
+    // 一次上传：各单元的顶点段依次排布（三批 stride 不同 → 按实际字节累加）
     D3D11_MAPPED_SUBRESOURCE m{};
     if (FAILED(ctx_->Map(vb_, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) return;
     auto* dst = static_cast<uint8_t*>(m.pData);
-    memcpy(dst, painter_.Vertices(), static_cast<size_t>(quads) * 4 * sizeof(Vertex));
-    memcpy(dst + static_cast<size_t>(quads) * 4 * sizeof(Vertex), painter_.GlyphVertices(),
-           static_cast<size_t>(gquads) * 4 * sizeof(GlyphVertex));
-    memcpy(dst + (static_cast<size_t>(quads) * 4 * sizeof(Vertex) +
-                   static_cast<size_t>(gquads) * 4 * sizeof(GlyphVertex)),
-           painter_.ShapeVertices(), static_cast<size_t>(squads) * 4 * sizeof(ShapeVertex));
+    uint32_t byteBase = 0;   // 已写入字节数
+    for (uint32_t i = 0; i < unitCount; ++i) {
+        const Painter& p = *units[i].painter;
+        const uint32_t quads = p.QuadCount();
+        const uint32_t gquads = p.GlyphQuadCount();
+        const uint32_t squads = p.ShapeQuadCount();
+        uint8_t* d = dst + byteBase;
+        memcpy(d, p.Vertices(), static_cast<size_t>(quads) * 4 * sizeof(Vertex));
+        d += static_cast<size_t>(quads) * 4 * sizeof(Vertex);
+        memcpy(d, p.GlyphVertices(), static_cast<size_t>(gquads) * 4 * sizeof(GlyphVertex));
+        d += static_cast<size_t>(gquads) * 4 * sizeof(GlyphVertex);
+        memcpy(d, p.ShapeVertices(), static_cast<size_t>(squads) * 4 * sizeof(ShapeVertex));
+        byteBase += static_cast<size_t>(quads) * 4 * sizeof(Vertex) +
+                    static_cast<size_t>(gquads) * 4 * sizeof(GlyphVertex) +
+                    static_cast<size_t>(squads) * 4 * sizeof(ShapeVertex);
+    }
     ctx_->Unmap(vb_, 0);
 
     ID3D11Buffer* vb = vb_;
     constexpr UINT kStride = sizeof(Vertex);
-    constexpr UINT kOffset = 0;
     constexpr UINT kStrideG = sizeof(GlyphVertex);
     constexpr UINT kStrideS = sizeof(ShapeVertex);
     constexpr D3D11_VIEWPORT kVp{0.f, 0.f, 0.f, 0.f, 0.f, 1.f};
@@ -691,7 +724,6 @@ void Device::Render() {
     vp.Width = width_;
     vp.Height = height_;
 
-    ctx_->IASetVertexBuffers(0, 1, &vb, &kStride, &kOffset);
     ctx_->IASetIndexBuffer(ib_, DXGI_FORMAT_R32_UINT, 0);
     ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ctx_->VSSetConstantBuffers(0, 1, &cb_);
@@ -700,43 +732,79 @@ void Device::Render() {
     ctx_->OMSetRenderTargets(1, &rtv_, nullptr);
     ctx_->OMSetBlendState(blend_, nullptr, 0xFFFFFFFFu);
 
-    // 矩形批（SDF 圆角矩形）
-    ctx_->IASetInputLayout(layout_);
-    ctx_->VSSetShader(vs_, nullptr, 0);
-    ctx_->PSSetShader(ps_, nullptr, 0);
-    if (quads > 0) ctx_->DrawIndexed(quads * 6, 0, 0);
+    // 逐单元绘制：单元顺序即 z 序；单元内再分三批
+    uint32_t vtxOffset = 0;   // 本单元在 VB 中的顶点起始（顶点数）
+    uint32_t byteOffset = 0;  // 本单元在 VB 中的字节起始
+    uint32_t quadBase = 0;    // 本单元第一个 quad 的全局 quad 序号
+    for (uint32_t i = 0; i < unitCount; ++i) {
+        const Painter& p = *units[i].painter;
+        const uint32_t quads = p.QuadCount();
+        const uint32_t gquads = p.GlyphQuadCount();
+        const uint32_t squads = p.ShapeQuadCount();
+        if (quads + gquads + squads == 0) continue;
 
-    // 字形批：按图集页分组，跨页才切换纹理（10-Rendering §6.1）。
-    // 顶点步长与矩形批不同（20B vs 32B），重绑顶点缓冲并偏移到字形顶点段。
-    if (gquads > 0) {
-        const UINT gOffset = quads * 4 * sizeof(Vertex);
-        ctx_->IASetInputLayout(layoutG_);
-        ctx_->IASetVertexBuffers(0, 1, &vb, &kStrideG, &gOffset);
-        ctx_->VSSetShader(vsG_, nullptr, 0);
-        ctx_->PSSetShader(psG_, nullptr, 0);
-        ctx_->PSSetSamplers(0, 1, &sampler_);
-        for (const GlyphGroup& g : painter_.GlyphGroups()) {
-            ID3D11ShaderResourceView* srv = FindGlyphSrv(g.page);
-            if (srv == nullptr) continue;
-            ctx_->PSSetShaderResources(0, 1, &srv);
-            // 共享索引缓冲的索引按矩形批的绝对顶点号编排；字形批换了步长，
-            // 用负 BaseVertexLocation 把索引重定基到本批首个字形顶点
-            ctx_->DrawIndexed(g.vertexCount / 4 * 6, (quads + g.firstVertex / 4) * 6,
-                              -static_cast<INT>(quads * 4 + g.firstVertex));
+        // 裁剪（scissor）：滚动容器的内容裁到视口内；空矩形表示整单元不画
+        const Rect& c = units[i].clipPx;
+        D3D11_RECT sr{};
+        if (c.w > 0.f && c.h > 0.f) {
+            sr.left = static_cast<LONG>(c.x);
+            sr.top = static_cast<LONG>(c.y);
+            sr.right = static_cast<LONG>(c.x + c.w);
+            sr.bottom = static_cast<LONG>(c.y + c.h);
         }
-        // 恢复矩形批绑定（下一帧 Render 开头会重设，这里保持状态一致）
-        ctx_->IASetVertexBuffers(0, 1, &vb, &kStride, &kOffset);
-    }
+        ctx_->RSSetScissorRects(1, &sr);
 
-    // 形状批（SDF 图元）：步长 48B，顶点段在矩形批与字形批之后。
-    if (squads > 0) {
-        const UINT sOffset = quads * 4 * sizeof(Vertex) + gquads * 4 * sizeof(GlyphVertex);
-        ctx_->IASetInputLayout(layoutS_);
-        ctx_->IASetVertexBuffers(0, 1, &vb, &kStrideS, &sOffset);
-        ctx_->VSSetShader(vsS_, nullptr, 0);
-        ctx_->PSSetShader(psS_, nullptr, 0);
-        ctx_->DrawIndexed(squads * 6, (quads + gquads) * 6,
-                          -static_cast<INT>((quads + gquads) * 4));
+        // 索引缓冲按全局 quad 序号编排（q*4 起 6 个索引），故各批的
+        // BaseVertexLocation = 本单元顶点起始 - 全局 quad 起点，换算成索引重定基
+        const INT base = static_cast<INT>(vtxOffset) - static_cast<INT>(quadBase * 4);
+
+        // 矩形批（SDF 圆角矩形）
+        if (quads > 0) {
+            const UINT off = byteOffset;
+            ctx_->IASetInputLayout(layout_);
+            ctx_->IASetVertexBuffers(0, 1, &vb, &kStride, &off);
+            ctx_->VSSetShader(vs_, nullptr, 0);
+            ctx_->PSSetShader(ps_, nullptr, 0);
+            ctx_->DrawIndexed(quads * 6, quadBase * 6, base);
+        }
+
+        // 字形批：按图集页分组，跨页才切换纹理（10-Rendering §6.1）
+        if (gquads > 0) {
+            const UINT off = byteOffset + quads * 4 * sizeof(Vertex);
+            ctx_->IASetInputLayout(layoutG_);
+            ctx_->IASetVertexBuffers(0, 1, &vb, &kStrideG, &off);
+            ctx_->VSSetShader(vsG_, nullptr, 0);
+            ctx_->PSSetShader(psG_, nullptr, 0);
+            ctx_->PSSetSamplers(0, 1, &sampler_);
+            for (const GlyphGroup& g : p.GlyphGroups()) {
+                ID3D11ShaderResourceView* srv = FindGlyphSrv(g.page);
+                if (srv == nullptr) continue;
+                ctx_->PSSetShaderResources(0, 1, &srv);
+                // 组内第一个 quad 的全局序号 = quadBase + quads + g.firstVertex/4
+                const uint32_t gq = quadBase + quads + g.firstVertex / 4;
+                ctx_->DrawIndexed(g.vertexCount / 4 * 6, gq * 6,
+                                  static_cast<INT>(vtxOffset + quads * 4) - static_cast<INT>(gq * 4));
+            }
+        }
+
+        // 形状批（SDF 图元）
+        if (squads > 0) {
+            const UINT off = byteOffset + quads * 4 * sizeof(Vertex) +
+                             gquads * 4 * sizeof(GlyphVertex);
+            ctx_->IASetInputLayout(layoutS_);
+            ctx_->IASetVertexBuffers(0, 1, &vb, &kStrideS, &off);
+            ctx_->VSSetShader(vsS_, nullptr, 0);
+            ctx_->PSSetShader(psS_, nullptr, 0);
+            ctx_->DrawIndexed(squads * 6, (quadBase + quads + gquads) * 6,
+                              static_cast<INT>(vtxOffset + quads * 4 + gquads * 4) -
+                                  static_cast<INT>((quadBase + quads + gquads) * 4));
+        }
+
+        vtxOffset += (quads + gquads + squads) * 4;
+        byteOffset += quads * 4 * sizeof(Vertex) +
+                      gquads * 4 * sizeof(GlyphVertex) +
+                      squads * 4 * sizeof(ShapeVertex);
+        quadBase += quads + gquads + squads;
     }
 }
 

@@ -381,7 +381,18 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
     `ID3D11DeviceContext::RSSetScissorRects`（复数）设置；
   - 收集结束必须提交**最后一个绘制单元**，否则末尾元素与滚动条会整段丢失；
   - 命中测试曾把绝对坐标与相对坐标混用（递归时 `pt - b.x` 与 `Bounds()` 混算），
-    嵌套两层以上命中错位 —— 已统一为全程绝对坐标。
+    嵌套两层以上命中错位 —— 已统一为全程绝对坐标；
+  - **多绘制单元渲染曾整屏错乱**（对角条纹、后续单元全乱）：`DrawIndexed` 的
+    `BaseVertexLocation` 必须与 VB 绑定方案配套。本实现按"每批绑到自己的字节段起点"，
+    索引缓冲按全局 quad 序号编排，故 base 必须取**负值** `-全局quad基×4` 把索引拉回
+    本批顶点段；若误用"绑定偏移 0"方案的公式（base=0），u0 恰好重合看不出问题，
+    u1+ 会从字节段之后读垃圾顶点。三批 stride 不同（32/20/48B），线性字节布局下
+    字形/形状数据无法用"全局顶点号×stride"寻址，两方案不可混用；
+  - **嵌套滚动容器的绘制原点与裁剪都是"绝对量"，必须叠加父级偏移**
+    （`App/Frame.cpp` CollectScroller）：`Painter::SetOrigin` 是绝对原点，
+    内层要用 `父级origin − 自身offset`（否则外层滚动对内层内容无效）；
+    scissor 裁剪同理，内层视口要先加父级 origin 平移到窗口空间再求交
+    （否则裁剪带留在原位，背景被裁没、只有文字看似在动）。
 - **已知限制**（后续项）：
   - 无平滑滚动 / 惯性（`UI.Animation` 联动列 P1）；无键盘滚动（PageUp/Down / 方向键）；
   - 滚动条不随悬停淡出、不接入样式系统；

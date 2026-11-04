@@ -124,16 +124,20 @@ private:
         sc->ClampScroll();
         const Vec2 off = sc->ScrollOffset();
         const Rect vp = sc->Viewport();
-        const Rect vpPx{vp.x * scale_, vp.y * scale_, vp.w * scale_, vp.h * scale_};
 
         const Vec2 savedOrigin = origin_;
         const Rect savedClip = clipPx_;
 
-        // 内容单元：原点 = -滚动偏移，裁剪 = 视口 ∩ 当前裁剪
+        // 内容单元：原点 = 父级原点 − 滚动偏移；裁剪 = 视口（加父级原点平移到
+        // 窗口空间，嵌套时随外层滚动一起移动）∩ 当前裁剪。
+        // SetOrigin 与 scissor 都是"绝对"量：嵌套时必须叠加父级偏移，
+        // 否则外层滚动对内层内容无效、内层裁剪带留在原位（背景被裁没）。
         painter_ = list_.Acquire();
-        painter_->SetOrigin(-off.x, -off.y, scale_);
-        origin_ = {-off.x, -off.y};
-        clipPx_ = IntersectRect(vpPx, savedClip);
+        painter_->SetOrigin(savedOrigin.x - off.x, savedOrigin.y - off.y, scale_);
+        origin_ = {savedOrigin.x - off.x, savedOrigin.y - off.y};
+        const Rect vpWinPx{(vp.x + savedOrigin.x) * scale_, (vp.y + savedOrigin.y) * scale_,
+                           vp.w * scale_, vp.h * scale_};
+        clipPx_ = IntersectRect(vpWinPx, savedClip);
 
         for (Element* c : sc->Children()) Collect(c, ctx);
 

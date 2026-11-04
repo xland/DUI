@@ -732,9 +732,11 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount) {
     ctx_->OMSetRenderTargets(1, &rtv_, nullptr);
     ctx_->OMSetBlendState(blend_, nullptr, 0xFFFFFFFFu);
 
-    // 逐单元绘制：单元顺序即 z 序；单元内再分三批
-    uint32_t vtxOffset = 0;   // 本单元在 VB 中的顶点起始（顶点数）
-    uint32_t byteOffset = 0;  // 本单元在 VB 中的字节起始
+    // 逐单元绘制：单元顺序即 z 序；单元内再分三批。
+    // 每批把 VB 绑到"本批数据段"的字节起点；索引缓冲按"全局 quad 序号"编排
+    // （q*4 起 6 个索引），故 BaseVertexLocation 取负值把全局索引拉回本批顶点段：
+    //   effective = base + index = 本批段内局部顶点号（均 >= 0，D3D11 合法）。
+    uint32_t byteOffset = 0;  // 本单元顶点数据的字节起始
     uint32_t quadBase = 0;    // 本单元第一个 quad 的全局 quad 序号
     for (uint32_t i = 0; i < unitCount; ++i) {
         const Painter& p = *units[i].painter;
@@ -754,13 +756,10 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount) {
         }
         ctx_->RSSetScissorRects(1, &sr);
 
-        // 索引缓冲按全局 quad 序号编排（q*4 起 6 个索引），故各批的
-        // BaseVertexLocation = 本单元顶点起始 - 全局 quad 起点，换算成索引重定基
-        const INT base = static_cast<INT>(vtxOffset) - static_cast<INT>(quadBase * 4);
-
         // 矩形批（SDF 圆角矩形）
         if (quads > 0) {
             const UINT off = byteOffset;
+            const INT base = -static_cast<INT>(quadBase * 4);
             ctx_->IASetInputLayout(layout_);
             ctx_->IASetVertexBuffers(0, 1, &vb, &kStride, &off);
             ctx_->VSSetShader(vs_, nullptr, 0);
@@ -771,6 +770,7 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount) {
         // 字形批：按图集页分组，跨页才切换纹理（10-Rendering §6.1）
         if (gquads > 0) {
             const UINT off = byteOffset + quads * 4 * sizeof(Vertex);
+            const INT base = -static_cast<INT>((quadBase + quads) * 4);
             ctx_->IASetInputLayout(layoutG_);
             ctx_->IASetVertexBuffers(0, 1, &vb, &kStrideG, &off);
             ctx_->VSSetShader(vsG_, nullptr, 0);
@@ -782,8 +782,7 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount) {
                 ctx_->PSSetShaderResources(0, 1, &srv);
                 // 组内第一个 quad 的全局序号 = quadBase + quads + g.firstVertex/4
                 const uint32_t gq = quadBase + quads + g.firstVertex / 4;
-                ctx_->DrawIndexed(g.vertexCount / 4 * 6, gq * 6,
-                                  static_cast<INT>(vtxOffset + quads * 4) - static_cast<INT>(gq * 4));
+                ctx_->DrawIndexed(g.vertexCount / 4 * 6, gq * 6, base);
             }
         }
 
@@ -791,16 +790,14 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount) {
         if (squads > 0) {
             const UINT off = byteOffset + quads * 4 * sizeof(Vertex) +
                              gquads * 4 * sizeof(GlyphVertex);
+            const INT base = -static_cast<INT>((quadBase + quads + gquads) * 4);
             ctx_->IASetInputLayout(layoutS_);
             ctx_->IASetVertexBuffers(0, 1, &vb, &kStrideS, &off);
             ctx_->VSSetShader(vsS_, nullptr, 0);
             ctx_->PSSetShader(psS_, nullptr, 0);
-            ctx_->DrawIndexed(squads * 6, (quadBase + quads + gquads) * 6,
-                              static_cast<INT>(vtxOffset + quads * 4 + gquads * 4) -
-                                  static_cast<INT>((quadBase + quads + gquads) * 4));
+            ctx_->DrawIndexed(squads * 6, (quadBase + quads + gquads) * 6, base);
         }
 
-        vtxOffset += (quads + gquads + squads) * 4;
         byteOffset += quads * 4 * sizeof(Vertex) +
                       gquads * 4 * sizeof(GlyphVertex) +
                       squads * 4 * sizeof(ShapeVertex);

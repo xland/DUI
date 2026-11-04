@@ -108,10 +108,17 @@ public:
         RequestFrame();
     }
 
-    // 滚轮：沿祖先链找最近的滚动容器（纵向；Shift + 滚轮横向）
+    // 滚轮：沿祖先链找最近的"该轴还可滚"的滚动容器（内层滚不动 → 冒泡外层；
+    // 纵向滚轮，Shift + 滚轮横向）
     void OnMouseWheel(Vec2 pt, float delta, bool horizontal) override {
         Element* hit = HitTest(window_.Root(), pt);
-        Scroller* sc = FindScroller(hit);
+        Scroller* sc = nullptr;
+        for (Element* p = hit; p != nullptr; p = p->Parent()) {
+            if (p->GetKind() != Kind::Scroller) continue;
+            Scroller* s = static_cast<Scroller*>(p);
+            const float max = horizontal ? s->MaxScrollX() : s->MaxScrollY();
+            if (max > 0.f) { sc = s; break; }
+        }
         if (sc == nullptr) return;
         constexpr float kWheelStep = 48.f;   // 每格滚动量（DIP）
         if (horizontal) sc->ScrollBy(-delta * kWheelStep, 0.f);

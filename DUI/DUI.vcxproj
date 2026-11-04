@@ -77,6 +77,10 @@
     <ClInclude Include="Text\GlyphAtlas.h" />
     <ClInclude Include="Text\TextEngine.h" />
     <ClInclude Include="UI\UI.h" />
+    <ClInclude Include="UI\Style.h" />
+    <ClInclude Include="UI\Element.h" />
+    <ClInclude Include="UI\Panel.h" />
+    <ClInclude Include="UI\Text.h" />
     <ClInclude Include="UI\Canvas.h" />
     <ClInclude Include="UI\Scroller.h" />
     <ClInclude Include="App\App.h" />
@@ -87,7 +91,9 @@
     <ClCompile Include="Core\Dispatcher.cpp" />
     <ClCompile Include="Text\GlyphAtlas.cpp" />
     <ClCompile Include="Text\TextEngine.cpp" />
-    <ClCompile Include="UI\UI.cpp" />
+    <ClCompile Include="UI\Style.cpp" />
+    <ClCompile Include="UI\Element.cpp" />
+    <ClCompile Include="UI\Text.cpp" />
     <ClCompile Include="UI\Canvas.cpp" />
     <ClCompile Include="UI\Scroller.cpp" />
     <ClCompile Include="UI\StyleResolve.cpp" />

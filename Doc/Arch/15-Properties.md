@@ -78,6 +78,20 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `borderColor` | Color | ✗ | Paint | ✓ | 透明 | |
 | `shadow` | ShadowRef | ✗ | Paint | ✗ | None | |
 
+### 4.3.1 滚动条（dui::Scroller 自绘轨道/滑块；MVP 子集，运行时已接入）
+
+轨道（Track）与滑块（Thumb）各自独立一组；宽度 = 纵向条厚度，高度 = 横向条厚度
+（滑块长/轨道长仍由视口与内容比决定，不可直接设置）。
+
+| 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `scrollbarTrackWidth/Height` | Length | ✗ | Paint | ✓ | 10 | 条厚（DIP） |
+| `scrollbarTrackBackgroundColor` | Color | ✗ | Paint | ✓ | 0x1F000000 | |
+| `scrollbarTrackCornerRadius` | Length | ✗ | Paint | ✓ | 0 | 默认直角 |
+| `scrollbarTrackBorderColor` | Color | ✗ | Paint | ✓ | 透明 | |
+| `scrollbarTrackBorderWidth` | Length | ✗ | Paint | ✓ | 0 | 无边框 |
+| `scrollbarThumb*`（同上 6 项） | 同上 | ✗ | Paint | ✓ | 厚 10 / 色 0x73000000 / 直角 / 无边框 | 滑块厚可异于轨道（居中） |
+
 ### 4.4 布局
 
 | 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |

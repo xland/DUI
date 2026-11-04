@@ -59,6 +59,18 @@
     <ClInclude Include="UI\UI.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
+    <ClInclude Include="UI\Style.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="UI\Element.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="UI\Panel.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="UI\Text.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
     <ClInclude Include="UI\Canvas.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
@@ -91,7 +103,13 @@
     <ClCompile Include="Text\TextEngine.cpp">
       <Filter>源文件\Text</Filter>
     </ClCompile>
-    <ClCompile Include="UI\UI.cpp">
+    <ClCompile Include="UI\Style.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\Element.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\Text.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
     <ClCompile Include="UI\Canvas.cpp">

@@ -62,7 +62,8 @@ Build\Temp\<工程名>\Debug|Release\   中间产物（obj 等）
 DUI/DUI.h              公共入口
 DUI/Core/Core.h        Result<T>、String/Color/Rect/Thickness
 DUI/Core/Threading.h   Lifetime、Background/Foreground、Task<T>（同步 stub）
-DUI/UI/UI.h/.cpp       Prop/State 枚举、Style/StyleBuilder、Element、Panel/Text/Button/ScrollView、ClickEvent
+DUI/UI/UI.h            聚合头（Style.h / Element.h / Panel.h / Text.h + 布局/事件入口声明）：
+                       Prop/State 枚举、Style/StyleBuilder、Element、Panel、Text/Button、ClickEvent
 DUI/App/App.h/.cpp     WindowOptions、Window（Root/Scale/OnCreate/OnDpiChanged/OnClosing）、Application
 DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口过程/WM_DPICHANGED）
                        NativeWindowHost 事件接口（App 层适配到 dui::Window，保住分层单向依赖）
@@ -353,7 +354,8 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
   - API：`ScrollOffset/SetScrollOffset/ScrollBy`、`Viewport`、`ContentSize`（内容实际范围）、
     `NaturalSize`（内容自然尺寸）、`MaxScrollX/Y`、`HitScrollBar`、
     `BeginBarDrag/UpdateBarDrag/EndBarDrag`、`ClampScroll`、`PaintScrollBars`；
-  - 滚动条外观为基础版固定常量（10 DIP 厚、2 DIP 边距、28 DIP 最小滑块），**未接入样式系统**。
+  - 滚动条外观接入样式系统（Track* / Thumb* 属性：厚 10 DIP 默认、直角无边框，
+    可设宽度/高度/背景色/圆角/边框色/边框粗细）；边距 2 DIP 与滑块最小长 28 DIP 仍为常量。
 - **Graphics 支持多绘制单元 + 裁剪**：
   - `Painter::SetOrigin(dipX, dipY, scale)`：整段绘制平移（滚动内容用）；
   - `struct DrawUnit { const Painter* painter; Rect clipPx; }`，
@@ -395,7 +397,7 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
     （否则裁剪带留在原位，背景被裁没、只有文字看似在动）。
 - **已知限制**（后续项）：
   - 无平滑滚动 / 惯性（`UI.Animation` 联动列 P1）；无键盘滚动（PageUp/Down / 方向键）；
-  - 滚动条不随悬停淡出、不接入样式系统；
+  - 滚动条不随悬停淡出（可经 `When(State::Hover, ...)` 变体 + 颜色过渡自行实现）；
   - 滚动量按像素（无行滚动 / 吸附）；
   - **视口外的内容仍参与收集**（MVP 未做视口剔除，10-Rendering §2 的"裁剪剔除"待补）
     → 收集量与内容总量成正比，长列表需自行控制条目数；

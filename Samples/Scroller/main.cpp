@@ -27,8 +27,7 @@ constexpr dui::Color kPalette[] = {
 };
 
 // 追加一条带序号的文本（Text 持有字符串副本）
-dui::Text* AddNumbered(dui::Panel* parent, const wchar_t* prefix, int index,
-                       dui::StyleBuilder style) {
+dui::Text* AddNumbered(dui::Panel* parent, const wchar_t* prefix, int index, dui::StyleBuilder style) {
     wchar_t buf[64] = {};
     std::swprintf(buf, 64, L"%s %02d", prefix, index);
     return parent->AddChild<dui::Text>(buf, style);

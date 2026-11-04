@@ -12,18 +12,22 @@ namespace dui {
 
 namespace {
 
-// 滚动条外观（基础版：固定尺寸，不接入样式系统）
-constexpr float kBarThickness = 10.f;    // 条厚（DIP）
+// 滚动条布局常量；外观（厚/色/圆角/边框）走样式（Track* / Thumb* 属性）
 constexpr float kBarGap = 2.f;          // 与视口边缘间距（DIP）
 constexpr float kMinThumb = 28.f;       // 滑块最小长度（DIP）
-constexpr Color kTrackColor = 0x1F000000;
-constexpr Color kThumbColor = 0x73000000;
 
 bool InRect(const Rect& r, const Vec2& p) {
     return p.x >= r.x && p.x <= r.Right() && p.y >= r.y && p.y <= r.Bottom();
 }
 
 }  // namespace
+
+// 条厚：纵向条取 *Width，横向条取 *Height（默认 10 DIP，见 BuiltinDefault）
+float Scroller::BarThickness(bool vertical, bool thumb) const {
+    const Prop p = vertical ? (thumb ? Prop::ScrollbarThumbWidth : Prop::ScrollbarTrackWidth)
+                            : (thumb ? Prop::ScrollbarThumbHeight : Prop::ScrollbarTrackHeight);
+    return std::max(0.f, ResolveProperty(this, p).f);
+}
 
 // ---------------------------------------------------------------------------
 // 偏移
@@ -86,8 +90,9 @@ bool Scroller::HorizontalBarVisible() const {
 
 Rect Scroller::VerticalTrackRect() const {
     const Rect v = Viewport();
-    return Rect{v.Right() - kBarThickness - kBarGap, v.y + kBarGap,
-                kBarThickness, std::max(0.f, v.h - kBarGap * 2.f)};
+    const float t = BarThickness(true, false);
+    return Rect{v.Right() - t - kBarGap, v.y + kBarGap,
+                t, std::max(0.f, v.h - kBarGap * 2.f)};
 }
 
 Rect Scroller::VerticalThumbRect() const {
@@ -97,13 +102,15 @@ Rect Scroller::VerticalThumbRect() const {
     const float ratio = Viewport().h / std::max(1.f, contentSize_.y);
     const float len = std::clamp(t.h * ratio, std::min(kMinThumb, t.h), t.h);
     const float pos = t.y + (offset_.y / max) * (t.h - len);
-    return Rect{t.x, pos, t.w, len};
+    const float th = BarThickness(true, true);   // 滑块厚可异于轨道，居中
+    return Rect{t.x + (t.w - th) * 0.5f, pos, th, len};
 }
 
 Rect Scroller::HorizontalTrackRect() const {
     const Rect v = Viewport();
-    return Rect{v.x + kBarGap, v.Bottom() - kBarThickness - kBarGap,
-                std::max(0.f, v.w - kBarGap * 2.f), kBarThickness};
+    const float t = BarThickness(false, false);
+    return Rect{v.x + kBarGap, v.Bottom() - t - kBarGap,
+                std::max(0.f, v.w - kBarGap * 2.f), t};
 }
 
 Rect Scroller::HorizontalThumbRect() const {
@@ -113,7 +120,8 @@ Rect Scroller::HorizontalThumbRect() const {
     const float ratio = Viewport().w / std::max(1.f, contentSize_.x);
     const float len = std::clamp(t.w * ratio, std::min(kMinThumb, t.w), t.w);
     const float pos = t.x + (offset_.x / max) * (t.w - len);
-    return Rect{pos, t.y, len, t.h};
+    const float th = BarThickness(false, true);
+    return Rect{pos, t.y + (t.h - th) * 0.5f, len, th};
 }
 
 // ---------------------------------------------------------------------------
@@ -193,14 +201,33 @@ Vec2 Scroller::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail)
     return total;
 }
 
+// 按样式画一段轨道或滑块：背景填充 + 可选边框（圆角默认 0 = 直角）
+void Scroller::PaintBar(graphics::Painter& p, const Rect& r, bool thumb, float scale) {
+    if (r.w <= 0.f || r.h <= 0.f) return;
+    const Prop bg  = thumb ? Prop::ScrollbarThumbBackgroundColor : Prop::ScrollbarTrackBackgroundColor;
+    const Prop rad = thumb ? Prop::ScrollbarThumbCornerRadius : Prop::ScrollbarTrackCornerRadius;
+    const Prop bc  = thumb ? Prop::ScrollbarThumbBorderColor : Prop::ScrollbarTrackBorderColor;
+    const Prop bw  = thumb ? Prop::ScrollbarThumbBorderWidth : Prop::ScrollbarTrackBorderWidth;
+
+    const float radius = ResolveProperty(this, rad).f;
+    const Color color = ResolveProperty(this, bg).u;
+    if (color != 0) p.FillRoundedRect(r, radius, color, 1.f, scale);
+
+    const float border = ResolveProperty(this, bw).f;
+    if (border > 0.f) {
+        const Color borderColor = ResolveProperty(this, bc).u;
+        if (borderColor != 0) p.StrokeRoundRect(r, radius, border, borderColor, scale);
+    }
+}
+
 void Scroller::PaintScrollBars(graphics::Painter& p, float scale) {
     if (VerticalBarVisible()) {
-        p.FillRoundedRect(VerticalTrackRect(), kBarThickness * 0.5f, kTrackColor, 1.f, scale);
-        p.FillRoundedRect(VerticalThumbRect(), kBarThickness * 0.5f, kThumbColor, 1.f, scale);
+        PaintBar(p, VerticalTrackRect(), false, scale);
+        PaintBar(p, VerticalThumbRect(), true, scale);
     }
     if (HorizontalBarVisible()) {
-        p.FillRoundedRect(HorizontalTrackRect(), kBarThickness * 0.5f, kTrackColor, 1.f, scale);
-        p.FillRoundedRect(HorizontalThumbRect(), kBarThickness * 0.5f, kThumbColor, 1.f, scale);
+        PaintBar(p, HorizontalTrackRect(), false, scale);
+        PaintBar(p, HorizontalThumbRect(), true, scale);
     }
 }
 

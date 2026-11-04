@@ -166,6 +166,59 @@ Engine::~Engine() {
     if (factory_ != nullptr) factory_->Release();
 }
 
+bool Engine::LoadFontFile(const wchar_t* path, String& familyOut) {
+    familyOut.clear();
+    if (!Ready()) return false;
+    if (customFonts_ != nullptr) { familyOut = customFamily_; return true; }   // 只装一次
+
+    // 字体文件 → 字体面引用 → FontSet → 字体集合（IDWriteFactory3，Win10+；
+    // classic 的 CustomFontCollection + Loader 样板太重，此处不走）
+    IDWriteFactory3* f3 = nullptr;
+    if (FAILED(factory_->QueryInterface(&f3))) return false;
+
+    bool ok = false;
+    IDWriteFontFile* file = nullptr;
+    IDWriteFontFaceReference* ref = nullptr;
+    IDWriteFontSetBuilder* sb = nullptr;
+    IDWriteFontSet* set = nullptr;
+    IDWriteFontCollection1* c = nullptr;
+    if (SUCCEEDED(factory_->CreateFontFileReference(path, nullptr, &file)) &&
+        SUCCEEDED(f3->CreateFontFaceReference(file, 0, DWRITE_FONT_SIMULATIONS_NONE, &ref)) &&
+        SUCCEEDED(f3->CreateFontSetBuilder(&sb)) &&
+        SUCCEEDED(sb->AddFontFaceReference(ref)) &&
+        SUCCEEDED(sb->CreateFontSet(&set)) &&
+        SUCCEEDED(f3->CreateFontCollectionFromFontSet(set, &c))) {
+        // 取首字体的族名（iconfont 类单字体重只有一个族）
+        IDWriteFontFamily* fam = nullptr;
+        if (SUCCEEDED(c->GetFontFamily(0, &fam))) {
+            IDWriteLocalizedStrings* names = nullptr;
+            UINT32 len = 0;
+            if (SUCCEEDED(fam->GetFamilyNames(&names)) && names->GetCount() > 0 &&
+                SUCCEEDED(names->GetStringLength(0, &len))) {
+                std::vector<wchar_t> buf(len + 1);
+                if (SUCCEEDED(names->GetString(0, buf.data(), len + 1))) {
+                    customFamily_ = buf.data();
+                }
+            }
+            if (names != nullptr) names->Release();
+            fam->Release();
+        }
+        if (!customFamily_.empty()) {
+            customFonts_ = c;   // 生命周期归引擎
+            familyOut = customFamily_;
+            ok = true;
+        } else {
+            c->Release();
+        }
+    }
+    if (set != nullptr) set->Release();
+    if (sb != nullptr) sb->Release();
+    if (ref != nullptr) ref->Release();
+    if (file != nullptr) file->Release();
+    f3->Release();
+    return ok;
+}
+
 Paragraph* Engine::Shape(Paragraph* p, const wchar_t* text, float fontSize,
                          uint32_t weight, float lineHeight, float maxWidth,
                          const wchar_t* family) {
@@ -195,6 +248,11 @@ Paragraph* Engine::Shape(Paragraph* p, const wchar_t* text, float fontSize,
         p->layout->SetFontSize(fontSize, all);
         p->layout->SetFontWeight(static_cast<DWRITE_FONT_WEIGHT>(weight), all);
         if (fam != nullptr) {
+            // 自定义字体集合（LoadFontFile 装入）：layout 默认挂在系统集合上，
+            // 必须连集合一起替换，否则族名命中不到 → DWrite 静默回退默认字体
+            if (customFonts_ != nullptr && customFamily_ == fam) {
+                p->layout->SetFontCollection(customFonts_, all);
+            }
             // 开发者指定字体族（系统已安装任意字体）；未安装时 DWrite 自动回退默认
             p->layout->SetFontFamilyName(fam, all);
         }
@@ -288,3 +346,17 @@ bool Engine::RasterCb(void* ctx, const void* face, uint32_t glyphIndex, uint32_t
 }
 
 }  // namespace dui::text
+
+// ---------------------------------------------------------------------------
+// 公共 API（DUI.h）：加载字体文件 → 返回字体族名
+// ---------------------------------------------------------------------------
+
+namespace dui {
+
+String LoadFontFamily(const wchar_t* fontFilePath) {
+    String family;
+    text::Engine::Get().LoadFontFile(fontFilePath, family);
+    return family;
+}
+
+}  // namespace dui

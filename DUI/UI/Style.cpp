@@ -1,11 +1,11 @@
 // ============================================================================
-//  DUI/UI/UI.cpp — 样式与元素的实现
-//  级联解析 / 布局 / 命中测试分别在 StyleResolve.cpp / Layout.cpp / Event.cpp。
+//  DUI/UI/Style.cpp — Style 与 StyleBuilder 的实现
+//  级联解析在 StyleResolve.cpp；元素实现在 Element.cpp。
 // ============================================================================
 
-#include "UI/UI.h"
+#include "UI/Style.h"
 
-#include "Text/TextEngine.h"
+#include <algorithm>
 
 namespace dui {
 
@@ -72,6 +72,19 @@ StyleBuilder& StyleBuilder::LineHeight(float multiple)      { return SetF(Prop::
 StyleBuilder& StyleBuilder::Opacity(float v)                { return SetF(Prop::Opacity, v); }
 StyleBuilder& StyleBuilder::Gap(float dip)                  { return SetF(Prop::Gap, dip); }
 
+StyleBuilder& StyleBuilder::TrackWidth(float dip)            { return SetF(Prop::ScrollbarTrackWidth, dip); }
+StyleBuilder& StyleBuilder::TrackHeight(float dip)           { return SetF(Prop::ScrollbarTrackHeight, dip); }
+StyleBuilder& StyleBuilder::TrackBackground(dui::Color c)    { return SetU(Prop::ScrollbarTrackBackgroundColor, c); }
+StyleBuilder& StyleBuilder::TrackCornerRadius(float dip)     { return SetF(Prop::ScrollbarTrackCornerRadius, dip); }
+StyleBuilder& StyleBuilder::TrackBorderColor(dui::Color c)   { return SetU(Prop::ScrollbarTrackBorderColor, c); }
+StyleBuilder& StyleBuilder::TrackBorderWidth(float dip)      { return SetF(Prop::ScrollbarTrackBorderWidth, dip); }
+StyleBuilder& StyleBuilder::ThumbWidth(float dip)            { return SetF(Prop::ScrollbarThumbWidth, dip); }
+StyleBuilder& StyleBuilder::ThumbHeight(float dip)           { return SetF(Prop::ScrollbarThumbHeight, dip); }
+StyleBuilder& StyleBuilder::ThumbBackground(dui::Color c)    { return SetU(Prop::ScrollbarThumbBackgroundColor, c); }
+StyleBuilder& StyleBuilder::ThumbCornerRadius(float dip)     { return SetF(Prop::ScrollbarThumbCornerRadius, dip); }
+StyleBuilder& StyleBuilder::ThumbBorderColor(dui::Color c)   { return SetU(Prop::ScrollbarThumbBorderColor, c); }
+StyleBuilder& StyleBuilder::ThumbBorderWidth(float dip)      { return SetF(Prop::ScrollbarThumbBorderWidth, dip); }
+
 StyleBuilder& StyleBuilder::Padding(float all) {
     return Padding(Thickness(all));
 }
@@ -124,101 +137,6 @@ StyleBuilder& StyleBuilder::When(State s, const StyleBuilder& variant) {
     }
     style_.states_.emplace_back(s, variant.style_);
     return *this;
-}
-
-// ---------------------------------------------------------------------------
-// Element
-// ---------------------------------------------------------------------------
-
-Element::~Element() {
-    lifetime_.Kill();   // 生命周期令牌置否：延迟回投的回调据此丢弃（06-Events D7）
-    for (Element* c : children_) delete c;
-}
-
-void Element::AttachChild(Element* child) {
-    child->parent_ = this;
-    children_.push_back(child);
-    MarkDirty(kFlagLayout);   // 子项集合变化 → 重排
-}
-
-void Element::SetOverride(Prop p, float f, uint32_t u) {
-    for (StyleValue& v : overrides_) {
-        if (v.prop == p) { v.f = f; v.u = u; MarkDirty(PropFlagsOf(p)); return; }
-    }
-    StyleValue nv;
-    nv.prop = p;
-    nv.f = f;
-    nv.u = u;
-    overrides_.push_back(nv);
-    MarkDirty(PropFlagsOf(p));
-}
-
-void Element::SetState(State s, bool on) {
-    const uint32_t mask = static_cast<uint32_t>(s);
-    const uint32_t next = on ? (states_ | mask) : (states_ & ~mask);
-    if (next == states_) return;   // 相同值幂等：不标脏、不重建过渡（03-Style §6.2）
-    states_ = next;
-    // 标脏 = 该状态变体中各属性的失效标志并集（03-Style §7）；无变体则无视觉变化
-    uint32_t flags = 0;
-    for (const Style* st = style_; st != nullptr; st = st->Parent()) {
-        if (const Style* variant = st->StateVariant(s)) {
-            for (const StyleValue& d : variant->decls_) flags |= PropFlagsOf(d.prop);
-        }
-    }
-    if (flags != 0) MarkDirty(flags);
-}
-
-void Element::MarkDirty(uint32_t flags) {
-    if (flags == 0) return;
-    dirty_ |= flags;
-    for (Element* a = this; a != nullptr && !a->subtreeDirty_; a = a->parent_) {
-        a->subtreeDirty_ = true;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Measure：容器默认 = 子项沿主轴聚合（04-Layout §4.1/§6.1）
-// ---------------------------------------------------------------------------
-
-Vec2 Element::MeasureContent(const StyleContext& ctx, const Vec2& avail) const {
-    const uint32_t dir = ResolveProperty(this, Prop::FlexDirection, ctx).u;
-    const float gap = ResolveProperty(this, Prop::Gap, ctx).f;
-    const bool row = dir == static_cast<uint32_t>(FlexDirection::Row);
-
-    Vec2 total{};
-    bool first = true;
-    for (Element* c : children_) {
-        if (ResolveProperty(c, Prop::Display, ctx).u == static_cast<uint32_t>(Display::None)) continue;
-        const Vec2 cs = MeasureElement(c, avail, ctx);
-        if (row) {
-            total.x += cs.x + (first ? 0.f : gap);
-            if (cs.y > total.y) total.y = cs.y;
-        } else {
-            total.y += cs.y + (first ? 0.f : gap);
-            if (cs.x > total.x) total.x = cs.x;
-        }
-        first = false;
-    }
-    return total;
-}
-
-Vec2 Text::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) const {
-    text::Engine& en = text::Engine::Get();
-    if (!en.Ready()) {
-        // DWrite 不可用：M3 占位估算兜底（CJK 1em、其余 0.55em）
-        float units = 0.f;
-        for (const wchar_t ch : text_) units += (ch >= 0x2E80) ? 1.0f : 0.55f;
-        return {units * ctx.fontSize, ctx.fontSize * ctx.lineHeight};
-    }
-    const float maxW = contentAvail.x > 0.f ? contentAvail.x : 1e6f;   // 不限宽
-    const uint32_t weight = ResolveProperty(this, Prop::FontWeight, ctx).u;
-    para_ = en.Shape(static_cast<text::Paragraph*>(para_), text_.c_str(),
-                     ctx.fontSize, weight, ctx.lineHeight, maxW, ctx.family);
-    return para_ != nullptr ? static_cast<text::Paragraph*>(para_)->size : Vec2{};
-}
-
-Text::~Text() {
-    text::Engine::Get().Discard(static_cast<text::Paragraph*>(para_));
 }
 
 }  // namespace dui

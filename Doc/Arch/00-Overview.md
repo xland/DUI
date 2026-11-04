@@ -85,7 +85,7 @@ DUI.slnx                 解决方案：x64 单一平台，五个工程
 DUI/                     库工程（DUI.vcxproj，静态库）
   DUI.h                  公共入口（业务代码唯一 include）
   Core/                  Result、String/Color/Rect/Thickness、协程 Task（M1 骨架）
-  UI/                    Element、Style/StyleBuilder、Panel/Text/Button/ScrollView/Canvas/Scroller、事件（M1 骨架）
+  UI/                    Style/StyleBuilder、Element、Panel、Text/Button、Canvas/Scroller、事件（M1 骨架）
   App/                   Application、Window/WindowOptions（M1 骨架）
   Platform/              NativeWindow（HWND 封装、窗口过程、DPI 感知清单）（M2）
   Graphics/              Device（D3D11/Flip Model/BGRA8）+ Painter（SDF 圆角矩形 + 字形批 + 形状批 + 原点偏移）（M3/M5/M5.6）
@@ -95,6 +95,7 @@ Samples/                 示例工程（每个示例一个子目录 = 一个工�
   LayoutFlex/            Flex 布局能力演示（grow/shrink/对齐/gap/嵌套）
   Canvas/                2D 绘图控件演示（直线/折线/多边形/矩形/圆角矩形/圆/椭圆/圆弧）
   Scroller/              滚动容器演示（纵向列表 / 双向滚动 / 嵌套滚动）
+  CustomFont/            自定义字体演示（加载未安装的 iconfont.ttf 渲染字体图标）
 Build/                   产物根：Build\<工程>\<配置>\ 最终产物；Build\Temp\<工程>\<配置>\ 中间产物
 DUI.props                公共编译基线（库与子工程共同 import，根目录）
 Doc/Arch/                本文档集

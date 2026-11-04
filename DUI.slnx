@@ -7,4 +7,5 @@
   <Project Path="Samples/LayoutFlex/LayoutFlex.vcxproj" Id="5e2b8f47-1c63-4d9a-b7e8-2a4f6c9d0e15" />
   <Project Path="Samples/Canvas/Canvas.vcxproj" Id="7c1d4e29-8b53-4f6a-9d02-3e5a71c4b8f6" />
   <Project Path="Samples/Scroller/Scroller.vcxproj" Id="4a8f2c13-6d5e-4b7a-9c31-2f6e8d0a5b47" />
+  <Project Path="Samples/CustomFont/CustomFont.vcxproj" Id="6e4b8d52-3a91-4c07-b5f8-9d2e1a6c0f43" />
 </Solution>

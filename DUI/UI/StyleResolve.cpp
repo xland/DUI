@@ -106,6 +106,13 @@ StyleValue BuiltinDefault(Prop p) {
     case Prop::Opacity:      return MakeF(p, 1.f);
     case Prop::FlexShrink:   return MakeF(p, 1.f);   // 15-Properties §4.4
     case Prop::FlexDirection: return MakeU(p, static_cast<uint32_t>(FlexDirection::Column));
+    // 滚动条：厚 10 DIP，轨道/滑块半透明黑；直角、无边框（圆角/边框走 0 兜底）
+    case Prop::ScrollbarTrackWidth:
+    case Prop::ScrollbarTrackHeight:
+    case Prop::ScrollbarThumbWidth:
+    case Prop::ScrollbarThumbHeight:        return MakeF(p, 10.f);
+    case Prop::ScrollbarTrackBackgroundColor: return MakeU(p, 0x1F000000);
+    case Prop::ScrollbarThumbBackgroundColor: return MakeU(p, 0x73000000);
     default:
         return MakeU(p, 0);   // Flex / 透明 / 0 尺寸
     }
@@ -155,6 +162,19 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::CornerRadius:
     case Prop::Opacity:
     case Prop::TextAlign:
+    // 滚动条外观（不改布局，几何每帧按属性重算）
+    case Prop::ScrollbarTrackWidth:
+    case Prop::ScrollbarTrackHeight:
+    case Prop::ScrollbarTrackBackgroundColor:
+    case Prop::ScrollbarTrackCornerRadius:
+    case Prop::ScrollbarTrackBorderColor:
+    case Prop::ScrollbarTrackBorderWidth:
+    case Prop::ScrollbarThumbWidth:
+    case Prop::ScrollbarThumbHeight:
+    case Prop::ScrollbarThumbBackgroundColor:
+    case Prop::ScrollbarThumbCornerRadius:
+    case Prop::ScrollbarThumbBorderColor:
+    case Prop::ScrollbarThumbBorderWidth:
         return kFlagPaint;
     // Layout：需重新布局（含文本类排版属性，M5 拆出 Text 层）
     case Prop::FontSize:

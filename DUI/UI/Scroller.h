@@ -66,6 +66,11 @@ protected:
     Vec2 MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) const override;
 
 private:
+    // 条厚（DIP）：纵向取 *Width、横向取 *Height；thumb=false 轨道 / true 滑块
+    float BarThickness(bool vertical, bool thumb) const;
+    // 按样式画一段轨道或滑块（背景 + 可选边框）
+    void PaintBar(graphics::Painter& p, const Rect& r, bool thumb, float scale);
+
     Vec2 offset_{};
     mutable Vec2 contentSize_{};   // 内容实际范围（布局后写入）
     mutable Vec2 natSize_{};       // 内容自然尺寸（测量期写入）

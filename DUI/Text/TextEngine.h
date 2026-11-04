@@ -47,11 +47,17 @@ public:
     const GlyphUV& GetGlyph(const void* face, uint32_t glyphIndex, uint32_t pixelSize, uint32_t phase);
 
     // ensure 语义：缓存键全等则复用（measure 每帧调用，命中零 COM 开销）。
-    // family = nullptr / 空串 → 引擎默认（微软雅黑）；否则须为系统已安装字体族名
+    // family = nullptr / 空串 → 引擎默认（微软雅黑）；否则须为系统已安装字体族名，
+    // 或经 LoadFontFile 装入的字体族名
     Paragraph* Shape(Paragraph* cached, const wchar_t* text, float fontSize,
                      uint32_t weight, float lineHeight, float maxWidth,
                      const wchar_t* family);
     void Discard(Paragraph* p);
+
+    // 加载未安装的字体文件（ttf/otf）为进程内字体集合（DWrite FontCollectionBuilder，
+    // Win10+）。成功后 familyOut 返回其字体族名（可用于 Shape/FontFamily）；
+    // 引擎生命周期内只装一个文件，重复调用直接返回已装族名。
+    bool LoadFontFile(const wchar_t* path, String& familyOut);
 
     // 收集字形 quad。originDip = 文本原点（元素 bounds + padding）的 DIP 坐标
     void Draw(Paragraph* p, graphics::Painter& painter, float scale, Vec2 originDip, Color color);
@@ -71,6 +77,8 @@ private:
     IDWriteFactory2*       factory2_ = nullptr;   // 灰度 AA + 1/4 像素相位（CreateGlyphRunAnalysis 带 antialiasMode）
     IDWriteFontCollection* fonts_ = nullptr;
     IDWriteTextFormat*     baseFormat_ = nullptr;   // 家族/风格基座；字号字重由 layout 覆盖
+    IDWriteFontCollection* customFonts_ = nullptr;  // LoadFontFile 装入的字体集合
+    String                 customFamily_;          // 集合内首字体的族名（空 = 未装入）
     GlyphAtlas             atlas_;
 };
 

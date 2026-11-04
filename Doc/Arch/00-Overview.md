@@ -85,7 +85,7 @@ DUI.slnx                 解决方案：x64 单一平台，五个工程
 DUI/                     库工程（DUI.vcxproj，静态库）
   DUI.h                  公共入口（业务代码唯一 include）
   Core/                  Result、String/Color/Rect/Thickness、协程 Task（M1 骨架）
-  UI/                    Style/StyleBuilder、Element、Panel、Text/Button、Canvas/Scroller、事件（M1 骨架）
+  UI/                    Style（声明集 + 链式构造合一）、Element、Panel、Text/Button、Canvas/Scroller、事件（M1 骨架）
   App/                   Application、Window/WindowOptions（M1 骨架）
   Platform/              NativeWindow（HWND 封装、窗口过程、DPI 感知清单）（M2）
   Graphics/              Device（D3D11/Flip Model/BGRA8）+ Painter（SDF 圆角矩形 + 字形批 + 形状批 + 原点偏移）（M3/M5/M5.6）

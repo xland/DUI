@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 //  Samples/Canvas/main.cpp — 2D 绘图控件（dui::Canvas）示例
 //
 //  演示 Canvas 的图元 API：直线 / 折线 / 多边形 / 矩形 / 圆角矩形 /
@@ -68,20 +68,20 @@ public:
 protected:
     void OnCreate() override {   // 原生窗口已建、尚未显示
         dui::Panel* root = Root();
-        root->SetStyle(dui::StyleBuilder()
+        root->SetStyle(dui::Style()
             .FlexDirection(dui::FlexDirection::Column)
             .Gap(10.f)
             .Padding(16.f)
             .Background(0xFFF3F4F6));
 
-        root->AddChild<dui::Text>(L"DUI Canvas — 2D 绘图控件", dui::StyleBuilder()
+        root->AddChild<dui::Text>(L"DUI Canvas — 2D 绘图控件", dui::Style()
             .FontSize(20.f).Color(0xFF111827));
         root->AddChild<dui::Text>(
             L"图元：直线 / 折线 / 多边形 / 矩形 / 圆角矩形 / 圆 / 椭圆 / 圆弧"
             L"（坐标为画布局部 DIP，原点 = 画布左上角）",
-            dui::StyleBuilder().FontSize(13.f).Color(0xFF6B7280));
+            dui::Style().FontSize(13.f).Color(0xFF6B7280));
 
-        dui::Canvas* canvas = root->AddChild<dui::Canvas>(dui::StyleBuilder()
+        dui::Canvas* canvas = root->AddChild<dui::Canvas>(dui::Style()
             .FlexGrow(1.f)
             .Background(0xFFFFFFFF)
             .CornerRadius(10.f));

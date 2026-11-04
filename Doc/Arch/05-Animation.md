@@ -46,11 +46,10 @@ card { animation: pulse 600ms ease-in-out 3; }
 
 ```cpp
 // 对应的 DUI 写法（无运行时解析，编译期构造）
-static const Style kButton = StyleBuilder("button")
+static const Style kButton = Style("button")
     .Background(0xFF2D7FF9)
     .Transition(Prop::BackgroundColor, 150, Easing::EaseOut)
-    .When(State::Hover, StyleBuilder().Background(0xFF1A6FE0))
-    .Build();
+    .When(State::Hover, Style().Background(0xFF1A6FE0));
 // hover 进入/离开时背景色 150ms 补间，起点为当前显示值
 
 static const Keyframes kPulse = KeyframesBuilder("pulse")

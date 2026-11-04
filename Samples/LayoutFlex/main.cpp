@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 //  LayoutFlex/main.cpp — Flex 布局能力演示
 //
 //  覆盖能力（04-Layout）：FlexDirection Row/Column、Gap、Padding、
@@ -20,7 +20,7 @@ namespace {
 
 // 分区小标题
 void NewCaption(dui::Panel* parent, const wchar_t* text) {
-    parent->AddChild<dui::Text>(text, dui::StyleBuilder()
+    parent->AddChild<dui::Text>(text, dui::Style()
         .FontSize(12.f)
         .Color(0xFF777777));
 }
@@ -28,7 +28,7 @@ void NewCaption(dui::Panel* parent, const wchar_t* text) {
 // 演示用色块：标签文字在块内双轴居中。width/height/grow/shrink ≤0 表示不设置
 dui::Panel* NewBox(dui::Panel* parent, const wchar_t* label, dui::Color bg,
                    float width, float height, float grow = 0.f, float shrink = 0.f) {
-    dui::StyleBuilder b = dui::StyleBuilder()
+    dui::Style b = dui::Style()
         .FlexDirection(dui::FlexDirection::Column)
         .JustifyContent(dui::Justify::Center)
         .AlignItems(dui::Align::Center)
@@ -59,7 +59,7 @@ public:
 protected:
     void OnCreate() override {
         dui::Panel* root = Root();
-        root->SetStyle(dui::StyleBuilder()
+        root->SetStyle(dui::Style()
             .FlexDirection(dui::FlexDirection::Column)
             .Padding(16.f)
             .Gap(10.f)
@@ -67,14 +67,14 @@ protected:
             .Color(0xFF222222)
             .FontSize(13.f));
 
-        root->AddChild<dui::Text>(L"Flex 布局能力演示", dui::StyleBuilder()
+        root->AddChild<dui::Text>(L"Flex 布局能力演示", dui::Style()
             .FontSize(18.f)
             .FontWeight(dui::FontWeight::SemiBold)
             .Color(0xFF333333));
 
         // ---- FlexGrow：剩余空间按 grow 比例分配（三等分） -------------------
         NewCaption(root, L"FlexGrow：三等分");
-        dui::Panel* rowA = root->AddChild<dui::Panel>(dui::StyleBuilder()
+        dui::Panel* rowA = root->AddChild<dui::Panel>(dui::Style()
             .FlexDirection(dui::FlexDirection::Row)
             .Gap(8.f));
         NewBox(rowA, L"grow=1", 0xFF4472C4, 0.f, 48.f, 1.f);
@@ -83,7 +83,7 @@ protected:
 
         // ---- 定宽 + 弹性：固定尺寸项不参与分配，弹性项吃满剩余 -------------
         NewCaption(root, L"定宽 + 弹性：中间项 FlexGrow 吃满剩余空间");
-        dui::Panel* rowB = root->AddChild<dui::Panel>(dui::StyleBuilder()
+        dui::Panel* rowB = root->AddChild<dui::Panel>(dui::Style()
             .FlexDirection(dui::FlexDirection::Row)
             .Gap(8.f));
         NewBox(rowB, L"width=140", 0xFF70AD47, 140.f, 48.f);
@@ -92,7 +92,7 @@ protected:
 
         // ---- FlexShrink：超出的固定宽度按 shrink × 尺寸加权收缩 ------------
         NewCaption(root, L"FlexShrink：3 × 320 超出容器，收缩至放得下");
-        dui::Panel* rowC = root->AddChild<dui::Panel>(dui::StyleBuilder()
+        dui::Panel* rowC = root->AddChild<dui::Panel>(dui::Style()
             .FlexDirection(dui::FlexDirection::Row)
             .Gap(8.f));
         NewBox(rowC, L"shrink=1", 0xFFED7D31, 320.f, 48.f, 0.f, 1.f);
@@ -101,19 +101,19 @@ protected:
 
         // ---- 对齐：容器内主轴/交叉轴双居中 ---------------------------------
         NewCaption(root, L"JustifyContent + AlignItems：双轴居中");
-        dui::Panel* rowD = root->AddChild<dui::Panel>(dui::StyleBuilder()
+        dui::Panel* rowD = root->AddChild<dui::Panel>(dui::Style()
             .JustifyContent(dui::Justify::Center)
             .AlignItems(dui::Align::Center)
             .Height(110.f)
             .Background(0xFFE7E6E6)
             .CornerRadius(4.f));
-        rowD->AddChild<dui::Text>(L"水平垂直居中", dui::StyleBuilder()
+        rowD->AddChild<dui::Text>(L"水平垂直居中", dui::Style()
             .FontSize(20.f)
             .FontWeight(dui::FontWeight::SemiBold));
 
         // ---- Gap：子项间距（主轴方向） -------------------------------------
         NewCaption(root, L"Gap：子项间距 16");
-        dui::Panel* rowE = root->AddChild<dui::Panel>(dui::StyleBuilder()
+        dui::Panel* rowE = root->AddChild<dui::Panel>(dui::Style()
             .FlexDirection(dui::FlexDirection::Row)
             .Gap(16.f));
         NewBox(rowE, L"80", 0xFF7030A0, 80.f, 48.f);

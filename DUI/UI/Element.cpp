@@ -5,6 +5,8 @@
 
 #include "UI/Element.h"
 
+#include <algorithm>
+
 namespace dui {
 
 Element::~Element() {
@@ -59,8 +61,36 @@ void Element::MarkDirty(uint32_t flags) {
 
 Vec2 Element::MeasureContent(const StyleContext& ctx, const Vec2& avail) const {
     const uint32_t dir = ResolveProperty(this, Prop::FlexDirection, ctx).u;
+    const uint32_t wrap = ResolveProperty(this, Prop::FlexWrap, ctx).u;
     const float gap = ResolveProperty(this, Prop::Gap, ctx).f;
     const bool row = dir == static_cast<uint32_t>(FlexDirection::Row);
+
+    // 换行流式布局（Row + Wrap）：按可用主轴宽贪心断行——
+    // 自然主轴 = 最长行宽，交叉轴 = 各行高之和（行间同 gap）。
+    // avail 不受限（1e6 透传）时不换行，走下方单行聚合。
+    if (row && wrap == static_cast<uint32_t>(FlexWrap::Wrap) && avail.x < 1e5f) {
+        Vec2 total{};
+        float lineW = 0.f, lineH = 0.f;
+        bool first = true;
+        for (Element* c : children_) {
+            if (ResolveProperty(c, Prop::Display, ctx).u == static_cast<uint32_t>(Display::None)) continue;
+            const Vec2 cs = MeasureElement(c, avail, ctx);
+            const float add = cs.x + (first ? 0.f : gap);
+            if (!first && lineW + add > avail.x) {   // 放不下 → 断行
+                if (lineW > total.x) total.x = lineW;
+                total.y += lineH + gap;
+                lineW = cs.x;                        // 新行首项不带前导 gap
+                lineH = cs.y;
+            } else {
+                lineW += add;
+                if (cs.y > lineH) lineH = cs.y;
+            }
+            first = false;
+        }
+        if (lineW > total.x) total.x = lineW;
+        total.y += lineH;
+        return total;
+    }
 
     Vec2 total{};
     bool first = true;

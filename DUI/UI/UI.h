@@ -2,7 +2,7 @@
 //  DUI/UI/UI.h — UI 层聚合头（01-Layering §2 UI）
 //
 //  按类拆分的头（M5.6 起）：
-//    UI/Style.h    属性、状态、样式值、级联解析、StyleBuilder
+//    UI/Style.h    属性、状态、样式值、级联解析、链式样式（dui::Style）
 //    UI/Element.h  元素树节点（树结构、状态位、本地覆盖、点击绑定）
 //    UI/Panel.h    容器基类（AddChild 创建即定型）
 //    UI/Text.h     文本控件 + Button

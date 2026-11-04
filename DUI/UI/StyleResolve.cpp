@@ -194,6 +194,7 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::Gap:
     case Prop::JustifyContent:
     case Prop::AlignItems:
+    case Prop::FlexWrap:
         return kFlagLayout;
     default:
         return kFlagLayout;   // 未知属性按最坏情况处理

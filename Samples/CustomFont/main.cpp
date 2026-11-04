@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 //  CustomFont/main.cpp — 自定义字体文件（图标字体）演示
 //
 //  加载工程内未安装的 iconfont.ttf（图标字体，iconfont.cn 导出），
@@ -62,12 +62,12 @@ public:
 protected:
     void OnCreate() override {
         dui::Panel* root = Root();
-        root->SetStyle(dui::StyleBuilder()
+        root->SetStyle(dui::Style()
             .Gap(16.f)
             .Padding(24.f)
             .Background(0xFFF5F5F5));
 
-        root->AddChild<dui::Text>(L"自定义字体图标（iconfont.ttf）", dui::StyleBuilder()
+        root->AddChild<dui::Text>(L"自定义字体图标（iconfont.ttf）", dui::Style()
             .FontSize(20.f).Color(0xFF1F2937).FlexShrink(0.f));
 
         // 加载工程内字体文件，拿字体族名（= "iconfont"）。
@@ -76,31 +76,32 @@ protected:
         static const dui::String family = dui::LoadFontFamily(FontPathInExeDir().c_str());
         if (family.empty()) {
             root->AddChild<dui::Text>(L"字体加载失败（iconfont.ttf 不在 exe 目录）",
-                                      dui::StyleBuilder().FontSize(14.f).Color(0xFFB91C1C));
+                                      dui::Style().FontSize(14.f).Color(0xFFB91C1C));
             return;
         }
 
-        root->AddChild<dui::Text>(L"字体族：iconfont · 用 StyleBuilder().FontFamily 指定后即可渲染图标码位",
-                                  dui::StyleBuilder().FontSize(13.f).Color(0xFF6B7280).FlexShrink(0.f));
+        root->AddChild<dui::Text>(L"字体族：iconfont · 用 Style().FontFamily 指定后即可渲染图标码位",
+                                  dui::Style().FontSize(13.f).Color(0xFF6B7280).FlexShrink(0.f));
 
-        // 图标栅格：3 行、每行 5 个（grid 默认列方向堆叠行），图标本体用 iconfont 族 + 大字号
-        dui::Panel* grid = root->AddChild<dui::Panel>(dui::StyleBuilder()
+        // 图标流式排列：单行 Row + FlexWrap(Wrap)，宽度不够自动换行，图标本体用 iconfont 族 + 大字号
+        dui::Panel* grid = root->AddChild<dui::Panel>(dui::Style()
             .Gap(20.f));
         wchar_t glyph[2] = {};
-        dui::Panel* line = grid->AddChild<dui::Panel>(dui::StyleBuilder()
+        dui::Panel* line = grid->AddChild<dui::Panel>(dui::Style()
             .FlexDirection(dui::FlexDirection::Row)
+            .FlexWrap(dui::FlexWrap::Wrap)
             .Gap(28.f));
         for (int idx = 0; idx < 13; ++idx) {
-            dui::Panel* cell = line->AddChild<dui::Panel>(dui::StyleBuilder()
+            dui::Panel* cell = line->AddChild<dui::Panel>(dui::Style()
                 .FlexDirection(dui::FlexDirection::Column)
                 .AlignItems(dui::Align::Center)
                 .Gap(6.f));
             glyph[0] = kIcons[idx].glyph;
-            cell->AddChild<dui::Text>(glyph, dui::StyleBuilder()
+            cell->AddChild<dui::Text>(glyph, dui::Style()
                 .FontFamily(family.c_str())
                 .FontSize(32.f)
                 .Color(0xFF2563EB));
-            cell->AddChild<dui::Text>(kIcons[idx].name, dui::StyleBuilder()
+            cell->AddChild<dui::Text>(kIcons[idx].name, dui::Style()
                 .FontSize(12.f)
                 .Color(0xFF6B7280));
         }

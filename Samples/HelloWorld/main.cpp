@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 //  HelloWorld/main.cpp — 最小示例：窗口正中一行“你好，World”
 //
 //  构建产物（Build 布局，DUI.slnx 根目录相对）：
@@ -27,11 +27,11 @@ protected:
     void OnCreate() override {
         dui::Panel* root = Root();
         // 默认列方向：主轴 = 垂直、交叉轴 = 水平，双 Center → 文字落在窗口正中
-        root->SetStyle(dui::StyleBuilder()
+        root->SetStyle(dui::Style()
             .JustifyContent(dui::Justify::Center)
             .AlignItems(dui::Align::Center)
             .Background(0xFFF5F5F5));
-        root->AddChild<dui::Text>(L"你好，World", dui::StyleBuilder()
+        root->AddChild<dui::Text>(L"你好，World", dui::Style()
             .FontSize(24.f)
             .Color(0xFF1F1F1F));
     }

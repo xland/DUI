@@ -45,12 +45,13 @@ public:
     Element(const Element&) = delete;
     Element& operator=(const Element&) = delete;
 
-    // 静态外观：共享形态只存指针，不拷贝（03-Style §2）
-    void SetStyle(const Style& s) noexcept { style_ = &s; MarkDirty(kFlagLayout | kFlagPaint); }
-    // 内联样式（AddChild<T>(..., StyleBuilder) 走这里）：Build 结果归元素持有
-    void SetStyle(const StyleBuilder& b) {
-        ownedStyle_ = std::make_unique<Style>(b.Build());
+    // 静态外观：一律拷贝持有（Style 轻量、SetStyle 仅构建期调用）。
+    // 拷贝语义使 `dui::Style().Gap(20.f)` 这类链式临时可以直接传入不悬空；
+    // 派生链（parent_）与字体指针仍指向外部，生命周期契约不变（03-Style §2）
+    void SetStyle(const Style& s) {
+        ownedStyle_ = std::make_unique<Style>(s);
         style_ = ownedStyle_.get();
+        MarkDirty(kFlagLayout | kFlagPaint);
     }
     const Style* StylePtr() const noexcept { return style_; }
 
@@ -112,7 +113,7 @@ protected:
     virtual Vec2 MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) const;
 
     const Style*               style_ = nullptr;
-    std::unique_ptr<Style>     ownedStyle_;   // 内联样式的宿主（SetStyle(StyleBuilder) 时持有）
+    std::unique_ptr<Style>     ownedStyle_;   // SetStyle 拷贝持有的宿主
     std::vector<StyleValue>    overrides_;    // 本地覆盖（级联第 3 层，稀疏）
     uint32_t                   states_ = 0;
     dui::Lifetime              lifetime_;

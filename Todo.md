@@ -63,7 +63,7 @@ DUI/DUI.h              公共入口
 DUI/Core/Core.h        Result<T>、String/Color/Rect/Thickness
 DUI/Core/Threading.h   Lifetime、Background/Foreground、Task<T>（同步 stub）
 DUI/UI/UI.h            聚合头（Style.h / Element.h / Panel.h / Text.h + 布局/事件入口声明）：
-                       Prop/State 枚举、Style/StyleBuilder、Element、Panel、Text/Button、ClickEvent
+                       Prop/State 枚举、Style（声明集 + 链式构造合一）、Element、Panel、Text/Button、ClickEvent
 DUI/App/App.h/.cpp     WindowOptions、Window（Root/Scale/OnCreate/OnDpiChanged/OnClosing）、Application
 DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口过程/WM_DPICHANGED）
                        NativeWindowHost 事件接口（App 层适配到 dui::Window，保住分层单向依赖）
@@ -74,8 +74,8 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 1. **API 冻结**：`Samples/` 两个示例是"可执行规格"，改动公共签名 = 违规；新能力先改示例和文档，再改实现。
 2. **无异常 / 无 RTTI**（/EHs-c-、/GR-）：错误走 `Result<T>`；不用 typeid/dynamic_cast/std::variant。
 3. **类作用域同名遮蔽坑**：方法名与类型同名（`Display`/`Color`/`FontWeight`/`Lifetime`）时，类内引用类型必须写全限定 `dui::Xxx`（UI.h 已有注释示例）。
-4. **StyleBuilder 链式返回左值**：接收 Builder 的重载一律 `const StyleBuilder&`，不要写 `&&`。
-5. **SetStyle 双形态**：共享样式存指针（零拷贝）；`SetStyle(StyleBuilder)` 时元素经 `ownedStyle_` 持有值拷贝。
+4. **Style 链式返回左值**：`When` 等收样式的参数一律 `const Style&`，不要写 `&&`。
+5. **SetStyle 一律拷贝持有**（经 `ownedStyle_`）：链式临时可直传不悬空；派生链 `parent_` 与字体指针仍指向外部，生命周期契约不变（历史：曾存裸指针致临时悬空崩溃，见 M4 踩坑）。
 6. **状态位契约**：`SetState` 相同值幂等；标脏帧末合并（M3 实现）。
 7. **硬性红线**：不做 System DPI aware 回退、不做位图缩放、非整数档自绘、描边像素对齐（12-Windowing §7.1）。
 

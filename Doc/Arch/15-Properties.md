@@ -98,7 +98,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | --- | --- | --- | --- | --- | --- | --- |
 | `display` | Enum | ✗ | Layout | ✗ | Flex | Flex / Grid / None |
 | `flexDirection` | Enum | ✗ | Layout | ✗ | Column | 块级流语义来源 |
-| `flexWrap` | Enum | ✗ | Layout | ✗ | NoWrap | |
+| `flexWrap` | Enum | ✗ | Layout | ✗ | NoWrap | NoWrap / Wrap（Wrap 仅 Row；运行时已实现，贪心断行） |
 | `justifyContent` | Enum | ✗ | Layout | ✗ | Start | |
 | `alignItems` | Enum | ✗ | Layout | ✗ | Stretch | |
 | `alignSelf` | Enum | ✗ | Layout | ✗ | Auto | 未设则取父 `alignItems` |

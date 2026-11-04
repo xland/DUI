@@ -1,11 +1,11 @@
 // ============================================================================
-//  DUI/UI/Style.h — 样式核心：属性、状态、样式值、级联解析、StyleBuilder
+//  DUI/UI/Style.h — 样式：属性、状态、级联解析与链式构造（合一的 Style）
 //  （03-Style / 15-Properties 的运行时形态；解析实现在 UI/StyleResolve.cpp，
-//   Style/StyleBuilder 实现在 UI/Style.cpp）
+//   Style 链式方法实现在 UI/Style.cpp）
 //
 //  已定案并在此落形的关键契约：
 //    · 静态外观（含布局属性）全部在 Style 里；Set(Prop) 只承载运行时动态值
-//    · 用一次的样式内联（StyleBuilder 右值），共享/带变体的才起名
+//    · 用一次的样式内联（dui::Style() 链式临时），共享/带变体的才起名
 //    · 合并优先级 disabled > pressed > selected > focused > hover（03-Style §6.2）
 // ============================================================================
 
@@ -33,6 +33,8 @@ enum class Prop : uint16_t {
     Width, Height, MinWidth, MaxWidth,
     // 布局
     Display, FlexDirection, FlexShrink, FlexGrow, Gap, JustifyContent, AlignItems,
+    // 布局（续）
+    FlexWrap,
     // 滚动条（dui::Scroller 自绘轨道/滑块；宽度 = 纵向条厚，高度 = 横向条厚）
     ScrollbarTrackWidth, ScrollbarTrackHeight,
     ScrollbarTrackBackgroundColor, ScrollbarTrackCornerRadius,
@@ -56,6 +58,7 @@ enum class State : uint32_t {
 
 enum class Display : uint8_t { Flex, Grid, None };
 enum class FlexDirection : uint8_t { Row, Column };
+enum class FlexWrap : uint8_t { NoWrap, Wrap };              // 主轴放不下时换行（仅 Row；04-Layout §4.1 MVP）
 enum class Justify : uint8_t { Start, Center };             // 主轴对齐（04-Layout §4.1，MVP 子集）
 enum class Align : uint8_t { Stretch, Start, Center };      // 交叉轴对齐（默认 Stretch）
 enum class FontWeight : uint8_t { Normal, Medium, SemiBold, Bold };
@@ -83,13 +86,24 @@ struct TransitionSpec {
 };
 
 // ---------------------------------------------------------------------------
-// Style：不可变、可共享、可派生（03-Style §2）。构建期由 StyleBuilder 生成。
+// Style：一份样式声明集，既是构建产物也是构建器——链式方法返回 *this，
+// `dui::Style().Gap(20.f)` 的临时可直接传给 SetStyle / AddChild（按值拷贝持有）。
+// 也可起名 / 派生后作为静态常量共享（03-Style §2）。
 // ---------------------------------------------------------------------------
 class Element;
 
 class Style {
 public:
     Style() = default;
+    explicit Style(const char* name) noexcept { name_ = name; }   // 具名：注册表键 / 调试标识
+
+    // 派生：只存与基样式的差异（解析沿 parent_ 链回溯）。不用构造函数表达——
+    // Style(const Style&) 必须留给拷贝构造
+    static Style Derive(const Style& base) noexcept {
+        Style s;
+        s.parent_ = &base;
+        return s;
+    }
 
     // 沿派生链由近及远查找（03-Style §5 第 4 层）；找不到返回 nullptr
     const StyleValue* Find(Prop p) const;
@@ -103,9 +117,63 @@ public:
     // 遍历外读生效值（15-Properties §5.2；M3 接入动画槽与本地覆盖层）
     static Color Resolve(const Element* element, Prop p);
 
+    // ------------------------------------------------------------------
+    // 链式构造（参数类型写全限定 dui::Xxx —— 方法名与枚举名同名，
+    // 类作用域内会被成员名遮蔽）
+    // ------------------------------------------------------------------
+
+    // 布局（静态外观的一部分，与视觉属性同层）
+    Style& Display(dui::Display v);
+    Style& FlexDirection(dui::FlexDirection v);
+    Style& Width(float dip);
+    Style& Height(float dip);
+    Style& MinWidth(float dip);
+    Style& MaxWidth(float dip);
+    Style& FlexGrow(float v);
+    Style& FlexShrink(float v);
+    Style& JustifyContent(dui::Justify v);       // 主轴：剩余空间分配
+    Style& AlignItems(dui::Align v);             // 交叉轴：子项对齐
+    Style& FlexWrap(dui::FlexWrap v);            // 主轴放不下时断行（仅 Row）
+
+    // 视觉与文本
+    Style& Background(dui::Color c);
+    Style& Color(dui::Color c);
+    Style& FontSize(float dip);
+    Style& FontWeight(dui::FontWeight v);
+    Style& FontFamily(const wchar_t* name);      // 系统已安装字体族；指针需存活到样式使用期
+    Style& LineHeight(float multiple);
+    Style& Opacity(float v);                     // 0..1
+    Style& Padding(const Thickness& t);
+    Style& Padding(float all);                   // 四边同值
+    Style& Gap(float dip);
+    Style& CornerRadius(float dip);              // 四边同值
+    Style& CornerRadius(const Thickness& t);
+
+    // 滚动条轨道 / 滑块（dui::Scroller 自绘部分）
+    // 宽度 = 纵向条厚度，高度 = 横向条厚度；默认厚 10 DIP、直角、无边框
+    Style& TrackWidth(float dip);
+    Style& TrackHeight(float dip);
+    Style& TrackBackground(dui::Color c);
+    Style& TrackCornerRadius(float dip);
+    Style& TrackBorderColor(dui::Color c);
+    Style& TrackBorderWidth(float dip);
+    Style& ThumbWidth(float dip);
+    Style& ThumbHeight(float dip);
+    Style& ThumbBackground(dui::Color c);
+    Style& ThumbCornerRadius(float dip);
+    Style& ThumbBorderColor(dui::Color c);
+    Style& ThumbBorderWidth(float dip);
+
+    // 动画与状态变体（05-Animation §3 / 03-Style §6.2）
+    Style& Transition(Prop prop, uint32_t durationMs, Easing easing);
+    Style& When(State s, const Style& variant);
+
 private:
-    friend class StyleBuilder;
     friend class Element;     // SetState 需读状态变体的声明集计算失效标志
+
+    StyleValue& Ensure(Prop p);
+    Style& SetU(Prop p, uint32_t u);
+    Style& SetF(Prop p, float f);
 
     std::vector<StyleValue>               decls_;
     std::vector<std::pair<State, Style>>  states_;
@@ -148,71 +216,5 @@ StyleValue ResolveProperty(const Element* e, Prop p, const StyleContext& ctx);
 StyleValue ResolveProperty(const Element* e, Prop p);
 StyleValue BuiltinDefault(Prop p);
 uint32_t PropFlagsOf(Prop p);
-
-// ---------------------------------------------------------------------------
-// StyleBuilder：链式构造，Build() 一次固化。When 的参数是 Builder 而非 Style
-// （变体只是一份差异集，不注册、不被引用，见 03-Style §6.2）。
-// ---------------------------------------------------------------------------
-class StyleBuilder {
-public:
-    StyleBuilder() = default;
-    explicit StyleBuilder(const Style& base) noexcept { style_.parent_ = &base; }  // 派生：只存差异
-    explicit StyleBuilder(const char* name) noexcept { style_.name_ = name; }      // 具名：注册表键
-
-    // 布局（静态外观的一部分，与视觉属性同层）
-    // 注：参数类型写全限定 dui::Xxx —— 方法名与枚举名同名，类作用域内会被成员名遮蔽
-    StyleBuilder& Display(dui::Display v);
-    StyleBuilder& FlexDirection(dui::FlexDirection v);
-    StyleBuilder& Width(float dip);
-    StyleBuilder& Height(float dip);
-    StyleBuilder& MinWidth(float dip);
-    StyleBuilder& MaxWidth(float dip);
-    StyleBuilder& FlexGrow(float v);
-    StyleBuilder& FlexShrink(float v);
-    StyleBuilder& JustifyContent(dui::Justify v);       // 主轴：剩余空间分配
-    StyleBuilder& AlignItems(dui::Align v);             // 交叉轴：子项对齐
-
-    // 视觉与文本
-    StyleBuilder& Background(dui::Color c);
-    StyleBuilder& Color(dui::Color c);
-    StyleBuilder& FontSize(float dip);
-    StyleBuilder& FontWeight(dui::FontWeight v);
-    StyleBuilder& FontFamily(const wchar_t* name);      // 系统已安装字体族；指针需存活到样式使用期
-    StyleBuilder& LineHeight(float multiple);
-    StyleBuilder& Opacity(float v);                     // 0..1
-    StyleBuilder& Padding(const Thickness& t);
-    StyleBuilder& Padding(float all);                   // 四边同值
-    StyleBuilder& Gap(float dip);
-    StyleBuilder& CornerRadius(float dip);              // 四边同值
-    StyleBuilder& CornerRadius(const Thickness& t);
-
-    // 滚动条轨道 / 滑块（dui::Scroller 自绘部分）
-    // 宽度 = 纵向条厚度，高度 = 横向条厚度；默认厚 10 DIP、直角、无边框
-    StyleBuilder& TrackWidth(float dip);
-    StyleBuilder& TrackHeight(float dip);
-    StyleBuilder& TrackBackground(dui::Color c);
-    StyleBuilder& TrackCornerRadius(float dip);
-    StyleBuilder& TrackBorderColor(dui::Color c);
-    StyleBuilder& TrackBorderWidth(float dip);
-    StyleBuilder& ThumbWidth(float dip);
-    StyleBuilder& ThumbHeight(float dip);
-    StyleBuilder& ThumbBackground(dui::Color c);
-    StyleBuilder& ThumbCornerRadius(float dip);
-    StyleBuilder& ThumbBorderColor(dui::Color c);
-    StyleBuilder& ThumbBorderWidth(float dip);
-
-    // 动画与状态变体（05-Animation §3 / 03-Style §6.2）
-    StyleBuilder& Transition(Prop prop, uint32_t durationMs, Easing easing);
-    StyleBuilder& When(State s, const StyleBuilder& variant);
-
-    Style Build() const { return style_; }
-
-private:
-    StyleValue& Ensure(Prop p);
-    StyleBuilder& SetU(Prop p, uint32_t u);
-    StyleBuilder& SetF(Prop p, float f);
-
-    Style style_;
-};
 
 }  // namespace dui

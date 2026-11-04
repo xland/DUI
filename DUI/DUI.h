@@ -17,7 +17,7 @@
 namespace dui {
 
 // 加载未安装的字体文件（ttf/otf，如图标字体）到文本引擎（进程内生效），
-// 返回其字体族名（可传给 StyleBuilder().FontFamily(...)）；失败返回空串。
+// 返回其字体族名（可传给 dui::Style().FontFamily(...)）；失败返回空串。
 // 建议在 OnCreate 阶段调用；引擎生命周期内只装一个文件，重复调用返回已装族名。
 // 实现在 Text/TextEngine.cpp（Text 层内部头的公共转发）。
 String LoadFontFamily(const wchar_t* fontFilePath);

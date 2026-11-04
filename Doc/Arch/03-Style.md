@@ -172,46 +172,40 @@ DUI_PROPERTY(FontSize,        Length,  Inherit | Layout | Text)
 
 ```cpp
 // 匿名（默认，绝大多数场景）：不进注册表、无字符串驻留、不用起名
-static const Style kTitle = StyleBuilder()
+static const Style kTitle = Style()
     .FontSize(20.f)
     .FontWeight(FontWeight::SemiBold)
     .Color(0xFF1A1A1A)
-    .TextAlign(TextAlign::Center)
-    .Build();
+    .TextAlign(TextAlign::Center);
 
-// 派生：只存差异
-static const Style kTitleAccent = StyleBuilder(kTitle)
-    .Color(0xFF2D7FF9)
-    .Build();
+// 派生：只存差异（Style::Derive，解析沿基链回溯）
+static const Style kTitleAccent = Style::Derive(kTitle)
+    .Color(0xFF2D7FF9);
 
 // 具名：只在"要全局覆盖控件默认外观"或"要被主题按名替换"时需要
-static const Style kButtonBase = StyleBuilder("button")
+static const Style kButtonBase = Style("button")
     .Padding({ 8.f, 16.f })
-    .CornerRadius(4.f)
-    .Build();
+    .CornerRadius(4.f);
 
-// 使用
-auto* a = panel->AddChild<Text>(L"标题");
-a->SetStyle(kTitleAccent);                 // 复用
+// 使用：SetStyle 拷贝持有（Style 轻量），链式临时也可直传
+auto* a = panel->AddChild<Text>(L"标题", Style::Derive(kTitleAccent));
 a->Set(Prop::Color, 0xFFC00000);           // 单元素覆盖，优先级更高
 
-auto* b = panel->AddChild<Text>(L"副标题");
-b->SetStyle(kTitle);                       // 同一份 Style，无拷贝
+auto* b = panel->AddChild<Text>(L"副标题", kTitle);
 ```
 
 ### 6.2 状态变体
 
 ```cpp
-static const Style kButton = StyleBuilder("button")
+static const Style kButton = Style("button")
     .Background(0xFF2D7FF9).Color(0xFFFFFFFF)
     .CornerRadius(4.f).Padding({8.f, 16.f})
-    .When(State::Hover,    StyleBuilder().Background(0xFF1A6FE0))
-    .When(State::Pressed,  StyleBuilder().Background(0xFF1560C0))
-    .When(State::Disabled, StyleBuilder().Background(0xFFCCCCCC).Color(0x80FFFFFF))
-    .Build();
+    .When(State::Hover,    Style().Background(0xFF1A6FE0))
+    .When(State::Pressed,  Style().Background(0xFF1560C0))
+    .When(State::Disabled, Style().Background(0xFFCCCCCC).Color(0x80FFFFFF));
 ```
 
-`When` 的第二参数是 **`StyleBuilder`** 而非 `Style`：状态变体只是一份"该状态成立时要叠加的差异集"，最终并入外层 `Style` 的状态表，不注册、不被元素引用，因此不需要 `Build()`。`Build()` 在整条链末尾出现一次。
+`When` 的第二参数是 **`Style`**：状态变体只是一份"该状态成立时要叠加的差异集"，拷贝并入外层 `Style` 的状态表，不注册、不被元素引用。
 
 静态外观由样式描述，状态位由框架或业务切换，样式层只做查表 —— 不需要为每个状态新建元素或重新设置属性（输入与事件机制见 [06-Events.md](./06-Events.md)）。
 

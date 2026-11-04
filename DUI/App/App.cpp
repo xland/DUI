@@ -26,8 +26,7 @@ public:
 
     void SetFramePending(bool* flag) noexcept { framePending_ = flag; }
 
-    void OnNativeCreated(HWND hwnd, float initialScale) override {
-        window_.native_ = hwnd;
+    void OnNativeCreated(HWND, float initialScale) override {
         window_.scale_ = initialScale;
         std::printf("[DUI] window created, scale = %.2f\n", initialScale);
     }
@@ -67,13 +66,17 @@ public:
         }
         Element* hit = HitTest(window_.Root(), pt);
         UpdateHoverChain(hover_, hit);
+        DispatchHoverTransitions(hover_, hit, pt);   // 移入/移出（悬停链差分）
         hover_ = hit;
+        lastPt_ = pt;
+        DispatchPointerMove(hit, pt);                 // 移动（冒泡）
+        window_.SyncImeCaret();                       // 拖选移动光标 → 同步 IME 插入点
         RequestFrame();
     }
 
     void OnPointerButton(Vec2 pt, bool down) override {
         if (down) {
-            // 命中滚动条 → 进入滑块拖拽（不参与 Click 合成）
+            // 命中滚动条 → 进入滑块拖拽（不参与 Click 合成，也不派发元素事件）
             Element* hit = HitTest(window_.Root(), pt);
             Scroller* sc = FindScroller(hit);
             bool vertical = false;
@@ -87,6 +90,9 @@ public:
             pressPt_ = pt;
             pressed_ = hit;
             SetPressedChain(hit, true);
+            // 点击取得焦点（命中可聚焦元素或其可聚焦祖先；06-Events §6）
+            if (Element* f = FindFocusable(hit)) SetFocus(f);
+            DispatchPointerDown(hit, pt);              // 按下（冒泡）
         } else {
             if (dragging_ != nullptr) {
                 dragging_->EndBarDrag();
@@ -96,6 +102,7 @@ public:
             }
             Element* hit = HitTest(window_.Root(), pt);
             SetPressedChain(pressed_, false);
+            DispatchPointerUp(hit, pt);                // 弹起（冒泡，按当前命中位置）
             // Click 合成：按下抬起同元素且拖出在阈值内（06-Events §3：4 dip）
             constexpr float kDragThreshold = 4.f;
             if (pressed_ != nullptr && hit == pressed_ &&
@@ -105,13 +112,19 @@ public:
             }
             pressed_ = nullptr;
         }
+        window_.SyncImeCaret();   // 点击定位光标 → 同步 IME 插入点
         RequestFrame();
     }
 
-    // 滚轮：沿祖先链找最近的"该轴还可滚"的滚动容器（内层滚不动 → 冒泡外层；
-    // 纵向滚轮，Shift + 滚轮横向）
+    // 滚轮：先派发元素级 Wheel（冒泡，handled 可拦截）；无人处理时由滚动容器消费
+    // （沿祖先链找最近的"该轴还可滚"的滚动容器：内层滚不动 → 冒泡外层；
+    //   纵向滚轮，Shift + 滚轮横向）
     void OnMouseWheel(Vec2 pt, float delta, bool horizontal) override {
         Element* hit = HitTest(window_.Root(), pt);
+        if (DispatchWheel(hit, pt, delta, horizontal)) {   // 已被元素处理
+            RequestFrame();
+            return;
+        }
         Scroller* sc = nullptr;
         for (Element* p = hit; p != nullptr; p = p->Parent()) {
             if (p->GetKind() != Kind::Scroller) continue;
@@ -128,8 +141,39 @@ public:
 
     void OnPointerLeave() override {
         UpdateHoverChain(hover_, nullptr);
+        DispatchHoverTransitions(hover_, nullptr, lastPt_);   // 全部移出
         hover_ = nullptr;
         RequestFrame();
+    }
+
+    // ---- 键盘输入（M5.9）：先到焦点元素，再沿祖先链冒泡 ----
+
+    void OnKeyDown(int key, bool ctrl, bool shift, bool alt) override {
+        Element* target = FocusedElement();
+        bool handled = false;
+        if (target != nullptr) handled = DispatchKeyDown(target, key, ctrl, shift, alt);
+        // 默认行为：Tab / Shift+Tab 切换焦点（控件未消费时）
+        if (!handled && key == VK_TAB) {
+            FocusNext(window_.Root(), shift);
+            RequestFrame();
+        }
+        window_.SyncImeCaret();   // 光标可能已移动 → 同步 IME 插入点
+    }
+
+    void OnKeyUp(int key, bool ctrl, bool shift, bool alt) override {
+        Element* target = FocusedElement();
+        if (target != nullptr) DispatchKeyUp(target, key, ctrl, shift, alt);
+    }
+
+    void OnChar(wchar_t ch) override {
+        Element* target = FocusedElement();
+        if (target != nullptr) DispatchChar(target, ch);
+        window_.SyncImeCaret();   // 输入后光标右移 → 同步 IME 插入点
+    }
+
+    // 定时器节拍（光标闪烁）：转发到窗口，由窗口驱动 UI 层闪烁钩子
+    void OnTimer(uintptr_t id) override {
+        window_.OnTimer(id);
     }
 
     void OnResized() override {
@@ -151,6 +195,7 @@ private:
     Element* hover_ = nullptr;
     Element* pressed_ = nullptr;
     Vec2     pressPt_{};   // 按下位置（DIP），Click 拖出阈值判定用
+    Vec2     lastPt_{};    // 最近一次指针位置（DIP），移出事件用
     Scroller* dragging_ = nullptr;      // 正在拖拽的滚动条（滑块）
     bool      dragVertical_ = false;
 };
@@ -160,6 +205,61 @@ Window::Window(const WindowOptions& options) : options_(options) {
 }
 
 Window::~Window() = default;
+
+void* Window::NativeHandle() const noexcept {
+    if (native_ == nullptr) return nullptr;
+    return static_cast<void*>(static_cast<platform::NativeWindow*>(native_)->Handle());
+}
+
+// ---------------------------------------------------------------------------
+// 光标闪烁节拍（M5.9）：窗口定时器 ↔ UI 层闪烁钩子
+//
+//  节拍只在"焦点元素参与闪烁"时开启（NeedsBlinkTick）；失焦或焦点元素不
+//  可闪烁即停表。UI 层的 DispatchBlink 负责切换闪烁状态（光标可见性）。
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr uintptr_t kBlinkTimerId = 1;
+constexpr unsigned   kBlinkIntervalMs = 500;   // 光标闪烁周期（半周期 500ms）
+}
+
+void Window::SyncBlinkTimer() {
+    auto* native = static_cast<platform::NativeWindow*>(native_);
+    if (native == nullptr) return;
+    const bool need = NeedsBlinkTick();
+    if (need) {
+        if (blinkTimer_ == 0) {
+            native->StartTimer(kBlinkTimerId, kBlinkIntervalMs);
+            blinkTimer_ = kBlinkTimerId;
+        }
+    } else if (blinkTimer_ != 0) {
+        native->StopTimer(blinkTimer_);
+        blinkTimer_ = 0;
+    }
+}
+
+void Window::OnTimer(uintptr_t id) {
+    if (id != blinkTimer_) return;
+    DispatchBlink();          // 焦点元素切换闪烁状态（并标脏 → 下一帧重绘）
+    SyncBlinkTimer();         // 不再需要闪烁 → 停表
+}
+
+// IME 插入点：UI 层给插入点（光标底部）→ 平台层把隐形系统 caret 移过去。
+// IME 依 GetCaretPos() 定位候选窗口；系统 caret 不可见，故与自绘光标不冲突。
+// 注意：这里不碰任何 IMM API —— 在 IME 消息处理期间调用 ImmGetContext 会重建
+// 输入上下文、打断正在进行的组合（中文打不出来）。
+void Window::SyncImeCaret() {
+    auto* native = static_cast<platform::NativeWindow*>(native_);
+    if (native == nullptr) return;
+    Vec2 dip{};
+    if (!QueryInsertionPoint(dip)) {
+        native->RemoveImeCaret();
+        return;
+    }
+    const int px = static_cast<int>(dip.x * scale_ + 0.5f);
+    const int py = static_cast<int>(dip.y * scale_ + 0.5f);
+    native->UpdateImeCaretPos(px, py);
+}
 
 Application::Application() = default;
 Application::~Application() = default;
@@ -176,6 +276,7 @@ int Application::Run(Window& window) {
                        window.options_.height, host, lastError_)) {
         return 1;   // lastError_ 已填（App.h 契约：失败返回非 0）
     }
+    window.native_ = &native;   // 平台窗口对象（定时器等平台能力）
 
     if (!device.Init(native.Handle(), lastError_)) {
         std::printf("[DUI] device init failed: %ls\n", lastError_.c_str());
@@ -186,6 +287,9 @@ int Application::Run(Window& window) {
     constexpr unsigned kWakeMessage = WM_APP;   // 窗口过程仅借它唤醒泵，无副作用
     dispatcher_.SetWakeTarget(native.Handle(), kWakeMessage);
     Dispatcher::SetUi(&dispatcher_);
+
+    // 剪贴板：平台实现注入 UI 层（UI 不依赖 Platform，01-Layering §1）
+    SetClipboardService(&platform::GetClipboardText, &platform::SetClipboardText);
 
     // 原生窗口已建、尚未显示：业务在这里搭界面，构建过程不可见
     window.OnCreate();
@@ -206,6 +310,7 @@ int Application::Run(Window& window) {
             DispatchMessageW(&msg);
         }
         dispatcher_.Drain();
+        window.SyncBlinkTimer();     // 焦点变化 → 启停光标闪烁节拍（渲染前同步）
         if (framePending || window.Root()->SubtreeDirty()) {
             framePending = false;
             RenderFrame(window, native, device);

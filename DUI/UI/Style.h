@@ -27,6 +27,8 @@ enum class Prop : uint16_t {
     Unknown = 0,
     // 文本与字体
     Color, FontSize, FontWeight, LineHeight, TextAlign, FontFamily,
+    // 文本编辑（TextBox/TextArea）：选区底色 / 光标色
+    SelectionColor, CaretColor,
     // 盒模型
     Padding, Margin, CornerRadius, Opacity, BackgroundColor,
     // 尺寸
@@ -143,6 +145,9 @@ public:
     Style& FontFamily(const wchar_t* name);      // 系统已安装字体族；指针需存活到样式使用期
     Style& LineHeight(float multiple);
     Style& Opacity(float v);                     // 0..1
+    // 文本编辑（TextBox/TextArea）
+    Style& SelectionColor(dui::Color c);        // 选区底色（默认半透明蓝）
+    Style& CaretColor(dui::Color c);            // 光标色（默认取文本色）
     Style& Padding(const Thickness& t);
     Style& Padding(float all);                   // 四边同值
     Style& Gap(float dip);

@@ -6,6 +6,8 @@
 //    UI/Element.h  元素树节点（树结构、状态位、本地覆盖、点击绑定）
 //    UI/Panel.h    容器基类（AddChild 创建即定型）
 //    UI/Text.h     文本控件 + Button
+//    UI/TextBox.h  文本编辑控件（TextBox 单行 / TextArea 多行 / 密码掩码）
+//    UI/Focus.h    焦点服务与 Tab 链
 //  本头聚合以上全部并声明跨模块入口（布局 / 命中测试），业务代码仍只
 //  include "DUI/DUI.h"。
 // ============================================================================
@@ -16,6 +18,8 @@
 #include "UI/Element.h"
 #include "UI/Panel.h"
 #include "UI/Text.h"
+#include "UI/TextBox.h"
+#include "UI/Focus.h"
 
 namespace dui {
 
@@ -31,8 +35,36 @@ void DispatchClick(Element* hit);
 void UpdateHoverChain(Element* previous, Element* current);
 void SetPressedChain(Element* hit, bool on);
 
+// 元素级指针事件派发（UI/Event.cpp）：
+//   移入/移出 —— 直达事件：按"悬停链"差分触发（进入新链的元素触发移入，
+//                 离开旧链的元素触发移出；移到子元素上不算离开父元素）
+//   移动/按下/弹起/滚轮 —— 冒泡：从命中元素向上，处理器置 handled 可终止
+// 派发只经过"有绑定者"的元素，无绑定直接跳过。
+void DispatchHoverTransitions(Element* previous, Element* current, const Vec2& pt);
+void DispatchPointerMove(Element* hit, const Vec2& pt);
+void DispatchPointerDown(Element* hit, const Vec2& pt);
+void DispatchPointerUp(Element* hit, const Vec2& pt);
+bool DispatchWheel(Element* hit, const Vec2& pt, float delta, bool horizontal);
+
+// 键盘事件派发（UI/Event.cpp）：先到焦点元素，再沿祖先链冒泡。
+// 返回 true 表示已被处理（handled）——调用方据此决定默认行为（如 Tab 移焦）。
+bool DispatchKeyDown(Element* target, int key, bool ctrl, bool shift, bool alt);
+bool DispatchKeyUp(Element* target, int key, bool ctrl, bool shift, bool alt);
+bool DispatchChar(Element* target, wchar_t ch);
+
 // 沿祖先链找最近的滚动容器（滚轮路由目标；Event.cpp）
 class Scroller;
 Scroller* FindScroller(Element* e);
+
+// 沿祖先链找最近的可聚焦元素（点击取得焦点用；Event.cpp）
+Element* FindFocusable(Element* e);
+
+// ---------------------------------------------------------------------------
+// 剪贴板服务（UI 层不依赖 Platform，01-Layering §1）：
+//   平台实现（CF_UNICODETEXT）由 App 层在启动时注入；未注入时剪贴板操作失败。
+// ---------------------------------------------------------------------------
+using ClipboardReadFn = bool (*)(String& out);
+using ClipboardWriteFn = bool (*)(const String& text);
+void SetClipboardService(ClipboardReadFn read, ClipboardWriteFn write);
 
 }  // namespace dui

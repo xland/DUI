@@ -71,6 +71,12 @@
     <ClInclude Include="UI\Text.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
+    <ClInclude Include="UI\TextBox.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="UI\Focus.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
     <ClInclude Include="UI\Canvas.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
@@ -110,6 +116,12 @@
       <Filter>源文件\UI</Filter>
     </ClCompile>
     <ClCompile Include="UI\Text.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\TextBox.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\Focus.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
     <ClCompile Include="UI\Canvas.cpp">

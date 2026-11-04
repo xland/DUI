@@ -37,6 +37,14 @@ struct Paragraph {
     Vec2     size;               // 排版结果（DIP）
 };
 
+// 行信息（编辑控件用；一次遍历取全部行）
+struct LineInfo {
+    uint32_t start = 0;    // 行首字符索引
+    uint32_t end = 0;      // 行尾字符索引（不含换行符）
+    float    top = 0.f;    // 行顶（相对排版原点，DIP）
+    float    height = 0.f; // 行高（DIP）
+};
+
 class Engine {
 public:
     static Engine& Get();
@@ -61,6 +69,16 @@ public:
 
     // 收集字形 quad。originDip = 文本原点（元素 bounds + padding）的 DIP 坐标
     void Draw(Paragraph* p, graphics::Painter& painter, float scale, Vec2 originDip, Color color);
+
+    // ---- 命中测试与几何（编辑控件用；M5.9）----
+    // 局部 DIP 坐标 → 最近的字符插入点（0..文本长度）
+    uint32_t HitTestPoint(Paragraph* p, Vec2 localDip);
+    // 光标矩形（相对排版原点）：宽 1 DIP，高 = 行高
+    bool CaretRect(Paragraph* p, uint32_t index, Rect& out);
+    // 选区矩形（相对排版原点）：逐行一个矩形
+    void SelectionRects(Paragraph* p, uint32_t start, uint32_t end, std::vector<Rect>& out);
+    // 全部行的字符区间与几何（一次遍历）
+    void LineInfos(Paragraph* p, std::vector<LineInfo>& out);
 
 private:
     Engine();

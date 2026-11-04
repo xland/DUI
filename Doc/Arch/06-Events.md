@@ -79,6 +79,64 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 - 滚动条区域在命中测试里**优先命中滚动容器自身**（否则会穿透到被裁剪的内容）。
 - 命中测试进入滚动容器时把指针换算到内容坐标（`+滚动偏移`，见 [04-Layout.md](./04-Layout.md) §6.3）。
 
+### 3.2 元素级指针事件（M5.8 落地）
+
+元素可绑定 6 类指针事件（`DUI/UI/Element.h`，派发在 `DUI/UI/Event.cpp`）：
+
+| 绑定 | 事件对象 | 路由语义 |
+| --- | --- | --- |
+| `OnPointerEnter` / `OnPointerLeave` | `PointerEvent` | **直达事件**：按"悬停链"差分触发（进入新链 → 移入；离开旧链 → 移出）。移到子元素上不算离开父元素 |
+| `OnPointerMove` / `OnPointerDown` / `OnPointerUp` | `PointerEvent` | **冒泡**：命中元素 → 根，处理器置 `ev.handled` 终止冒泡 |
+| `OnWheel` | `WheelEvent`（`delta` 格数 / `horizontal` / `handled`） | **冒泡**；置 `handled` 则该次滚轮不再交给滚动容器消费 |
+
+- 绑定形态与 `OnClick` 同构：成员函数 + 上下文，或 `std::function`。
+- 派发**只经过有绑定者的元素**（未绑定直接跳过，不产生调用开销）；不做防抖与节流（由开发者自行处理）。
+- 处理器存储按需分配（元素未绑定任何事件时不占这部分内存）。
+- 滚轮顺序：先派发元素级 `Wheel`，无人 `handled` 时才由滚动容器按"最近可滚祖先"消费。
+- 滚动条上的按压走滑块拖拽，**不派发**元素级按下/弹起（与 Click 合成口径一致）。
+
+### 3.3 键盘事件与焦点（M5.9 落地）
+
+**元素级键盘事件**（`DUI/UI/Element.h`，派发在 `DUI/UI/Event.cpp`）：
+
+| 绑定 | 事件对象 | 路由语义 |
+| --- | --- | --- |
+| `OnKeyDown` / `OnKeyUp` | `KeyEvent`（`key` = VK_* 虚拟键码，`ctrl/shift/alt`） | **冒泡**：先到焦点元素，再沿祖先链上行；置 `ev.handled` 终止冒泡 |
+| `OnChar` | `KeyEvent`（`ch` = UTF-16 字符） | 同上；IME 提交亦走此路 |
+
+- 平台层：`WM_KEYDOWN/WM_KEYUP/WM_CHAR/WM_SYSCHAR/WM_IME_CHAR` → `NativeWindowHost::OnKeyDown/OnKeyUp/OnChar`；`WM_IME_CHAR` 被吃掉（否则 `DefWindowProc` 会再生成一个 `WM_CHAR`，同一字符插入两次）。
+- 控件内部行为与外部绑定**并存**：`Element::HandleKeyDown/HandleKeyUp/HandleChar` 等受保护虚函数是控件自身行为（TextBox 的编辑逻辑走这里）；派发时钩子先执行，钩子消费（返回 true）则不再向上冒泡，但同一元素上的外部绑定仍会收到该事件（可见 `ev.handled` 已被置位）。
+- 焦点唯一，挂在元素上（`UI/Focus.h`）：`FocusedElement()` / `IsFocused()` / `SetFocus()`；`Element::Focus()/Blur()/HasFocus()`。换焦点时旧元素清 `State::Focused`、新元素置位 → 样式状态变体自动生效（03-Style §6.2）。
+- Tab 链：树序（深度优先）收集可聚焦元素（`SetFocusable(true)`），按 `tabIndex` 排序 —— `>0` 组（数值升序）→ `0` 组（文档序）→ `<0` 组（数值升序）；`Shift+Tab` 反向，到头循环。Tab 键在焦点元素未消费时由框架默认处理（移动焦点）。
+- 点击取得焦点：指针按下命中可聚焦元素（或其可聚焦祖先）时 `SetFocus`。
+
+**光标闪烁（闪烁节拍）**：编辑控件的光标按固定周期持续闪烁，由框架的**窗口定时器**驱动。
+
+- UI 层：`Element::IsBlinkable()`（是否参与节拍）与 `Element::OnBlink()`（切换闪烁状态并标脏，
+  返回 false 表示可以停表）；`NeedsBlinkTick()` / `DispatchBlink()`（`UI/Focus.h`）是节拍入口。
+- App 层：`Window::SyncBlinkTimer()` 按 UI 层需求启停窗口定时器（500ms 一次）；
+  `WM_TIMER` → `NativeWindowHost::OnTimer` → `Window::OnTimer` → `DispatchBlink()`。
+- 焦点离开可闪烁控件即停表（`NeedsBlinkTick()` 为 false）；焦点元素被销毁时
+  `ClearFocusIf()` 清焦点，避免全局焦点悬空。
+- 交互（点击定位、输入、移动光标）会重置闪烁相位 —— 光标立即可见，随后继续闪烁。
+
+**IME 候选窗口跟随光标**（用**系统 caret** 机制，不是 IMM 搬窗口）：
+
+- IME 依 `GetCaretPos()`（系统 caret 位置）确定候选窗口该出现在哪 —— 这是 Win32 的
+  标准机制，对现代 TSF 输入法同样有效（无 TSF 上下文时走 IMM 兼容路径，仍读 caret）。
+- 我们自绘光标，故另建一个**隐形**系统 caret：1×1 单色位图（全 0 = 完全透明），
+  只用于向 IME 报告插入点，不会出现双光标。平台层：`NativeWindow::EnsureImeCaret/
+  UpdateImeCaretPos/RemoveImeCaret`。
+- 位置来源：UI 层 `Element::InsertionPoint()`（`TextBox` 返回光标底部，客户区 DIP）
+  → `QueryInsertionPoint()` → App 层 `Window::SyncImeCaret()`（DIP × scale → 客户区
+  物理像素）→ 平台层 `SetCaretPos`。在**键盘 / 字符 / 指针事件之后**同步。
+- **坑（务必记住）**：**不要在 IME 消息处理期间调用 `ImmGetContext`/
+  `ImmReleaseContext`** —— 那会重建输入上下文，打断正在进行的组合，表现为
+  **「中文打不出来、输入框里没有文字」**。也不要吞掉 `WM_IME_COMPOSITION`/
+  `WM_IME_NOTIFY`（交给 `DefWindowProc` 即可，组合结果走 `WM_IME_CHAR`）。
+- **已知限制**：无组合串内联预览（`GCS_COMPSTR` 被丢弃，拼音不在编辑框内显示；
+  微软拼音默认把拼音显示在候选窗口第一行，候选窗口跟住光标后拼音可见）。
+
 ---
 
 ## 4. 绑定 API
@@ -165,8 +223,8 @@ list->AddHandler(Event::PointerDown, h, Phase::Tunnel);
 
 ## 6. 焦点与键盘导航
 
-- 焦点唯一，挂在元素上；`Focus()` / `Blur()` / `ClearFocus()`。
-- **Tab 链**：按树序（深度优先）+ 元素可设 `focusable` / `tabStop` 排除；`Shift+Tab` 反向。
+- 焦点唯一，挂在元素上；`Focus()` / `Blur()`（M5.9 落地，见 §3.3；`ClearFocus()` 未单列，`Blur()` 即清焦点）。
+- **Tab 链**：按树序（深度优先）+ 元素可设 `focusable`（`SetFocusable(true)`）/ `tabIndex`（`SetTabIndex`）排序；`Shift+Tab` 反向。
 - 焦点变化 → 更新元素 `State::Focused` → 样式状态变体自动生效（[03-Style.md](./03-Style.md) §6.2），无需开发者干预。
 - 方向键导航（列表/网格内移动焦点）由具体控件实现，事件系统只提供路由与焦点服务。
 - 加速键/快捷键：`KeyDown` 冒泡到根，由根上注册的加速键表匹配（P1）。
@@ -235,8 +293,8 @@ list->AddHandler(Event::PointerDown, h, Phase::Tunnel);
 
 | 期 | 内容 |
 | --- | --- |
-| **P0** | 指针事件 + 命中测试（含 transform）、**冒泡 + 捕获双阶段** + `handled`、`Click` 合成、焦点 + Tab、fn+ctx 处理器、语义糖首批（`OnClick/OnKeyDown/OnWheel`）、延迟删除 |
-| **P1** | 指针捕获、`PointerEnter/Leave` 差分、加速键表、`SmallFn` 捕获闭包、语义事件全量 |
+| **P0** | 指针事件 + 命中测试（含 transform）、**冒泡 + 捕获双阶段** + `handled`、`Click` 合成、焦点 + Tab（M5.9 已落地）、fn+ctx 处理器、语义糖首批（`OnClick/OnKeyDown/OnWheel`）、延迟删除 |
+| **P1** | 指针捕获、`PointerEnter/Leave` 差分（M5.8 已落地）、加速键表、`SmallFn` 捕获闭包、语义事件全量、IME 组合串（Composition*） |
 | **P2** | weak token 生命周期托管、触摸手势识别（长按/双指）、无障碍事件（与 ADR-017 联动） |
 
 ---

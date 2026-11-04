@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 
 #include "Core/Dispatcher.h"
@@ -75,11 +76,19 @@ private:
 
     WindowOptions options_;
     float scale_ = 1.f;
-    void* native_ = nullptr;           // 平台窗口句柄（非 HWND 类型，避免公共头带 windows.h）
+    void* native_ = nullptr;           // platform::NativeWindow*（平台窗口对象；公共头不带 windows.h）
     std::unique_ptr<Panel> root_;
+    uintptr_t blinkTimer_ = 0;         // 光标闪烁节拍定时器（0 = 未启动）
 
     // M2 内部用（M3 交换链创建也需要）；不进公共 API
-    void* NativeHandle() const noexcept { return native_; }
+    void* NativeHandle() const noexcept;   // HWND（App.cpp 定义）
+
+    // 光标闪烁节拍（内部）：按 UI 层需求启停窗口定时器
+    void SyncBlinkTimer();
+    void OnTimer(uintptr_t id);
+    // IME 插入点：把系统 caret（隐形）移到焦点控件的光标处 —— IME 依
+    // GetCaretPos() 把候选窗口定位到光标下方。
+    void SyncImeCaret();
 };
 
 class WindowHostAdapter;                 // App.cpp：平台事件适配器（拖拽就地渲染用）

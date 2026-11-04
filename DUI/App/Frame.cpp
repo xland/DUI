@@ -91,11 +91,21 @@ public:
             return;
         }
 
+        // 内容裁剪（TextBox/TextArea 的文本溢出）：背景仍画在父级单元，
+        // 元素自身内容切到新单元（裁剪 = 内容矩形 ∩ 当前裁剪）。
+        Rect clipRect{};
+        const bool clipped = e->ContentClipRect(clipRect);
+
         DrawBackground(e, ctx);
+
+        ClipState st;
+        if (clipped) st = BeginClip(clipRect);
         if (e->GetKind() == Kind::Text) DrawTextContent(e, ctx, *painter_, scale_);
         e->OnPaint(*painter_, ctx, scale_);   // 自定义绘制钩子（背景之后、子元素之前）
 
         for (Element* c : e->Children()) Collect(c, ctx);
+
+        if (clipped) EndClip(st);
     }
 
     // 收尾：提交最后一个单元（否则末尾元素与滚动条会丢失）
@@ -103,6 +113,34 @@ public:
 
 private:
     void Commit() { list_.Commit(painter_, clipPx_); }
+
+    // 内容裁剪：切到新绘制单元（原点不变，裁剪 = 内容矩形 ∩ 当前裁剪）。
+    // 内容矩形是布局空间绝对 DIP，须叠加父级原点平移到窗口空间（与
+    // CollectScroller 的视口同理），否则嵌套时裁剪带留在原位。
+    struct ClipState {
+        Vec2 origin{};
+        Rect clip{};
+    };
+
+    ClipState BeginClip(const Rect& dipRect) {
+        ClipState st{origin_, clipPx_};
+        Commit();
+        painter_ = list_.Acquire();
+        painter_->SetOrigin(st.origin.x, st.origin.y, scale_);
+        const Rect winPx{(dipRect.x + st.origin.x) * scale_,
+                         (dipRect.y + st.origin.y) * scale_,
+                         dipRect.w * scale_, dipRect.h * scale_};
+        clipPx_ = IntersectRect(winPx, st.clip);
+        return st;
+    }
+
+    void EndClip(const ClipState& st) {
+        Commit();
+        painter_ = list_.Acquire();
+        painter_->SetOrigin(st.origin.x, st.origin.y, scale_);
+        origin_ = st.origin;
+        clipPx_ = st.clip;
+    }
 
     void DrawBackground(Element* e, const StyleContext& ctx) {
         const StyleValue bg = ResolveProperty(e, Prop::BackgroundColor, ctx);

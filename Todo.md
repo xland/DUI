@@ -1,9 +1,11 @@
 # DUI 开发任务清单（Todo）
 
-> 最后更新：2026-10-29。
+> 最后更新：2026-11-04。
 > 当前进度：**M5 已完成**（DirectWrite 真实文字渲染 + 灰度字形图集 + DPI 切换分级失效）；
 > **M5.5 已完成**（2D 绘图控件 `dui::Canvas` + Graphics 形状批 + `Samples/Canvas` 示例）；
-> **M5.6 已完成**（滚动容器 `dui::Scroller`：横纵滚动条 + 绘制单元裁剪 + `Samples/Scroller` 示例）。
+> **M5.6 已完成**（滚动容器 `dui::Scroller`：横纵滚动条 + 绘制单元裁剪 + `Samples/Scroller` 示例）；
+> **M5.7/M5.8/M5.9 已完成**（自定义字体 + FlexWrap + 样式 API 合并 / 元素级指针事件 /
+> 键盘事件 + 焦点 Tab 链 + `dui::TextBox`/`dui::TextArea`）。
 > 示例已由 Samples（三栏阅读器 / 单选列表）**替换为 HelloWorld**（居中文字最小示例），
 > 旧示例的交互验收描述见各里程碑历史记录。构建产物统一迁入 `Build\`（见 §0）。
 > 从 **M6** 开始。本文档自包含：环境、约定、每阶段的步骤与验收标准都在这里。
@@ -406,6 +408,149 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 - Debug + Release 全量重建零警告。
 
 参考：`04-Layout §6.3`、`06-Events §3.1`、`10-Rendering §6.3`。
+
+---
+
+## M5.7 — 自定义字体文件 + 布局/样式增强 ✅（2026-11-04 完成）
+
+**目标**：支持加载未安装的字体文件（图标字体），并补齐布局换行、样式 API 简化。
+
+完成情况与实现说明：
+- **自定义字体**（`DUI/Text/TextEngine.h/.cpp` + `DUI/DUI.h`）：新增公共 API
+  `dui::LoadFontFamily(const wchar_t* path)` → 用 DWrite（`IDWriteFactory3` 的
+  `CreateFontFaceReference` → `FontSetBuilder` → `CreateFontCollectionFromFontSet`）
+  把字体文件装进进程内字体集合，返回字体族名；`Shape` 里族名命中该集合时
+  同时 `SetFontCollection` + `SetFontFamilyName`（只设族名会被 DWrite 静默回退）。
+  - **格式限制**：DirectWrite 只认 SFNT 容器 → 仅支持 ttf/otf/ttc；
+    **woff/woff2 不支持**（Web 字体封装：Brotli 压缩 + 表变换），需先用
+    woff2/fontTools 转成 ttf；决定不做内嵌解码器。
+  - 配套示例 `Samples/CustomFont`（字体文件随构建拷到 exe 目录，按 exe 目录定位加载）。
+  - **坑**：`Style().FontFamily(const wchar_t*)` 只存指针不拷字符串 → 族名串必须活过
+    样式使用期（局部 String 出函数即悬空 → 图标渲染成方框 □）。
+- **布局换行 `FlexWrap`**（`Prop::FlexWrap`，NoWrap 默认）：Row + Wrap 时按可用主轴宽
+  贪心断行——测量（`Element::MeasureContent`）与排布（`ArrangeElement`）同一规则，
+  行高 = 行内最高子项、行间同 gap、交叉轴对齐沿用 `alignItems`；换行模式跳过 grow/shrink。
+  Column 方向不支持换行（MVP）。
+- **样式 API 合并**：`StyleBuilder` 与属性袋 `Style` 合并为单一 `dui::Style`
+  （既是声明集又是链式构建器，`dui::Style().Gap(20.f)` 临时可直传，`.Build()` 已删）；
+  派生用 `Style::Derive(base)`、具名用 `Style("name")`；`SetStyle` 一律拷贝持有
+  （链式临时不悬空；派生链 `parent_` 与字体指针仍指向外部）。
+- **UI 层文件拆分**（`DUI/UI/`）：`Style.h/.cpp`、`Element.h/.cpp`、`Panel.h`、
+  `Text.h/.cpp`，`UI.h` 变聚合头；原 `UI.cpp` 已删。
+- **已知限制**（后续项）：
+  - 自定义字体仅支持 ttf/otf/ttc，woff2 不支持；
+  - `FlexWrap` 仅 Row 方向；
+  - 字体族名指针（`FontFamily`）生命周期由调用方保证。
+- Debug + Release 全量重建零警告。
+
+参考：`03-Style §6`、`15-Properties §4.3.1/§4.4`、`04-Layout §4.1`。
+
+---
+
+## M5.8 — 元素级指针事件 ✅（2026-11-04 完成）
+
+**目标**：元素除点击外，支持鼠标移入/移出/移动/按下/弹起与滚轮回调。
+
+完成情况与实现说明：
+- **绑定 API**（`DUI/UI/Element.h`）：`OnPointerEnter / OnPointerLeave / OnPointerMove /
+  OnPointerDown / OnPointerUp`（`PointerEvent`）+ `OnWheel`（`WheelEvent`），
+  形态与 `OnClick` 同构（成员函数 + 上下文 / `std::function`）。
+  处理器存储**按需分配**（元素未绑定任何事件时不占这份内存）。
+- **路由**（`DUI/UI/Event.cpp`）：
+  - 移入/移出为**直达事件**：按"悬停链"差分（新链元素 → 移入；旧链元素 → 移出），
+    移到子元素上不算离开父元素；
+  - 移动/按下/弹起/滚轮**冒泡**（命中 → 根），`ev.handled` 终止冒泡；
+  - 派发**只经过有绑定者的元素**，无绑定直接跳过；不做防抖与节流（开发者自理）。
+- **接入**（`DUI/App/App.cpp`）：
+  - 滚轮顺序改为：先派发元素级 `Wheel`，无人 `handled` 才由滚动容器按"最近可滚祖先"消费；
+  - 滚动条上的按压走滑块拖拽，**不派发**元素级按下/弹起（与 Click 合成口径一致）；
+  - 指针离开窗口 → 悬停链上全部元素触发移出。
+- **配套示例** `Samples/PointerEvents`（6 类事件日志演示；已实测
+  Enter / Leave / Move / Wheel / Down / Up 全部触发）。
+- **已知限制**（后续项）：
+  - 无指针捕获（拖出元素后 Move/Up 仍按当前命中位置派发）；
+  - `PointerEvent` 无按键掩码/修饰键字段；
+  - 无防抖/节流（按约定由开发者处理）。
+- Debug + Release 全量重建零警告。
+
+参考：`06-Events §3.2`、`06-Events §10`。
+
+---
+
+## M5.9 — 键盘事件 + 焦点/Tab 链 + 文本编辑控件 ✅（2026-11-04 完成）
+
+**目标**：`dui::TextBox`（含密码掩码）与 `dui::TextArea` 控件；并落地其底座——键盘转发、
+焦点系统、Tab 链、元素级键盘事件。
+
+完成情况与实现说明：
+- **键盘转发**（`DUI/Platform/Window.h/.cpp`）：`NativeWindowHost` 新增
+  `OnKeyDown/OnKeyUp/OnChar`；窗口过程处理 `WM_KEYDOWN/WM_KEYUP/WM_SYSKEYDOWN/WM_SYSKEYUP/
+  WM_CHAR/WM_SYSCHAR/WM_IME_CHAR`，修饰键状态取自 `GetKeyState`。
+  **`WM_IME_CHAR` 必须吃掉（return 0）** —— 否则 `DefWindowProc` 会再生成一个 `WM_CHAR`，
+  同一个字符被插入两次（IME 提交）。
+- **焦点服务**（新建 `DUI/UI/Focus.h/.cpp`）：焦点唯一，挂在元素上。
+  `FocusedElement()` / `IsFocused()` / `SetFocus()`；`Element::Focus()/Blur()/HasFocus()`。
+  换焦点时旧元素清 `State::Focused`、新元素置位 → 样式状态变体自动生效；
+  另有 `Element::OnFocusChanged(bool)` 钩子（控件据此把光标放到文本末尾）。
+- **Tab 链**：树序（深度优先）收集 `IsFocusable()` 元素，按 `tabIndex` 稳定排序：
+  `>0` 组（数值升序）→ `0` 组（文档序）→ `<0` 组（数值升序）；`Shift+Tab` 反向、到头循环。
+  `Tab` 键在焦点元素未消费时由框架默认处理（移动焦点）；点击命中可聚焦元素（或其可聚焦
+  祖先）时取得焦点（`FindFocusable`，`UI/Event.cpp`）。
+- **元素级键盘事件**（`DUI/UI/Element.h` + `Event.cpp`）：`OnKeyDown/OnKeyUp/OnChar`
+  （`KeyEvent`：VK 码 + 字符 + Ctrl/Shift/Alt），形态与 `OnClick` 同构；
+  路由为**先到焦点元素再沿祖先链冒泡**，`ev.handled` 终止冒泡。
+- **控件内部行为钩子**（新增）：`Element::HandleKeyDown/HandleKeyUp/HandleChar/
+  HandlePointerDown/HandlePointerMove/HandlePointerUp`（受保护虚函数）。
+  派发时钩子先于外部绑定执行；钩子消费（返回 true）则不再向上冒泡，
+  但**同一元素上的外部绑定仍会收到该事件**（可见 `ev.handled` 已置位）——
+  控件自身行为与用户绑定互不覆盖。
+- **文本编辑控件**（新建 `DUI/UI/TextBox.h/.cpp`）：
+  - `dui::TextBox`（单行）/ `dui::TextArea`（多行，继承）；`SetPassword(true)` → `●` 掩码。
+  - 编辑核心：文本 / 光标 / 选区（锚点模型）/ 撤销栈（100 步）/ 剪贴板
+    （`Ctrl+C/X/V/A`、`Ctrl+Z/Y`）；方向键、`Home/End`、`Backspace/Delete`、回车
+    （单行 → `OnSubmit`，多行 → 插入换行）、`Shift+` 组合扩展选区、`Ctrl+Home/End` 全文首尾。
+  - 鼠标：点击定位光标、按住拖动选区（拖动期间靠 `State::Pressed` 判定）。
+  - 渲染：选区矩形 → 文本 → 光标（光标仅在有焦点时显示）；内容溢出裁剪 + 滚动，
+    光标自动滚入可见区。
+  - **光标持续闪烁**：框架窗口定时器（500ms）驱动 —— `Element::IsBlinkable()/OnBlink()`
+    钩子 + `NeedsBlinkTick()/DispatchBlink()`（`UI/Focus.h`）+ `Window::SyncBlinkTimer()`；
+    焦点离开可闪烁控件即停表；交互（点击/输入/移动光标）重置闪烁相位（光标立即可见）。
+  - **IME 候选窗口跟随光标**：用**系统 caret** 机制 —— 平台层建一个 1×1 全透明位图的
+    隐形 caret（`EnsureImeCaret/UpdateImeCaretPos/RemoveImeCaret`），位置来自 UI 层
+    `Element::InsertionPoint()`（光标底部）→ `QueryInsertionPoint()` → App 层
+    `Window::SyncImeCaret()`（键盘/字符/指针事件后同步）；IME 依 `GetCaretPos()`
+    把候选窗口定位到光标处，不出现双光标。
+    **大坑（已回退）**：在 `WM_IME_COMPOSITION/WM_IME_NOTIFY` 处理期间调用
+    `ImmGetContext/ImmReleaseContext` 会**重建输入上下文、打断正在进行的 IME 组合**
+    → 表现为「中文打不出来、输入框里没有文字、候选窗口也不定位」。
+    现已**不吞任何 IME 消息**，定位改走系统 caret。
+  - 语义事件：`OnTextChanged(const String&)` / `OnSubmit()`。
+- **排版几何 API**（`DUI/Text/TextEngine.h/.cpp`）：`HitTestPoint`（坐标 → 插入点）、
+  `CaretRect`（位置 → 光标矩形）、`SelectionRects`（区间 → 逐行高亮矩形）、
+  `LineInfos`（逐行字符区间与行几何）。
+  - **踩坑**：本机 SDK 的 `dwrite.h` 是旧版结构（`DWRITE_LINE_METRICS` 无 `lineLength`/
+    `top/left`，无 `DWRITE_CARET_RECT`，`IDWriteTextLayout1` 只有 kerning/spacing），
+    `IDWriteTextLayout1` 的 `GetLineCount/HitTestPosition` **不可用**。
+    改用基类接口实现：`HitTestPoint`（5 参版）、`HitTestTextPosition`、
+    `HitTestTextRange`（选区逐行矩形）、`GetLineMetrics`（数组版，`E_NOT_SUFFICIENT_BUFFER`
+    时扩容重试）。
+- **内容裁剪**（`DUI/App/Frame.cpp`）：`Element::ContentClipRect(Rect&)` 钩子 —— 元素声明
+  内容矩形后，收集期把该元素的内容切到独立绘制单元（scissor = 内容矩形 ∩ 当前裁剪，
+  原点不变）。**内容矩形是布局空间绝对 DIP，须叠加父级原点平移到窗口空间**
+  （与 `CollectScroller` 的视口同理），否则嵌套滚动容器内裁剪带留在原位。
+- **剪贴板分层**：UI 层不依赖 Platform —— 平台实现（`CF_UNICODETEXT`，`Platform/Window.cpp`）
+  由 App 层在 `Application::Run` 注入 UI 层（`SetClipboardService` 函数指针对）。
+- **样式属性**：`Prop::SelectionColor`（默认半透明蓝）、`Prop::CaretColor`（默认取文本色）；
+  链式方法 `SelectionColor()/CaretColor()`。
+- **示例** `Samples/TextInput`（单行 / 密码 / 多行 + 焦点与 Tab 链 + 键盘事件日志）。
+- **已知限制**（后续项）：
+  - 无 IME 组合串内联预览（`GCS_COMPSTR` 丢弃，拼音不在编辑框内显示；候选窗口定位已解决）；
+  - 无单词级移动（`Ctrl+←/→`）、无自绘选区手柄、无富文本/拼写检查；
+  - 密码模式以 `●`（U+25CF）逐字符掩码（不保留原宽）；
+  - 拖选依赖指针未移出控件（无指针捕获）。
+- Debug + Release 全量重建零警告。
+
+参考：`06-Events §3.3/§6`、`15-Properties §4.1.1`、`11-Text`。
 
 ---
 

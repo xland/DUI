@@ -81,6 +81,8 @@
     <ClInclude Include="UI\Element.h" />
     <ClInclude Include="UI\Panel.h" />
     <ClInclude Include="UI\Text.h" />
+    <ClInclude Include="UI\TextBox.h" />
+    <ClInclude Include="UI\Focus.h" />
     <ClInclude Include="UI\Canvas.h" />
     <ClInclude Include="UI\Scroller.h" />
     <ClInclude Include="App\App.h" />
@@ -94,6 +96,8 @@
     <ClCompile Include="UI\Style.cpp" />
     <ClCompile Include="UI\Element.cpp" />
     <ClCompile Include="UI\Text.cpp" />
+    <ClCompile Include="UI\TextBox.cpp" />
+    <ClCompile Include="UI\Focus.cpp" />
     <ClCompile Include="UI\Canvas.cpp" />
     <ClCompile Include="UI\Scroller.cpp" />
     <ClCompile Include="UI\StyleResolve.cpp" />

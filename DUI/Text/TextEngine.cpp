@@ -6,6 +6,7 @@
 
 #include <dwrite_3.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cwchar>
 
@@ -285,6 +286,107 @@ void Engine::Draw(Paragraph* p, graphics::Painter& painter, float scale, Vec2 or
     if (p == nullptr || p->layout == nullptr) return;
     DrawCtx c{this, &painter, scale, color};
     p->layout->Draw(&c, &Renderer(), origin.x, origin.y);
+}
+
+// ---------------------------------------------------------------------------
+// 命中测试与几何（M5.9，编辑控件用）
+//
+// 只用基类 IDWriteTextLayout 的接口（HitTestPoint / HitTestTextPosition /
+// HitTestTextRange / GetLineMetrics），不依赖 IDWriteTextLayout1 的扩展。
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// 取全部行度量（E_NOT_SUFFICIENT_BUFFER 时扩容重试）
+bool FetchLineMetrics(IDWriteTextLayout* layout, std::vector<DWRITE_LINE_METRICS>& out) {
+    out.clear();
+    UINT32 count = 0;
+    std::vector<DWRITE_LINE_METRICS> buf(64);
+    HRESULT hr = layout->GetLineMetrics(buf.data(), static_cast<UINT32>(buf.size()), &count);
+    if (hr == E_NOT_SUFFICIENT_BUFFER) {
+        buf.resize(count);
+        hr = layout->GetLineMetrics(buf.data(), static_cast<UINT32>(buf.size()), &count);
+    }
+    if (FAILED(hr)) return false;
+    out.assign(buf.begin(), buf.begin() + count);
+    return true;
+}
+
+}  // namespace
+
+uint32_t Engine::HitTestPoint(Paragraph* p, Vec2 localDip) {
+    if (p == nullptr || p->layout == nullptr) return 0;
+    BOOL trailing = FALSE;
+    BOOL inside = FALSE;
+    DWRITE_HIT_TEST_METRICS m{};
+    p->layout->HitTestPoint(localDip.x, localDip.y, &trailing, &inside, &m);
+    const uint32_t pos = m.textPosition;
+    // 命中字符的后半边 → 插入点在该字符之后
+    if (trailing && pos < static_cast<uint32_t>(p->text.size())) return pos + 1;
+    return pos;
+}
+
+bool Engine::CaretRect(Paragraph* p, uint32_t index, Rect& out) {
+    if (p == nullptr || p->layout == nullptr) return false;
+    FLOAT x = 0.f, y = 0.f;
+    DWRITE_HIT_TEST_METRICS m{};
+    if (FAILED(p->layout->HitTestTextPosition(index, FALSE, &x, &y, &m))) return false;
+    float h = m.height;
+    if (!(h > 0.f)) {
+        // 文本末尾等位置度量退化 → 退回行高
+        std::vector<LineInfo> lines;
+        LineInfos(p, lines);
+        for (const LineInfo& li : lines) {
+            if (index >= li.start && index <= li.end) {
+                h = li.height;
+                y = li.top;
+                break;
+            }
+        }
+        if (!(h > 0.f)) h = p->size.y;
+    }
+    out = Rect{x, y, 1.f, h};
+    return true;
+}
+
+void Engine::SelectionRects(Paragraph* p, uint32_t start, uint32_t end, std::vector<Rect>& out) {
+    out.clear();
+    if (p == nullptr || p->layout == nullptr || start >= end) return;
+    // HitTestTextRange：返回选区覆盖的逐行几何（正是高亮需要的矩形）
+    std::vector<DWRITE_HIT_TEST_METRICS> buf(16);
+    UINT32 count = 0;
+    HRESULT hr = p->layout->HitTestTextRange(start, end - start, 0.f, 0.f, buf.data(),
+                                              static_cast<UINT32>(buf.size()), &count);
+    if (hr == E_NOT_SUFFICIENT_BUFFER) {
+        buf.resize(count);
+        hr = p->layout->HitTestTextRange(start, end - start, 0.f, 0.f, buf.data(),
+                                         static_cast<UINT32>(buf.size()), &count);
+    }
+    if (FAILED(hr)) return;
+    const UINT32 n = (count < buf.size()) ? count : static_cast<UINT32>(buf.size());
+    for (UINT32 i = 0; i < n; ++i) {
+        const DWRITE_HIT_TEST_METRICS& m = buf[i];
+        out.push_back(Rect{m.left, m.top, m.width, m.height});
+    }
+}
+
+void Engine::LineInfos(Paragraph* p, std::vector<LineInfo>& out) {
+    out.clear();
+    if (p == nullptr || p->layout == nullptr) return;
+    std::vector<DWRITE_LINE_METRICS> lm;
+    if (!FetchLineMetrics(p->layout, lm)) return;
+    uint32_t start = 0;
+    float top = 0.f;
+    for (const DWRITE_LINE_METRICS& m : lm) {
+        LineInfo info;
+        info.start = start;
+        info.end = start + m.length - m.newlineLength;   // 不含换行符
+        info.top = top;
+        info.height = m.height;
+        out.push_back(info);
+        start += m.length;
+        top += m.height;
+    }
 }
 
 const GlyphUV& Engine::GetGlyph(const void* face, uint32_t glyphIndex, uint32_t pixelSize,

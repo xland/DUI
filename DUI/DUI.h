@@ -16,9 +16,13 @@
 
 namespace dui {
 
-// 加载未安装的字体文件（ttf/otf，如图标字体）到文本引擎（进程内生效），
+// 加载未安装的字体文件（ttf/otf/ttc，如图标字体）到文本引擎（进程内生效），
 // 返回其字体族名（可传给 dui::Style().FontFamily(...)）；失败返回空串。
 // 建议在 OnCreate 阶段调用；引擎生命周期内只装一个文件，重复调用返回已装族名。
+//
+// 格式限制：DirectWrite 只认 SFNT 容器，故仅支持 ttf/otf/ttc；
+// woff/woff2 是 Web 字体封装（Brotli 压缩 + 表变换），不支持，
+// 需先用工具（Google woff2 / fontTools）转成 ttf 再加载。
 // 实现在 Text/TextEngine.cpp（Text 层内部头的公共转发）。
 String LoadFontFamily(const wchar_t* fontFilePath);
 

@@ -7,6 +7,9 @@
 //  字体文件随构建拷到 exe 目录（vcxproj PostBuildEvent），
 //  运行时按 exe 所在目录定位加载。
 //
+//  格式：仅 ttf / otf / ttc —— DirectWrite 只认 SFNT 容器；同目录的
+//  iconfont.woff2 不被支持（Web 字体封装，需先用 woff2/fontTools 转成 ttf）。
+//
 //  注意：框架公共头不含 windows.h，wWinMain 入口类型由本文件自带。
 // ============================================================================
 
@@ -82,6 +85,8 @@ protected:
 
         root->AddChild<dui::Text>(L"字体族：iconfont · 用 Style().FontFamily 指定后即可渲染图标码位",
                                   dui::Style().FontSize(13.f).Color(0xFF6B7280).FlexShrink(0.f));
+        root->AddChild<dui::Text>(L"支持格式：ttf / otf / ttc（DirectWrite 只认 SFNT）；woff2 需先转换",
+                                  dui::Style().FontSize(12.f).Color(0xFF9CA3AF).FlexShrink(0.f));
 
         // 图标流式排列：单行 Row + FlexWrap(Wrap)，宽度不够自动换行，图标本体用 iconfont 族 + 大字号
         dui::Panel* grid = root->AddChild<dui::Panel>(dui::Style()

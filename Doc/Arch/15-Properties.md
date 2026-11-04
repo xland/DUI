@@ -49,13 +49,20 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `fontFamily` | StringId | ✓ | Layout·Text | ✗ | 系统 UI 字体 | 排版缓存键 |
 | `fontSize` | Length | ✓ | Layout·Text | ✓ | 14 dip | 排版缓存键；动画慎用 |
 | `fontWeight` | Enum | ✓ | Layout·Text | ✗ | Normal | 排版缓存键 |
-| `fontFamily` | String（`const wchar_t*` 指针） | ✓ | Layout·Text | ✓ | Microsoft YaHei | 框架默认微软雅黑；开发者可指定系统已安装任意字体族，指针生命周期由调用方保证（建议字面量）；未安装时 DWrite 自动回退默认 |
+| `fontFamily` | String（`const wchar_t*` 指针） | ✓ | Layout·Text | ✓ | Microsoft YaHei | 框架默认微软雅黑；开发者可指定系统已安装任意字体族，指针生命周期由调用方保证（建议字面量）；未安装时 DWrite 自动回退默认。未安装字体经 `dui::LoadFontFamily` 装入，仅支持 ttf/otf/ttc（DWrite 只认 SFNT，woff2 不支持，需先转换） |
 | `fontStyle` | Enum | ✓ | Layout·Text | ✗ | Normal | 排版缓存键 |
 | `textAlign` | Enum | ✓ | Layout·Text | ✗ | Start | |
 | `lineHeight` | Length（倍数） | ✓ | Layout·Text | ✓ | 1.2 | |
 | `letterSpacing` | Length | ✓ | Layout·Text | ✓ | 0 | |
 | `textDecoration` | Enum | ✓ | Paint | ✗ | None | |
 | `direction` | Enum | ✓ | Layout | ✗ | LTR | BiDi / Flex 主轴方向 |
+
+### 4.1.1 文本编辑（dui::TextBox / dui::TextArea 自绘；运行时已接入）
+
+| 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `selectionColor` | Color | ✗ | Paint | ✓ | 半透明蓝 `0x803399FF` | 选区底色；链式方法 `SelectionColor()` |
+| `caretColor` | Color | ✗ | Paint | ✓ | 取 `color`（文本色） | 光标色；链式方法 `CaretColor()` |
 
 ### 4.2 盒模型与尺寸
 

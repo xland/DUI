@@ -27,12 +27,51 @@ class Painter;
 enum class Kind : uint8_t { Node, Text, Scroller };
 
 // ---------------------------------------------------------------------------
-// 事件（06-Events §3；M4 接入命中测试与路由，M1 仅承载绑定）
+// 事件（06-Events §3；M4 接入命中测试与路由，M5.8 补齐元素级指针事件）
 // ---------------------------------------------------------------------------
 struct ClickEvent {
     Element* source = nullptr;   // 命中的目标元素（06-Events §4.3）
     bool     handled = false;    // 置 true 终止冒泡
 };
+
+// 指针事件：移入/移出/移动/按下/弹起（坐标为客户区绝对 DIP）
+struct PointerEvent {
+    Element* source = nullptr;   // 处理器宿主元素（冒泡中当前收到事件的元素）
+    Vec2     pos{};               // 客户区绝对坐标（DIP）
+    bool     handled = false;     // 置 true 终止冒泡（移入/移出不冒泡，该字段无意义）
+};
+
+// 滚轮事件（delta 为格数：+ 向上 / − 向下，Windows 约定；Shift + 滚轮 → horizontal）
+struct WheelEvent {
+    Element* source = nullptr;
+    Vec2     pos{};
+    float    delta = 0.f;
+    bool     horizontal = false;
+    bool     handled = false;     // 置 true 终止冒泡并阻止滚动容器消费
+};
+
+// 键盘事件：key = 虚拟键码（VK_*）；ch 仅 OnChar 有效（可含控制字符）
+struct KeyEvent {
+    Element* source = nullptr;
+    int      key = 0;              // VK_* 虚拟键码
+    wchar_t  ch = 0;               // 字符（OnChar）
+    bool     ctrl = false;
+    bool     shift = false;
+    bool     alt = false;
+    bool     handled = false;      // 置 true 终止冒泡
+};
+
+// ---------------------------------------------------------------------------
+// 焦点服务（UI/Focus.h；焦点唯一，挂在元素上 —— 06-Events §6）
+// ---------------------------------------------------------------------------
+class Element;
+
+// 当前焦点元素（无焦点 = nullptr）
+Element* FocusedElement() noexcept;
+// e 是否为当前焦点元素
+bool IsFocused(const Element* e) noexcept;
+// 设置焦点：旧元素清 State::Focused，新元素置 State::Focused；e 为 nullptr 则清焦点
+void SetFocus(Element* e);
 
 // ---------------------------------------------------------------------------
 // Element：树节点 + 状态位 + 本地覆盖
@@ -84,10 +123,104 @@ public:
     }
     void OnClick(std::function<void(ClickEvent&)> fn) { onClick_ = std::move(fn); }
 
+    // ------------------------------------------------------------------
+    // 指针事件绑定（与 OnClick 同构：成员函数 + 上下文 / std::function）
+    //   OnPointerEnter / OnPointerLeave —— 直达事件（不冒泡）：由命中链差分驱动，
+    //     元素进入/离开"悬停链"时各触发一次（移到子元素上不算离开本元素）。
+    //   OnPointerMove / OnPointerDown / OnPointerUp —— 冒泡：从命中元素向上，
+    //     处理器置 ev.handled 可终止冒泡。
+    //   OnWheel —— 冒泡：置 ev.handled 可阻止滚动容器消费该次滚轮。
+    // 不做防抖/节流（由开发者自行处理）。
+    // ------------------------------------------------------------------
+    template <class Ctx>
+    void OnPointerEnter(Ctx* ctx, void (Ctx::*fn)(PointerEvent&)) {
+        BindMember(MutableHandlers().enter, ctx, fn);
+    }
+    void OnPointerEnter(std::function<void(PointerEvent&)> fn) { MutableHandlers().enter = std::move(fn); }
+
+    template <class Ctx>
+    void OnPointerLeave(Ctx* ctx, void (Ctx::*fn)(PointerEvent&)) {
+        BindMember(MutableHandlers().leave, ctx, fn);
+    }
+    void OnPointerLeave(std::function<void(PointerEvent&)> fn) { MutableHandlers().leave = std::move(fn); }
+
+    template <class Ctx>
+    void OnPointerMove(Ctx* ctx, void (Ctx::*fn)(PointerEvent&)) {
+        BindMember(MutableHandlers().move, ctx, fn);
+    }
+    void OnPointerMove(std::function<void(PointerEvent&)> fn) { MutableHandlers().move = std::move(fn); }
+
+    template <class Ctx>
+    void OnPointerDown(Ctx* ctx, void (Ctx::*fn)(PointerEvent&)) {
+        BindMember(MutableHandlers().down, ctx, fn);
+    }
+    void OnPointerDown(std::function<void(PointerEvent&)> fn) { MutableHandlers().down = std::move(fn); }
+
+    template <class Ctx>
+    void OnPointerUp(Ctx* ctx, void (Ctx::*fn)(PointerEvent&)) {
+        BindMember(MutableHandlers().up, ctx, fn);
+    }
+    void OnPointerUp(std::function<void(PointerEvent&)> fn) { MutableHandlers().up = std::move(fn); }
+
+    template <class Ctx>
+    void OnWheel(Ctx* ctx, void (Ctx::*fn)(WheelEvent&)) {
+        BindMember(MutableHandlers().wheel, ctx, fn);
+    }
+    void OnWheel(std::function<void(WheelEvent&)> fn) { MutableHandlers().wheel = std::move(fn); }
+
+    // ------------------------------------------------------------------
+    // 键盘事件绑定（与 OnClick 同构：成员函数 + 上下文 / std::function）
+    //   路由：先到焦点元素，再沿祖先链冒泡（06-Events §3 键盘行）。
+    //   OnKeyDown / OnKeyUp：ev.key = VK_* 虚拟键码，ev.ctrl/shift/alt = 修饰键；
+    //   OnChar：ev.ch = 字符（UTF-16，IME 提交亦走此路）。
+    //   处理器置 ev.handled 可终止冒泡。
+    // ------------------------------------------------------------------
+    template <class Ctx>
+    void OnKeyDown(Ctx* ctx, void (Ctx::*fn)(KeyEvent&)) {
+        BindMember(MutableHandlers().keyDown, ctx, fn);
+    }
+    void OnKeyDown(std::function<void(KeyEvent&)> fn) { MutableHandlers().keyDown = std::move(fn); }
+
+    template <class Ctx>
+    void OnKeyUp(Ctx* ctx, void (Ctx::*fn)(KeyEvent&)) {
+        BindMember(MutableHandlers().keyUp, ctx, fn);
+    }
+    void OnKeyUp(std::function<void(KeyEvent&)> fn) { MutableHandlers().keyUp = std::move(fn); }
+
+    template <class Ctx>
+    void OnChar(Ctx* ctx, void (Ctx::*fn)(KeyEvent&)) {
+        BindMember(MutableHandlers().ch, ctx, fn);
+    }
+    void OnChar(std::function<void(KeyEvent&)> fn) { MutableHandlers().ch = std::move(fn); }
+
+    // 指针/滚轮/键盘处理器集合：按需分配 —— 未绑定任何事件的元素不占这部分内存
+    struct Handlers {
+        std::function<void(PointerEvent&)> enter, leave, move, down, up;
+        std::function<void(WheelEvent&)>   wheel;
+        std::function<void(KeyEvent&)>     keyDown, keyUp, ch;
+    };
+    // 事件派发只读访问（Event.cpp）
+    const Handlers* HandlersPtr() const noexcept { return handlers_.get(); }
+
+    // ------------------------------------------------------------------
+    // 焦点与 Tab 链（06-Events §6）
+    //   可聚焦：默认 false；编辑控件（TextBox/TextArea）置 true。
+    //   tabIndex：>0 排在 Tab 链前面（数值小者先）；0 = 文档序（默认）；
+    //             <0 排在最后（数值小者先）。
+    // ------------------------------------------------------------------
+    void SetFocusable(bool on) noexcept { focusable_ = on; }
+    bool IsFocusable() const noexcept { return focusable_; }
+    void SetTabIndex(int index) noexcept { tabIndex_ = index; }
+    int  TabIndex() const noexcept { return tabIndex_; }
+
+    // 取得焦点（旧焦点自动清 State::Focused）；Blur 主动放弃焦点
+    void Focus();
+    void Blur();
+    bool HasFocus() const noexcept;
+
     // 树结构
     Element* Parent() const noexcept { return parent_; }
     const std::vector<Element*>& Children() const noexcept { return children_; }
-
     // 布局结果（相对父元素，DIP；RunLayout 写入）
     const Rect& Bounds() const noexcept { return bounds_; }
 
@@ -102,6 +235,35 @@ public:
     // 子元素之前调用；Painter 的形状/矩形指令收 DIP 坐标 + scale。
     // 默认空实现——普通元素不参与。
     virtual void OnPaint(graphics::Painter&, const StyleContext&, float) {}
+
+    // 内容裁剪矩形（绝对 DIP）：返回 true 时，元素自身的绘制内容（OnPaint）
+    // 被裁剪到该矩形内（TextBox/TextArea 的文本溢出裁剪）。
+    // 裁剪在窗口空间求交（嵌套滚动容器时由收集器叠加父级原点）。
+    virtual bool ContentClipRect(Rect&) const { return false; }
+
+    // 焦点变化钩子（SetFocus 时调用；focused = true 表示取得焦点）
+    virtual void OnFocusChanged(bool focused) { (void)focused; }
+
+    // 闪烁节拍（框架定时器驱动）：参与节拍的元素（如编辑控件的光标）在此
+    // 切换可见性并标脏；返回 true 表示需要继续节拍，false 表示可以停表。
+    virtual bool IsBlinkable() const { return false; }
+    virtual bool OnBlink() { return false; }
+
+    // 插入点（光标）位置：客户区 DIP 绝对坐标。返回 true 表示该元素提供插入点
+    // （编辑控件）；IME 候选窗口据此定位到光标下方。
+    virtual bool InsertionPoint(Vec2& outDip) const { (void)outDip; return false; }
+
+    // ------------------------------------------------------------------
+    // 控件内部事件钩子（子类重写）：返回 true = 已消费，事件不再向上冒泡。
+    // 与 OnXxx 绑定并存 —— 绑定是外部回调，钩子是控件自身行为；
+    // 同一元素上钩子先于绑定执行，绑定仍会收到该事件（可见 ev.handled）。
+    // ------------------------------------------------------------------
+    virtual bool HandleKeyDown(KeyEvent&) { return false; }
+    virtual bool HandleKeyUp(KeyEvent&) { return false; }
+    virtual bool HandleChar(KeyEvent&) { return false; }
+    virtual bool HandlePointerDown(PointerEvent&) { return false; }
+    virtual bool HandlePointerMove(PointerEvent&) { return false; }
+    virtual bool HandlePointerUp(PointerEvent&) { return false; }
 
 protected:
     void AttachChild(Element* child);
@@ -118,6 +280,24 @@ protected:
     uint32_t                   states_ = 0;
     dui::Lifetime              lifetime_;
     std::function<void(ClickEvent&)> onClick_;
+
+protected:
+    Handlers& MutableHandlers() {
+        if (!handlers_) handlers_ = std::make_unique<Handlers>();
+        return *handlers_;
+    }
+
+private:
+    // 成员函数 + 上下文 → std::function 的通用绑定（与 OnClick 同构）
+    template <class E, class Ctx>
+    static void BindMember(std::function<void(E&)>& slot, Ctx* ctx, void (Ctx::*fn)(E&)) {
+        slot = [ctx, fn](E& e) { (ctx->*fn)(e); };
+    }
+
+    std::unique_ptr<Handlers> handlers_;
+
+    bool focusable_ = false;   // 可聚焦（Tab 链成员）
+    int  tabIndex_ = 0;        // Tab 链次序（见 SetTabIndex 注释）
 
 private:
     // 布局 / 解析 / 事件实现（Layout.cpp、StyleResolve.cpp、Event.cpp）

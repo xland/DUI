@@ -7,9 +7,12 @@
 
 #include <algorithm>
 
+#include "UI/Focus.h"
+
 namespace dui {
 
 Element::~Element() {
+    ClearFocusIf(this);   // 焦点元素被销毁 → 清焦点（避免全局焦点悬空）
     lifetime_.Kill();   // 生命周期令牌置否：延迟回投的回调据此丢弃（06-Events D7）
     for (Element* c : children_) delete c;
 }
@@ -54,6 +57,18 @@ void Element::MarkDirty(uint32_t flags) {
         a->subtreeDirty_ = true;
     }
 }
+
+// ---------------------------------------------------------------------------
+// 焦点（06-Events §6）：焦点唯一，挂在元素上
+// ---------------------------------------------------------------------------
+
+void Element::Focus() { SetFocus(this); }
+
+void Element::Blur() {
+    if (IsFocused(this)) SetFocus(nullptr);
+}
+
+bool Element::HasFocus() const noexcept { return IsFocused(this); }
 
 // ---------------------------------------------------------------------------
 // Measure：容器默认 = 子项沿主轴聚合（04-Layout §4.1/§6.1）

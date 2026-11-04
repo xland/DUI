@@ -71,6 +71,8 @@ Style& Style::FontWeight(dui::FontWeight v)        { return SetU(Prop::FontWeigh
 Style& Style::FontFamily(const wchar_t* name) { Ensure(Prop::FontFamily).family = name; return *this; }
 Style& Style::LineHeight(float multiple)      { return SetF(Prop::LineHeight, multiple); }
 Style& Style::Opacity(float v)                { return SetF(Prop::Opacity, v); }
+Style& Style::SelectionColor(dui::Color c)   { return SetU(Prop::SelectionColor, c); }
+Style& Style::CaretColor(dui::Color c)       { return SetU(Prop::CaretColor, c); }
 Style& Style::Gap(float dip)                  { return SetF(Prop::Gap, dip); }
 
 Style& Style::TrackWidth(float dip)            { return SetF(Prop::ScrollbarTrackWidth, dip); }

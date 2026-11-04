@@ -7,6 +7,8 @@
 
 #include "Platform/Window.h"
 
+#include <cstring>
+
 namespace dui::platform {
 
 namespace {
@@ -35,6 +37,7 @@ Rect ToDip(const RECT& px, float scale) {
 }  // namespace
 
 NativeWindow::~NativeWindow() {
+    RemoveImeCaret();
     if (hwnd_) DestroyWindow(hwnd_);
 }
 
@@ -109,6 +112,59 @@ Vec2 NativeWindow::DipFromLParam(LPARAM lp) const noexcept {
     return {x / scale_, y / scale_};
 }
 
+void NativeWindow::StartTimer(uintptr_t id, unsigned ms) {
+    if (hwnd_ == nullptr) return;
+    ::SetTimer(hwnd_, static_cast<UINT_PTR>(id), ms, nullptr);
+}
+
+void NativeWindow::StopTimer(uintptr_t id) {
+    if (hwnd_ == nullptr) return;
+    ::KillTimer(hwnd_, static_cast<UINT_PTR>(id));
+}
+
+// ---------------------------------------------------------------------------
+// IME 插入点（系统 caret）
+//
+// IME 依 `GetCaretPos()`（系统 caret 位置）确定候选窗口该出现在哪 —— 这是
+// Win32 的标准机制，且对现代 TSF 输入法同样有效（无 TSF 上下文时走 IMM
+// 兼容路径，仍读 caret）。
+//
+// 我们自绘光标，故另建一个**隐形**系统 caret：1×1 单色位图（全 0 = 完全
+// 透明），只用于向 IME 报告插入点，不会出现双光标。
+//
+// 注意：不要在 IME 消息处理期间调用 ImmGetContext/ImmReleaseContext —— 那会
+// 重建输入上下文，打断正在进行的组合（表现为"中文打不出来"）。
+// ---------------------------------------------------------------------------
+
+void NativeWindow::EnsureImeCaret() {
+    if (caretBmp_ != nullptr) return;
+    // 1×1 单色位图：像素 0 = 透明（画背景色），非 0 = 前景色 → 全 0 即不可见
+    HDC mem = CreateCompatibleDC(nullptr);
+    if (mem == nullptr) return;
+    caretBmp_ = CreateBitmap(1, 1, 1, 1, nullptr);
+    if (caretBmp_ != nullptr) {
+        HGDIOBJ old = SelectObject(mem, caretBmp_);
+        SetPixel(mem, 0, 0, RGB(0, 0, 0));   // 索引 0 = 透明
+        GdiFlush();
+        SelectObject(mem, old);
+    }
+    DeleteDC(mem);
+    if (caretBmp_ == nullptr) return;
+    ::CreateCaret(hwnd_, caretBmp_, 1, 1);
+}
+
+void NativeWindow::UpdateImeCaretPos(int pxX, int pxY) {
+    EnsureImeCaret();
+    ::SetCaretPos(pxX, pxY);   // 客户区物理像素；无输入焦点时失败（下次事件会补）
+}
+
+void NativeWindow::RemoveImeCaret() {
+    if (caretBmp_ == nullptr) return;
+    ::DestroyCaret();
+    DeleteObject(caretBmp_);
+    caretBmp_ = nullptr;
+}
+
 LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     // GWLP_USERDATA 存 NativeWindow*（而非 dui::Window*：Platform 不依赖 App/UI）
     if (msg == WM_NCCREATE) {
@@ -157,8 +213,39 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             ReleaseCapture();
             self->host_->OnPointerButton(self->DipFromLParam(lp), false);
             return 0;
+        case WM_KEYDOWN:
+        case WM_SYSKEYDOWN: {
+            // 修饰键状态取自键盘（VK_* 高位 = 按下）
+            const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+            self->host_->OnKeyDown(static_cast<int>(wp), ctrl, shift, alt);
+            if (msg == WM_SYSKEYDOWN) return DefWindowProcW(hwnd, msg, wp, lp);
+            return 0;
+        }
+        case WM_KEYUP:
+        case WM_SYSKEYUP: {
+            const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+            self->host_->OnKeyUp(static_cast<int>(wp), ctrl, shift, alt);
+            if (msg == WM_SYSKEYUP) return DefWindowProcW(hwnd, msg, wp, lp);
+            return 0;
+        }
+        case WM_CHAR:
+        case WM_SYSCHAR:
+        case WM_IME_CHAR: {
+            const wchar_t ch = static_cast<wchar_t>(wp);
+            if (ch != 0) self->host_->OnChar(ch);
+            // WM_IME_CHAR 必须吃掉：否则 DefWindowProc 会再生成一个 WM_CHAR，
+            // 同一个字符被插入两次（IME 提交）。
+            return 0;
+        }
         case WM_APP:
             return 0;   // Dispatcher 唤醒消息：只需唤醒泵，排空在主循环 [调度] 步
+        case WM_TIMER:
+            self->host_->OnTimer(static_cast<uintptr_t>(wp));
+            return 0;
         case WM_DPICHANGED: {
             const float newScale = static_cast<float>(HIWORD(wp)) / 96.0f;
             if (newScale == self->scale_) return 0;      // 幂等（12-Windowing §7.2-2）
@@ -177,6 +264,44 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// ---------------------------------------------------------------------------
+// 剪贴板（CF_UNICODETEXT）
+// ---------------------------------------------------------------------------
+
+bool GetClipboardText(String& out) {
+    out.clear();
+    if (!OpenClipboard(nullptr)) return false;
+    bool ok = false;
+    if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
+        if (const wchar_t* p = static_cast<const wchar_t*>(GlobalLock(h))) {
+            out = p;
+            GlobalUnlock(h);
+            ok = true;
+        }
+    }
+    CloseClipboard();
+    return ok;
+}
+
+bool SetClipboardText(const String& text) {
+    if (!OpenClipboard(nullptr)) return false;
+    EmptyClipboard();
+    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    bool ok = false;
+    if (mem != nullptr) {
+        void* p = GlobalLock(mem);
+        if (p != nullptr) {
+            std::memcpy(p, text.c_str(), bytes);
+            GlobalUnlock(mem);
+            ok = SetClipboardData(CF_UNICODETEXT, mem) != nullptr;
+        }
+        if (!ok) GlobalFree(mem);   // 未交给系统 → 自行释放
+    }
+    CloseClipboard();
+    return ok;
 }
 
 }  // namespace dui::platform

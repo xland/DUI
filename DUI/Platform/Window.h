@@ -36,8 +36,19 @@ public:
     // 滚轮：ptDip = 指针位置（客户区 DIP）；delta = 滚轮格数（正 = 向上滚）
     // horizontal = true 时应横向滚动（Shift + 滚轮由平台层判定）
     virtual void OnMouseWheel(Vec2 ptDip, float delta, bool horizontal) = 0;
+    // 键盘输入（M5.9）：key = VK_* 虚拟键码；ctrl/shift/alt = 修饰键状态
+    virtual void OnKeyDown(int key, bool ctrl, bool shift, bool alt) = 0;
+    virtual void OnKeyUp(int key, bool ctrl, bool shift, bool alt) = 0;
+    // 字符输入（WM_CHAR / WM_IME_CHAR；IME 提交亦走此路）
+    virtual void OnChar(wchar_t ch) = 0;
+    // 定时器节拍（WM_TIMER；id 由上层分配并自行管理）
+    virtual void OnTimer(uintptr_t id) { (void)id; }
     virtual void OnResized() = 0;
 };
+
+// 剪贴板（CF_UNICODETEXT）：App 层注入到 UI 层（UI 不依赖 Platform）
+bool GetClipboardText(String& out);
+bool SetClipboardText(const String& text);
 
 class NativeWindow {
 public:
@@ -57,6 +68,16 @@ public:
     HWND Handle() const noexcept { return hwnd_; }
     float Scale() const noexcept { return scale_; }
 
+    // 窗口定时器（上层按需启停；节拍经 NativeWindowHost::OnTimer 上抛）
+    void StartTimer(uintptr_t id, unsigned ms);
+    void StopTimer(uintptr_t id);
+
+    // 隐形系统 caret（IME 插入点）：IME 依 GetCaretPos() 把候选窗口定位到
+    // 光标处。我们自绘光标，故另建一个不可见的系统 caret 专门报告插入点。
+    void EnsureImeCaret();
+    void UpdateImeCaretPos(int pxX, int pyY);
+    void RemoveImeCaret();
+
     Vec2 ClientSizePx() const;      // 客户区物理像素
     Vec2 ClientSizeDip() const;     // 客户区 DIP（12-Windowing §3）
 
@@ -68,6 +89,7 @@ private:
     HWND  hwnd_ = nullptr;
     float scale_ = 1.f;
     NativeWindowHost* host_ = nullptr;
+    HBITMAP caretBmp_ = nullptr;   // 隐形系统 caret 的位图（1×1 全透明）
 };
 
 }  // namespace dui::platform

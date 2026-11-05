@@ -53,7 +53,7 @@ Build\Temp\<工程名>\Debug|Release\   中间产物（obj 等）
 | --- | --- |
 | `Doc/Arch/03-Style.md` | 样式系统；§6.2 状态全集/合并优先级/SetState 契约 |
 | `Doc/Arch/04-Layout.md` | Flex/Grid/绝对定位、失效规则 |
-| `Doc/Arch/05-Animation.md` | 过渡动画 |
+| `Doc/Arch/05-Animation.md` | 命令式属性动画契约 |
 | `Doc/Arch/06-Events.md` | 事件路由、焦点、状态位归属 |
 | `Doc/Arch/10-Rendering.md` | 显示列表/脏区/按需全量光栅/BGRA8/gamma 混合/fwidth |
 | `Doc/Arch/12-Windowing.md` | Per-Monitor V2、三套坐标、DPI 切换时序、高保真纪律 |
@@ -298,19 +298,20 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 
 ---
 
-## M6 — 过渡动画 + 观测指标
+## M6 — 命令式属性动画 ✅（观测指标待做）
 
-**目标**：`Transition(BackgroundColor, 120ms)` 生效；帧耗时/Draw Call 可观测。
+**目标**：`Element::Animate()` 命令式补间生效；**不做声明式动画**。已落地：
 
-步骤：
+1. `UI/Animation.h/.cpp`：强类型 `AnimProp<T>` 标签、`AnimConfig`（C++20 指派初始化）、`AnimationHandle`（`OnFinished` / 幂等 `Cancel` / 元素销毁后失效）；插值、缓动与活动补间注册表。
+2. `UI/Element.h/.cpp` + `UI/StyleResolve.cpp`：动画值写入 `Element::animated_`，作为级联第 1 层，遍历内/外读路径一致；起点取当前显示值，同 (元素, 属性) 新动画替换旧动画。
+3. `UI/Image.cpp`：统一 `AnimationClock` 同时驱动 GIF 帧动画、光标闪烁与属性补间；App 层仍只启停一个定时器（20ms / 500ms / 停表）。
+4. 删除死代码 `Style::Transition()` / `TransitionSpec` / `Style::transitions_`；重写 `05-Animation`，收敛 `03-Style` / `02-Decisions` / `15-Properties` / `00-Overview` / `01-Layering` / `16-Image` 的旧声明式描述。
 
-1. `DUI/UI/Animation.cpp`：属性基值变化时建过渡（起点=当前显示值）、UI ticker 每帧推进、写入动画槽（级联第 1 层）。
-2. 观测面板：帧耗时分段计时（收集/光栅/Present）+ Draw Call 计数（10-Rendering §9-5 的分段缓存判定依赖它）。
-3. 收尾：`00-Overview §6` 工程状态更新；README 补截图。
+**待做**：观测面板（帧耗时分段计时 + Draw Call 计数，见 `10-Rendering §9-5`）、README 截图。
 
-验收：示例中 hover/选中 120ms 补间；空闲时 CPU 归零（任务管理器验证）。
+验收：Debug + Release 全量编译零警告；空闲时 CPU 归零由用户侧确认。
 
-参考：`05-Animation`、`10-Rendering §5/§8`。
+参考：`05-Animation`、`03-Style`、`16-Image`。
 
 ---
 
@@ -648,8 +649,8 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
     用 `GetFrameCount` / `GetFrame(i)` + GIF 元数据（`/grctlext/Delay|Disposal`、
     `/imgdesc/Left|Top`、`/logscrdesc/Width|Height`）把局部帧按 disposal 合成为统一尺寸的
     全画布 BGRA8；`Image` 复用同一张纹理换帧（不重复 `Register`）；`AnimationClock`
-    统一驱动帧动画与光标闪烁，App 层只留一个窗口定时器（有帧动画 20ms / 只有闪烁
-    500ms，最小化停表），帧时间用绝对时刻判断。
+    统一驱动帧动画、光标闪烁与命令式属性补间，App 层只留一个窗口定时器（有帧动画
+    或属性动画 20ms / 只有闪烁 500ms，最小化停表），帧时间用绝对时刻判断。
   - 踩坑：**命令行 msbuild 全量重建会刷 LNK4020**（"pdb 类型记录已损坏"）—— `/MP` 多进程
     编译 + `/Zi` 缺 `/FS` 所致；VS 内构建由 `Microsoft.CppCommon.targets` 在 `UseMultiToolTask`
     为真时自动加 `/FS`，所以 VS 里看不到。规避：命令行加 `-p:UseMultiToolTask=true`

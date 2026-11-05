@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "Core/Threading.h"
+#include "UI/Animation.h"
 #include "UI/Style.h"
 
 namespace dui {
@@ -106,6 +107,21 @@ public:
         } else {
             static_assert(!sizeof(V), "dui::Element::Set: unsupported value type");
         }
+    }
+
+    // 命令式属性动画（05-Animation）：启动一条补间，返回可取消的句柄。
+    // 起点 = 当前显示值（含正在进行的动画值）；同 (元素, 属性) 新动画替换旧动画。
+    // 动画值写入级联第 1 层，不改动 Set() 的本地覆盖。
+    template <class T>
+    AnimationHandle Animate(AnimProp<T> prop, std::type_identity_t<T> target,
+                            AnimConfig cfg) {
+        static_assert(std::is_same_v<T, float> || std::is_same_v<T, dui::Color>,
+                      "dui::Element::Animate: only float / Color properties are animatable");
+        StyleValue to;
+        to.prop = prop.prop;
+        if constexpr (std::is_same_v<T, dui::Color>) to.u = target;
+        else to.f = target;
+        return StartAnimation(prop.prop, std::is_same_v<T, dui::Color>, to, cfg);
     }
 
     // 状态位：相同值幂等（03-Style §6.2）；标脏按该状态变体的属性标志取并集
@@ -284,6 +300,7 @@ protected:
     const Style*               style_ = nullptr;
     std::unique_ptr<Style>     ownedStyle_;   // SetStyle 拷贝持有的宿主
     std::vector<StyleValue>    overrides_;    // 本地覆盖（级联第 3 层，稀疏）
+    std::vector<StyleValue>    animated_;     // 动画值（级联第 1 层，稀疏）
     uint32_t                   states_ = 0;
     dui::Lifetime              lifetime_;
     std::function<void(ClickEvent&)> onClick_;
@@ -295,6 +312,11 @@ protected:
     }
 
 private:
+    // 命令式动画（实现在 UI/Animation.cpp）
+    AnimationHandle StartAnimation(Prop p, bool color, const StyleValue& to,
+                                   const AnimConfig& cfg);
+    void TickAnimations(uint64_t nowMs);
+
     // 成员函数 + 上下文 → std::function 的通用绑定（与 OnClick 同构）
     template <class E, class Ctx>
     static void BindMember(std::function<void(E&)>& slot, Ctx* ctx, void (Ctx::*fn)(E&)) {
@@ -314,9 +336,13 @@ private:
     friend void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx, unsigned depth);
     friend void ClearDirtyTree(Element* root);
     friend void DispatchClick(Element* hit);
+    friend void detail::TickAnimations(uint64_t nowMs);
+    friend void detail::CancelAnimation(
+        const std::shared_ptr<detail::AnimState>& state) noexcept;
 
     Element*                   parent_ = nullptr;
     std::vector<Element*>      children_;     // 父持有子，析构递归删除
+    std::vector<detail::AnimSlot> anims_;    // 活动补间（完成即移除，终值留在 animated_）
     Rect                       bounds_;       // Arrange 结果（相对父，DIP）
     Vec2                       measured_{};   // Measure 结果（外层盒）
     uint32_t                   dirty_ = 0;    // 自身待重算标志（PropFlags）

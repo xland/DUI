@@ -40,7 +40,7 @@ Painter::AddImageQuad()  →  图像批（顶点格式同字形批，PS 换成�
 - **UI 层不碰 D3D**：控件只持有 `std::shared_ptr<void>`（指向 `graphics::ImageTexture`，公共头不引入 windows.h —— 与 `TextBox::para_` 的 pimpl 模式一致）。
 - **WIC 在 Graphics 层**：解码是平台能力（WIC 是系统组件），放 Graphics 层避免 UI 层直接依赖 Windows API（01-Layering §1）。
 - **纹理仓库是进程级单例**（`graphics::TextureStore::Instance()`），与字形图集同构：CPU 侧数据在 UI 层，GPU 侧资源在 Graphics 层，App 层每帧同步一次。
-- **动画链路**：`Image` 持有帧序列并向 `AnimationClock` 登记 → App 层窗口定时器按节拍唤醒 → 按帧延迟切帧时只替换同一 `ImageTexture` 的像素并标脏 → `TextureStore::Sync` 用同一 id 更新 GPU 纹理（`Device::UploadImage` 复用纹理 + `UpdateSubresource`）。不重复 `Register`，否则每帧都会新建 GPU 纹理。
+- **动画链路**：`Image` 持有帧序列并向 `AnimationClock` 登记 → App 层窗口定时器按节拍唤醒 → 按帧延迟切帧时只替换同一 `ImageTexture` 的像素并标脏 → `TextureStore::Sync` 用同一 id 更新 GPU 纹理（`Device::UploadImage` 复用纹理 + `UpdateSubresource`）。不重复 `Register`，否则每帧都会新建 GPU 纹理。这是**帧/内容动画**，不经过样式系统；属性补间另见 [05-Animation.md](./05-Animation.md)。
 
 ### 2.1 链接
 
@@ -80,7 +80,7 @@ WIC 的 import lib 在 SDK 里叫 **`windowscodecs.lib`**（没有 `wincodec.lib
 
 - **解码**：`Graphics/ImageCodec.cpp` 用 WIC `GetFrameCount` / `GetFrame(i)` 取帧，`IWICMetadataQueryReader` 读 `/logscrdesc/Width,Height`（逻辑屏幕）、`/imgdesc/Left,Top`（局部帧偏移）、`/grctlext/Delay`（单位 10ms）、`/grctlext/Disposal`。**LZW / 调色板 / 容器解析由 WIC 负责**，框架只实现动画语义。
 - **合成**：disposal 0/1 保留画布、2 把该帧区域清成透明背景、3 恢复叠加前的画布快照；局部帧按偏移叠加，透明像素（`alpha=0`）保留历史内容。每帧输出逻辑屏幕全尺寸 BGRA8，因此所有帧尺寸一致，contain 与纹理更新都不需要特殊处理。
-- **播放**：UI 层统一 ticker（`AnimationClock`）同时驱动帧动画与光标闪烁，App 层只启停**一个**窗口定时器：有帧动画时 20ms 节拍、只有闪烁时 500ms，最小化 / 空闲停表。各 `Image` 用绝对时刻判断自己是否到点，多个不同延迟的 GIF 互不影响。`Delay` 为 0/1 时按浏览器惯例兜到 100ms。
+- **播放**：UI 层统一 ticker（`AnimationClock`）同时驱动帧动画、光标闪烁与命令式属性动画（[05-Animation.md](./05-Animation.md) §5），App 层只启停**一个**窗口定时器：有帧动画或属性动画时 20ms 节拍、只有闪烁时 500ms，最小化 / 空闲停表。各 `Image` 用绝对时刻判断自己是否到点，多个不同延迟的 GIF 互不影响。`Delay` 为 0/1 时按浏览器惯例兜到 100ms。
 - **代价**：内存 ≈ 帧数 × 逻辑屏幕宽 × 高 × 4；每次切帧整张 `UpdateSubresource`。长动画 / 大图需改成按需解码。
 
 ---

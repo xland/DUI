@@ -286,21 +286,24 @@ Doc/Arch/                文档
 
 ---
 
-## ADR-020 动画系统
+## ADR-020 动画系统（已定：改为命令式）
 
-需求：支持类似 CSS 的动画设置 —— 过渡（transition）与关键帧动画（keyframes）。
+需求：提供属性动画能力，但**不支持声明式动画**（推翻早期 CSS 风格草案 v0.1）。
 
 | 决策项 | 结论 | 理由 |
 | --- | --- | --- |
-| 接入方式 | 动画作为样式级联第 1 层"动画值源"，`transition` / `animation` 为普通样式属性 | 复用样式系统的级联、失效与状态变体联动，不另起炉灶 |
-| 双机制 | 过渡（基值变化被动触发）+ 关键帧（显式启动） | 对应 CSS transition / @keyframes，覆盖声明式与命令式两类需求 |
-| 中断语义 | 新动画从**当前显示值**起播，同 (元素, 属性) 唯一 | hover 快速进出不跳变（R2） |
-| transform | 引入 `translation` / `scale` / `rotation`（Paint 级，不参与布局） | 无它则位移动画每帧重排；需同步作用于命中测试 |
-| 驱动 | MVP：UI ticker（帧循环）；P2：窗口级 DComp 动画 | 元素级合成需保留合成树，近期不做；窗口级为低成本优化 |
-| 缓动 | 预设 + 自定义贝塞尔（LUT 常量表）；Spring 列 P1 | 零分配、够用；中断语义已为 spring 预留 |
-| 可裁剪 | `DUI_ENABLE_ANIMATION`（既定约定） | 关闭后动画槽/tick/API 全部不进二进制 |
+| 形态 | **只做命令式**：`element->Animate(AnimProp<T>, target, AnimConfig)` → `AnimationHandle` | 样式里不做 `Transition` / `Keyframes` / `animation` 属性；声明式草案的死代码（`Style::Transition` / `TransitionSpec` / `transitions_`）已删除 |
+| 接入方式 | 动画值写入样式级联第 1 层 `Element::animated_`，不写本地覆盖 | 复用 `TryResolveElement` 使遍历内/外两条读路径一致，且不污染 `Set()` |
+| 属性范围 | 强类型标签白名单，仅 Paint 类标量（float / Color） | 编译期拒绝不可插值属性；布局/文本类每帧重排代价高 |
+| 配置 | 聚合 `AnimConfig{ .durationMs, .easing }`（C++20 指派初始化） | 比链式 Builder 更短，默认值够用，无堆分配、无注册表 |
+| 中断语义 | 新动画从**当前显示值**起播，同 (元素, 属性) 唯一 | 快速反向不跳变；旧句柄作废且不触发回调 |
+| 完成语义 | fill forwards：终值留在动画槽；`OnFinished` 一次 | 避免淡出后跳回基值；`Cancel()` 用于回落 |
+| 生命周期 | `Cancel()` 幂等；元素销毁经 `Lifetime` 令牌使句柄自动失效 | 回调不会派发到已销毁元素 |
+| 驱动 | 复用统一 `AnimationClock`（GIF 帧动画 / 光标闪烁 / 属性动画），App 层一个定时器 | 有帧动画或属性动画 20ms、只有闪烁 500ms、空闲停表，不牺牲 ADR-013 |
+| 缓动 | 四个枚举预设，二次多项式近似 | 零分配、够用；不做贝塞尔 LUT / Spring |
+| transform / DComp / 可裁剪宏 | **不做** | 无位移动画需求；不引入合成树；不做 `DUI_ENABLE_ANIMATION` |
 
-**已定：按上表方向。** 完整设计见 [05-Animation.md](./05-Animation.md)，其中 D1–D4、池容量策略、回调重入约束等仍需逐条确认。
+**已定：按上表。** 契约见 [05-Animation.md](./05-Animation.md)；早期草案的 D1–D4（transform 三件套、Fill 模式、合成器边界、Spring）随声明式方案一并作废。
 
 ---
 
@@ -334,7 +337,7 @@ Doc/Arch/                文档
 | 风格 | **协程风格为体验主路径**（`dui::Task<T>` + `co_await dui::Background()` / `dui::Foreground()`，与回调风格平级，建议 P0 落地最小集）；回调风格并存 | R3；协程切换点为命名空间内函数，调用点即"动作"；协程体内不用异常，错误走 `Result<T>`（对齐 ADR-007） |
 | 线程规则 | 后台只碰纯数据，碰 UI 必经 `ui.Post` 回投 | 不破坏 ADR-012 单线程 UI |
 | 生命周期安全 | 取消令牌；`Lifetime` 安全回投（元素销毁自动作废，联动 ADR-021 D5） | 消除"回调时界面已销毁"悬挂 |
-| 队列上限 | 固定池（1024），满则丢最旧 + 告警 | 与动画池策略一致，拒绝无限队列 |
+| 队列上限 | 固定池（1024），满则丢最旧 + 告警 | 拒绝无限队列 |
 
 **已定：按上表方向。** 完整设计见 [07-Threading.md](./07-Threading.md)，其中 D1–D5、并发度、组合子范围等仍需逐条确认。
 
@@ -365,8 +368,8 @@ Doc/Arch/                文档
 | 属性清单归属 | **集中到 [15-Properties.md](./15-Properties.md)，唯一事实来源**；03/04/05/11 只写消费与语义 | 三处清单重复且出现"在 03 之外新增却重复列 `display`"的矛盾；属性表是首份要写的代码 |
 | 遍历内读取 | 继承属性走 `StyleContext` 栈；非继承属性查元素自身链 O(1–3) | 常驻内存为零 |
 | 遍历外读取 | `Style::Resolve(element, Prop)`：非继承 O(1–3)，继承 O(树深)（不缓存） | 事件、命中测试、动画必须能在遍历外读 |
-| 过渡旧值槽 | **仅**对声明了 `Transition` 的属性保留旧值，内联 2 条、溢出 Arena | 无声明者零开销 |
-| 一致性 | 两条路径**均经"元素活动动画链表"**查级联第 1 层，同帧结果必须一致 | 避免两套解析逻辑 |
+| 动画值槽 | 命令式 `Animate()` 的结果稀疏存于 `Element::animated_`；不设"过渡旧值槽" | 无动画的元素零开销 |
+| 一致性 | 两条路径**均经 `TryResolveElement`** 查级联第 1 层，同帧结果必须一致 | 避免两套解析逻辑 |
 
 **已定：按上表。** 细则见 [15-Properties.md](./15-Properties.md) §5。
 

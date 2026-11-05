@@ -12,6 +12,7 @@
 
 #include "Graphics/Graphics.h"
 #include "Graphics/ImageCodec.h"
+#include "UI/Animation.h"
 #include "UI/Focus.h"
 
 #include <utility>
@@ -55,13 +56,15 @@ void AnimationClock::Remove(Image* img) noexcept {
 }
 
 bool AnimationClock::NeedsTick() const noexcept {
-    return !images_.empty() || NeedsBlinkTick();
+    return !images_.empty() || NeedsBlinkTick() || detail::HasActiveAnimations();
 }
 
 unsigned AnimationClock::TickPeriodMs() const noexcept {
-    // 只有闪烁时保持 500ms 唤醒，不因统一 ticker 而退化成 20ms 空转
-    return images_.empty() ? static_cast<unsigned>(kBlinkTickMs)
-                           : static_cast<unsigned>(kFrameTickMs);
+    // 只有闪烁时保持 500ms 唤醒，不因统一 ticker 而退化成 20ms 空转；
+    // 帧动画或属性动画期间按 20ms 推进补间
+    const bool fast = !images_.empty() || detail::HasActiveAnimations();
+    return fast ? static_cast<unsigned>(kFrameTickMs)
+                : static_cast<unsigned>(kBlinkTickMs);
 }
 
 void AnimationClock::Reset() noexcept {
@@ -83,6 +86,9 @@ void AnimationClock::Tick(uint64_t nowMs) {
         blinkStarted_ = false;
         nextBlinkMs_ = 0;
     }
+
+    // 属性动画放最后：完成回调可能启动新动画、销毁图像控件甚至整个子树
+    detail::TickAnimations(nowMs);
 }
 
 Image::Image() = default;

@@ -5,8 +5,6 @@
 
 #include "UI/Style.h"
 
-#include <algorithm>
-
 namespace dui {
 
 // ---------------------------------------------------------------------------
@@ -113,20 +111,6 @@ Style& Style::CornerRadius(const Thickness& t) {
     v.extra[0] = t.top;
     v.extra[1] = t.right;
     v.extra[2] = t.bottom;
-    return *this;
-}
-
-Style& Style::Transition(Prop prop, uint32_t durationMs, Easing easing) {
-    // 同 (元素, 属性) 唯一：后声明替换（05-Animation §3.2）
-    transitions_.erase(
-        std::remove_if(transitions_.begin(), transitions_.end(),
-                       [prop](const TransitionSpec& t) { return t.prop == prop; }),
-        transitions_.end());
-    TransitionSpec t;
-    t.prop = prop;
-    t.durationMs = durationMs;
-    t.easing = easing;
-    transitions_.push_back(t);
     return *this;
 }
 

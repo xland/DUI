@@ -2,6 +2,7 @@
 //  DUI/UI/StyleResolve.cpp — 级联解析与失效（03-Style §5/§7，15-Properties §5）
 //
 //  级联顺序（首次命中即返回）：
+//    1 动画值（命令式 Element::Animate 写入 Element::animated_）
 //    2 状态变体（固定优先级 disabled > pressed > selected > focused > hover）
 //    3 元素本地覆盖（Set）
 //    4 元素引用的 Style 派生链（由近及远）
@@ -54,6 +55,11 @@ StyleValue MakeF(Prop p, float f) {
 // ---- 层 2/3/4：元素自身链（状态变体 → 本地覆盖 → Style 派生链）------------
 
 bool TryResolveElement(const Element* e, Prop p, StyleValue& out) {
+    // 层 1：动画值。遍历内（StyleContext）与遍历外（Style::Resolve）都经过此处，
+    // 保证两条读路径同帧一致（05-Animation §3）。
+    for (const StyleValue& v : e->animated_) {
+        if (v.prop == p) { out = v; return true; }
+    }
     // 层 2：状态变体。逐属性独立仲裁：按优先级从高到低，首个设置该属性者胜。
     for (const Style* s = e->StylePtr(); s != nullptr; s = s->Parent()) {
         for (State st : kStatePriority) {

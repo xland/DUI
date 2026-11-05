@@ -6,7 +6,7 @@
 ## 1. 维护约定
 
 - **新增/修改属性只改本文件 + 属性表宏**，其他文档只引用，不复制表格。
-- 每个属性必须有：ID（编译期枚举）、类型、继承性、失效标志、可动画性、默认值。
+- 每个属性必须有：ID（编译期枚举）、类型、继承性、失效标志、默认值。**可动画性不在本表定义**，见 [05-Animation.md](./05-Animation.md) §2 的标签白名单。
 - 属性一旦发布，ID 不复用、不重排（序列化与调试名依赖它）。
 - 涉及缓存键的属性（如 `fontSize` / `fontFamily` 影响文本排版缓存、`width` 影响 measure 缓存）必须在备注列注明。
 
@@ -24,7 +24,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 - **Percent**：相对父容器对应边（尺寸 / margin / padding）。
 - **Em**：相对本元素 `fontSize`。
 - **Auto**：尺寸类的自然大小。
-- 元属性类型：`TransitionList`、`AnimList`（不可插值）。
+- 动画不引入任何元属性：没有 `TransitionList` / `AnimList`（[05-Animation.md](./05-Animation.md) §1）。
 - `TrackList`：Grid 轨道定义（固定 / 比例 / 自动 / 百分比），结构化，不做字符串解析。
 
 ## 3. 标志位
@@ -35,7 +35,9 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `Layout` | 改变后需重新度量/布局 | 标 `LayoutDirty` |
 | `Text` | 需重新排版文本（`Layout` 子集） | 标 `TextDirty` |
 | `Paint` | 仅需重绘 | 标 `PaintDirty` |
-| `Animatable` | 可被过渡/关键帧驱动 | 动画 API 编译期校验（模板静态断言，无 RTTI） |
+| ~~`Animatable`~~ | 已取消：不由属性表标志表达 | 命令式 `Animate()` 用 `AnimProp<T>` 标签在编译期限定可用属性 |
+
+> §4 各表保留的"可动画"列是草案期标志残留，**不是运行时约束**；实际可动画的只有 [05-Animation.md](./05-Animation.md) §2 列出的 5 个 Paint 类标量标签。
 
 ---
 
@@ -145,12 +147,9 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `visibility` | Enum | ✓ | Layout | ✗ | Visible | 隐藏但仍占位 |
 | `cursor` | Enum | ✓ | — | ✗ | Default | 由 Event 层读取 |
 
-### 4.7 动画元属性
+### 4.7 动画相关属性
 
-| 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |
-| --- | --- | --- | --- | --- | --- | --- |
-| `transition` | TransitionList | ✗ | — | ✗ | 空 | 元属性，见 05-Animation §3 |
-| `animation` | AnimList | ✗ | — | ✗ | 空 | P1 进样式声明 |
+**没有动画元属性**。`transition` / `animation` 从未进入运行时属性表（`Prop` 枚举），早期草案的这两项已作废。命令式动画直接对普通属性补间，不新增属性 ID；当前开放的是 `opacity` / `backgroundColor` / `color` / `selectionColor` / `caretColor`，标签、插值与语义见 [05-Animation.md](./05-Animation.md) §2–§3。
 
 ### 4.8 暂不做
 
@@ -180,18 +179,18 @@ void Widget::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale)
 
 ```cpp
 Color c = Style::Resolve(element, Prop::Color);
-Vec2  t = Style::Resolve(element, Prop::Translation);
+StyleValue opacity = ResolveProperty(element, Prop::Opacity);
 ```
 
 - **非继承属性**：只查元素自身链，O(1–3)。
 - **继承属性**：自元素向上找最近设置了该属性的祖先，O(树深)；调用频率低（事件类路径），不做缓存。
-- 命中测试只读 `translation` / `scale` / `rotation`（非继承），成本可控。
+- 两条路径都先查级联第 1 层动画值槽；`transform` 三件套不在实现范围内。
 
-### 5.3 动画槽与过渡旧值槽
+### 5.3 动画值槽（级联第 1 层）
 
-- 级联第 1 层"动画值"由动画系统维护：**元素内持有活动动画链表的头指针**，条目在动画池中；`StyleContext` 与 `Style::Resolve` 都通过该链表查第 1 层，保证两路径一致。
-- **过渡旧值槽**：仅对**声明了 `Transition` 的属性**在元素上保留旧值，内联容量 2（`{PropId, StyleValue}`），溢出到 Arena；无过渡声明的元素零开销。
-- 过渡触发：属性基值变化时（`Set` / `SetStyle` / 状态切换 / 主题替换统一走变更入口），与旧值比较 → 不同则按声明建过渡，起点取当前显示值（[05-Animation.md](./05-Animation.md) §3.2）。
+- 命令式 `Animate()` 把每帧插值结果稀疏写入 `Element::animated_`（`std::vector<StyleValue>`）；`TryResolveElement()` 最先查它，因此遍历内 `StyleContext` 与遍历外 `Style::Resolve` 同帧一致。
+- **不设过渡旧值槽**，也没有动画池 / 活动动画链表：属性基值变化（`Set` / `SetStyle` / 状态切换 / 主题替换）不会隐式触发动画。只有显式调用 `Animate()` 才建补间，起点取当前显示值（含已有的第 1 层值）。
+- 动画完成后终值留在槽中（fill forwards），`Cancel()` 清除并回落基值；元素销毁时注销，残留句柄失效。详见 [05-Animation.md](./05-Animation.md) §3。
 
 ---
 

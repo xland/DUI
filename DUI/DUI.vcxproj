@@ -83,6 +83,7 @@
     <ClInclude Include="UI\Text.h" />
     <ClInclude Include="UI\TextBox.h" />
     <ClInclude Include="UI\Image.h" />
+    <ClInclude Include="UI\Animation.h" />
     <ClInclude Include="UI\Focus.h" />
     <ClInclude Include="UI\Canvas.h" />
     <ClInclude Include="UI\Scroller.h" />
@@ -100,6 +101,7 @@
     <ClCompile Include="UI\Text.cpp" />
     <ClCompile Include="UI\TextBox.cpp" />
     <ClCompile Include="UI\Image.cpp" />
+    <ClCompile Include="UI\Animation.cpp" />
     <ClCompile Include="UI\Focus.cpp" />
     <ClCompile Include="UI\Canvas.cpp" />
     <ClCompile Include="UI\Scroller.cpp" />

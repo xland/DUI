@@ -44,7 +44,7 @@
 - **显式优于隐式**：对象生命周期、所有权、失效（invalidate）由调用方明确表达，框架不做隐式缓存失效扫描。
 - **批量化**：所有绘制先收集成显示列表，再一次性光栅化，避免逐元素 Draw Call。
 - **热路径零分配**：消息处理、布局、绘制主循环内不做堆分配；内存从预分配池/竞技场获取。
-- **可裁剪**：按功能编译期开关（文本/图片/动画/无障碍…），未启用模块不进入二进制。
+- **可裁剪**：按功能编译期开关（文本/图片/无障碍…），未启用模块不进入二进制。
 - **不追求通用**：不为极低概率场景写容错，不为一次性功能搭抽象层。
 
 ## 4. 非目标
@@ -55,7 +55,7 @@
 - 脚本语言绑定（如 Lua/JS）
 - XAML / HTML / CSS 类声明式界面描述语言——开发者直接用 C++ 组合控件，简化手段是提供大量可高度定制的控件（见 ADR-018）
 
-> 提供 HTML 风格的**布局语义**（[04-Layout.md](./04-Layout.md)）与 CSS 风格的**动画语义**（[05-Animation.md](./05-Animation.md)），但不提供声明式**描述语言**（无运行时解析器）—— 两者不矛盾。
+> 提供 HTML 风格的**布局语义**（[04-Layout.md](./04-Layout.md)），但**不提供声明式描述语言**（无运行时解析器）；动画是命令式的，样式里没有 `transition` / `animation` 声明（[05-Animation.md](./05-Animation.md)）。
 
 > 无障碍（UIA）、SVG：待定，见 ADR-017；富文本编辑已定为目标（分阶段，见 [11-Text.md](./11-Text.md) 与 ADR-023）。
 
@@ -68,7 +68,7 @@
 | [02-Decisions.md](./02-Decisions.md) | ADR 决策清单（待拍板） |
 | [03-Style.md](./03-Style.md) | 样式系统：属性表、级联、复用、失效 |
 | [04-Layout.md](./04-Layout.md) | 布局系统：HTML 风格语义、Flex/Grid/绝对定位、约束与失效 |
-| [05-Animation.md](./05-Animation.md) | 动画系统：过渡、关键帧、缓动、时序引擎 |
+| [05-Animation.md](./05-Animation.md) | 动画系统：命令式 `Animate()`、句柄、缓动、统一 ticker |
 | [06-Events.md](./06-Events.md) | 输入与事件：绑定、路由、焦点、命中测试 |
 | [07-Threading.md](./07-Threading.md) | 线程与异步：Dispatcher、线程池、协程回投 |
 | [10-Rendering.md](./10-Rendering.md) | 渲染：显示列表、脏区、批合并、按需呈现 |
@@ -124,7 +124,7 @@ D3D11 矩形渲染 + 最小输入；M4 Dispatcher + 线程池 + 真协程 + Clic
 | M5.8 | ✅ 元素级指针事件（移入/移出/移动/按下/弹起/滚轮，冒泡 + handled） | 06-Events |
 | M5.9 | ✅ 键盘事件（KeyDown/KeyUp/Char 冒泡）+ 焦点与 Tab 链 + `dui::TextBox`/`dui::TextArea` | 06-Events / 11-Text |
 | M5.10 | ✅ 图像控件 `dui::Image`（WIC 解码 + 图像批 + 纹理仓库） | 16-Image / 10-Rendering |
-| M6 | 过渡动画 + 观测指标 | 05-Animation / 10-Rendering |
+| M6 | ✅ 命令式属性动画（`Animate` / `AnimationHandle`）+ 统一 ticker；观测指标待做 | 05-Animation / 10-Rendering |
 
 编译基线**已落地并验证**（Debug/Release 均可构建，产物 `DUI.lib`）：
 

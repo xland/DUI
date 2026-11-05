@@ -14,6 +14,7 @@ namespace dui {
 Element::~Element() {
     ClearFocusIf(this);   // 焦点元素被销毁 → 清焦点（避免全局焦点悬空）
     lifetime_.Kill();   // 生命周期令牌置否：延迟回投的回调据此丢弃（06-Events D7）
+    detail::UnregisterAnimatedElement(this);   // 动画句柄随元素销毁自动失效
     for (Element* c : children_) delete c;
 }
 

@@ -1,264 +1,142 @@
-# 动画系统（CSS 风格）
+# 动画系统（命令式）
 
-> 状态：草案 v0.1 — 待讨论确认。
-> 需求来源：支持**类似 CSS 的动画设置** —— 过渡（transition）与关键帧动画（keyframes），声明式、可中断、与样式系统集成。
-> 相关：[03-Style.md](./03-Style.md)（级联第 1 层已预留"动画值"槽）、ADR-013（按需呈现）、[04-Layout.md](./04-Layout.md)（布局动画的失效代价）。
+> 状态：v0.2 — 已落地。命令式属性动画 + 统一 ticker 已实现，契约以本文为准。
+> 相关：[03-Style.md](./03-Style.md)（级联第 1 层）、[16-Image.md](./16-Image.md)（GIF 帧动画）、[06-Events.md](./06-Events.md)（光标闪烁）、[15-Properties.md](./15-Properties.md)（属性主表）、ADR-013（按需呈现）、ADR-020。
 
-## 1. 需求
+## 1. 决策：只做命令式动画
 
-| 编号 | 需求 | 验收口径 |
-| --- | --- | --- |
-| R1 | 过渡 | 属性值变化时按声明的时长/缓动/延迟自动补间，无需手写逐帧代码 |
-| R2 | 可中断、可反向 | 快速进出 hover 不跳变；新动画从**当前显示值**起播 |
-| R3 | 关键帧动画 | 多属性、多个进度点、迭代次数、方向、填充模式、延迟 |
-| R4 | 缓动曲线 | 常用预设 + 自定义贝塞尔；弹簧类曲线列为扩展 |
-| R5 | 运行时控制 | 播放/暂停/取消/完成回调 |
-| R6 | 与按需呈现协同 | 无动画且无脏区时 CPU 归零；动画期间按帧推进 |
-| R7 | 与样式/布局协同 | 只按属性标志标脏；位移类动画**不触发重排** |
-| R8 | 可裁剪 | `DUI_ENABLE_ANIMATION` 关闭后整套机制不进二进制 |
+**不在样式里支持声明式动画。** 先前的 CSS 风格草案（v0.1：`Style::Transition()` / `KeyframesBuilder` / `animation` 样式属性 / `transition` 元属性 / 分期 P0–P2 / 待确认 D1–D4）全部作废。与之配套的只存不读代码 `Style::Transition()`、`TransitionSpec`、`Style::transitions_` 已删除。
 
-### 1.1 约束（沿用既定决策）
+- `Style::When(State, ...)` **保留**：它是立即生效的状态变体，不带任何过渡；需要过渡时由业务代码显式调用 `Animate()`。
+- 属性表不再有 `Animatable` 标志，也没有"过渡旧值槽"；某个属性能否动画由 §2 的强类型标签白名单决定。
+- 框架里有三类随时间变化的效果，只有第一类是"样式值补间"：
 
-- 热路径零分配：活动动画存于每窗口固定容量池，tick 全程无堆分配。
-- 按需呈现（ADR-013）：动画推进挂在帧循环里，是"保持唤醒"的唯一来源之一。
-- 样式系统先行：动画值走 [03-Style.md](./03-Style.md) 级联第 1 层，不另起炉灶。
-- 可裁剪：动画槽、tick、过渡逻辑全部由 `DUI_ENABLE_ANIMATION` 包裹。
-
----
-
-## 2. 总体思路
-
-**动画是样式系统的一个值源**，不是独立于样式之外的旁路：级联第 1 层（最高优先级）就是动画槽。动画推进时把计算出的属性值写进该槽并按属性标志标脏 —— 样式解析、失效传播、绘制全部复用现有机制。
-
-两种机制，对应 CSS 的两个概念：
-
-| CSS | DUI | 触发方式 |
-| --- | --- | --- |
-| `transition` | `Transition(Prop, duration, easing)`，声明在 `Style` 上 | **被动**：属性基值变化时自动补间 |
-| `@keyframes` + `animation` | `KeyframesBuilder` + `element->Animate(...)` | **主动**：显式启动，独立时间线 |
-
-```css
-/* CSS 写法 */
-button { transition: background-color 150ms ease-out; }
-@keyframes pulse { 0% {opacity:1} 50% {opacity:.4} 100% {opacity:1} }
-card { animation: pulse 600ms ease-in-out 3; }
-```
-
-```cpp
-// 对应的 DUI 写法（无运行时解析，编译期构造）
-static const Style kButton = Style("button")
-    .Background(0xFF2D7FF9)
-    .Transition(Prop::BackgroundColor, 150, Easing::EaseOut)
-    .When(State::Hover, Style().Background(0xFF1A6FE0));
-// hover 进入/离开时背景色 150ms 补间，起点为当前显示值
-
-static const Keyframes kPulse = KeyframesBuilder("pulse")
-    .Keyframe(0.f).Opacity(1.f)
-    .Keyframe(0.5f).Opacity(0.4f)
-    .Keyframe(1.f).Opacity(1.f)
-    .Build();
-
-auto h = anim.Animate(card, kPulse,
-                      AnimConfig{}.Duration(600).Iterations(3).Easing(Easing::EaseInOut));
-h.OnFinished([]{ /* animationend */ });
-```
-
-> 动画的**声明**也走样式属性（`transition` / `animation` 是属性表中的普通条目），因此天然获得状态变体联动（不同 `State` 可声明不同过渡）、主题替换时整体生效等能力。
-
----
-
-## 3. 过渡（Transition）
-
-### 3.1 语义
-
-1. 元素某属性的**基值**（级联第 2–6 层的解析结果）发生变化；
-2. 查该属性是否有 `Transition` 声明；
-3. 有 → 创建补间：**起点 = 当前显示值**（含正在进行的动画值，见 3.2），终点 = 新基值；
-4. 推进期间写入动画槽，结束后按填充模式处理。
-
-### 3.2 中断语义（R2）
-
-同一 (元素, 属性) 上的新过渡**替换**旧过渡，起点取旧过渡的当前值 —— 快速 hover 进出不会跳变，也天然支持"反向播放"效果（离开时声明的过渡把值带回原样）。
-
-### 3.3 声明位置
-
-- `Style` 上声明（常用，随状态变体生效）：`.Transition(Prop::BackgroundColor, 150, Easing::EaseOut)`
-- 元素上声明（临时）：`element->SetTransition(Prop::Opacity, 200, Easing::Linear)`
-
-`transition` 列表本身是**非继承、不可动画**的样式属性（与 CSS 一致）。
-
----
-
-## 4. 关键帧动画（Keyframes）
-
-### 4.1 定义与运行
-
-- `Keyframes` 编译期构造；**匿名即可直接传给 `Animate()`**（与 `Style` 同理，名字非必需），只有需要在 `animation` 属性里按名引用时（P1）才具名并注册。
-- 进度点之间的插值缓动**每段可独立指定**（CSS 允许 keyframe 内写 easing）。
-- 运行配置：`Duration` / `Delay` / `Iterations`（含 `Infinite`）/ `Direction` / `Fill` / `Easing`（缺省段缓动）。
-
-```cpp
-.Keyframe(0.f,   /* 缓动默认 */).Opacity(0.f).TranslationY(8.f)
-.Keyframe(0.5f,  Easing::EaseOut).Opacity(1.f)
-.Keyframe(1.f).Opacity(1.f)
-```
-
-### 4.2 方向与填充（对齐 CSS）
-
-| 配置 | 取值 |
-| --- | --- |
-| `Direction` | `Normal` / `Reverse` / `Alternate` / `AlternateReverse` |
-| `Fill` | `None` / `Forwards` / `Backwards` / `Both` |
-
-`Fill::Forwards` 的实现：动画结束后把终值**保留在动画槽**（不清除），直到被新动画替换或显式 `Clear`（见 D2）。
-
-### 4.3 控制接口（R5）
-
-`Animate()` 返回句柄：`Pause()` / `Resume()` / `Cancel()` / `OnFinished(fn)`；句柄在动画结束或元素销毁后失效（判空语义，不悬挂）。
-
----
-
-## 5. 缓动曲线
-
-| 预设 | 参数（cubic-bezier） | 用途 |
-| --- | --- | --- |
-| `Linear` | — | 匀速、进度类 |
-| `Ease` | (0.25, 0.1, 0.25, 1) | CSS 默认 |
-| `EaseIn` / `EaseOut` / `EaseInOut` | 标准 CSS 参数 | 进出场 |
-| `Standard` | (0.8, 0, 0.2, 1) | Fluent 风格通用过渡 |
-| `Decelerate` / `Accelerate` | Material 系参数 | 进场/出场 |
-| `Bezier(x1,y1,x2,y2)` | 自定义 | 兜底 |
-
-- 实现：共享曲线预计算 **32 项 LUT**（常量表，零分配），评估时线性插值；自定义曲线按 (元素, 属性) 临时缓存于动画池。
-- `Spring`（弹簧/阻尼）：可中断场景手感更好（Flutter/WinUI 主流），但需要速度状态与积分器，列为 **P1**（D4）。
-
----
-
-## 6. transform 属性引入（建议，D1）
-
-位移/缩放/旋转是动画的主要题材。若没有 transform，移动动画只能动 `margin` / 位置属性 → **每帧重排**，代价不可接受。建议引入三个**绘制级**属性：
-
-| 属性 | 类型 | 失效 | 说明 |
+| 类型 | 载体 | 是否走样式系统 | 文档 |
 | --- | --- | --- | --- |
-| `translation` | `Vec2`（Length × 2） | Paint | 平移偏移 |
-| `scale` | `Vec2`（倍数） | Paint | 缩放 |
-| `rotation` | Float（弧度） | Paint | 旋转 |
+| 命令式属性动画 | `Element::Animate()` | 是，写入级联第 1 层 | 本文 |
+| GIF 帧动画 | `Image::LoadAnimatedFile()` | 否，换同一张纹理的像素 | [16-Image.md](./16-Image.md) §4.2 |
+| 编辑控件光标闪烁 | `Element::OnBlink()` | 否，切换自身可见性 | [06-Events.md](./06-Events.md) |
 
-- 三者均为**非继承、可动画、不参与布局**；在 Paint 阶段作为 2D 仿射变换应用于该元素子树的绘制（变换中心默认元素中心）。
-- **必须同步作用于命中测试**（`UI.Event`），否则动画中的按钮点不中 —— 列为与 `Event` 模块的硬性接口。
-- 不提供 CSS `transform: matrix(...)` 字符串形态；分解属性便于单独动画与插值，与 Flutter 的做法一致。
-- `transformOrigin`（默认中心）列为 P2 待定。
+三者共用一个时间源，但**只统一时间，不统一值**。
 
-> 此前 [03-Style.md](./03-Style.md) §3.2 将 `transform` 列为"暂不做"，本文建议**升级为 MVP**，理由如上；拍板后回填 03 的属性表。
+### 1.1 明确不做
+
+声明式 `transition` / 关键帧 / `animation` 样式属性、`transform` 三件套（translation/scale/rotation）、迭代次数、方向、延迟、可配置 Fill、暂停/恢复、seek、Spring、自定义贝塞尔、`DUI_ENABLE_ANIMATION` 编译期裁剪、窗口级 DirectComposition 动画、元素级合成树。
 
 ---
 
-## 7. 时序引擎
-
-### 7.1 帧内位置
-
-```
-[输入][分发] → [动画 tick] → [失效][布局][收集][光栅][呈现]
-```
-
-动画 tick 夹在事件分发与失效之间：推进所有活动动画 → 写动画槽 → 按属性标志标脏 → 后续布局/绘制正常走。动画活动期间窗口保持按帧呈现（R6）；全部结束后回到空闲零功耗。
-
-### 7.2 数据结构
+## 2. 公共 API
 
 ```cpp
-struct AnimationEntry {        // 每窗口固定容量池（如 256），O(n) tick
-    Element*    element;
-    PropId      prop;
-    StyleValue  from, to;       // 关键帧动画按当前段取 from/to
-    float       t0, duration;   // 秒
-    Easing      easing;
-    uint16_t    iterations;     // 0 = infinite
-    uint8_t     direction, fill, state;   // state: Running/Paused/Done
-    FnRef<void()> onFinished;
+auto h = card->Animate(dui::Opacity, 0.f,
+    { .durationMs = 200, .easing = dui::Easing::EaseOut });
+h.OnFinished(fn);
+h.Cancel();   // 幂等；元素销毁后自动失效
+```
+
+定义于 `UI/Animation.h`，经 `UI/UI.h` / `DUI/DUI.h` 聚合，业务侧只需 include 公共入口。
+
+### 2.1 `AnimProp<T>`：强类型属性标签
+
+`template <class T> struct AnimProp { Prop prop; };` —— 标签携带属性 ID，**模板参数 `T` 决定目标值类型**，编译期拒绝不可动画的属性（`static_assert`，不用 RTTI）。目前只开放 Paint 类标量：
+
+| 标签 | 值类型 | 属性 | 插值 |
+| --- | --- | --- | --- |
+| `dui::Opacity` | `float` | `Prop::Opacity` | 线性标量 |
+| `dui::BackgroundColor` | `dui::Color` | `Prop::BackgroundColor` | ARGB 四通道分别线性插值 |
+| `dui::TextColor` | `dui::Color` | `Prop::Color` | 同上 |
+| `dui::SelectionColor` | `dui::Color` | `Prop::SelectionColor` | 同上 |
+| `dui::CaretColor` | `dui::Color` | `Prop::CaretColor` | 同上 |
+
+- `Color` 约定 `0xAARRGGBB`（[Core/Core.h](../DUI/Core/Core.h)），逐通道在 sRGB/gamma 空间插值，与 ADR-013 的混合空间一致。
+- 布局、文本、Thickness（四边）、枚举、字体族类属性**不开放**：它们每帧重排 / 重排版，或没有自然的插值定义。
+- 第二参数是 `std::type_identity_t<T>`，只从标签推导 `T`，目标值允许隐式转换（如整数字面量传给 `Color` 标签）。
+
+### 2.2 `AnimConfig`：聚合配置
+
+```cpp
+struct AnimConfig {
+    uint32_t durationMs = 200;          // 0 按 1ms 处理（下一次 tick 即完成）
+    Easing   easing     = Easing::EaseOut;
 };
 ```
 
-- 同 (元素, 属性) 唯一：新动画替换旧动画（中断语义，§3.2）。
-- 元素销毁时由 `Invalidate`/析构路径清理其条目（元素持活动动画计数或反向钩子）。
+聚合类型，用 C++20 指派初始化；**成员声明顺序固定为 `durationMs` → `easing`**，指派初始化的书写顺序必须一致。`Easing` 定义在 `UI/Style.h`：`Linear / EaseIn / EaseOut / EaseInOut`。
 
-### 7.3 与布局的联动（R7）
+### 2.3 `AnimationHandle`
 
-| 被动画属性 | 每帧代价 | 说明 |
-| --- | --- | --- |
-| `Paint` 类（颜色、透明度、cornerRadius、transform 三件套） | 仅重绘 | 主力用法 |
-| `Layout` 类（width、padding…） | 每帧重排 | 允许但慎用，文档明确提示 |
-| `Text` 类（fontSize…） | 每帧重排 + 重排版 | 最贵，基本不用 |
-
----
-
-## 8. 动画子系统消费的属性
-
-属性定义、类型与默认值统一见 [15-Properties.md](./15-Properties.md) §4.5 / §4.7（唯一事实来源，ADR-024）；本节只记录动画相关约束：
-
-| 属性 | 类型 | 继承 | 失效 | 可动画 |
-| --- | --- | --- | --- | --- |
-| `transition` | TransitionList | ✗ | —（元属性） | ✗ |
-| `animation` | AnimList（P1 进样式声明） | ✗ | — | ✗ |
-| `translation` | Vec2 | ✗ | Paint | ✓ |
-| `scale` | Vec2 | ✗ | Paint | ✓ |
-| `rotation` | Float | ✗ | Paint | ✓ |
-
-可动画性仍以属性表 `Animatable` 标志为准：颜色/数值/Vec2 可插值；枚举类（`textAlign` 等）不可，动画 API 编译期拒绝（模板静态断言，无需 RTTI）。
-
----
-
-## 9. 与 DirectComposition 合成器动画的关系（D3）
-
-| 层级 | 说明 | 取舍 |
-| --- | --- | --- |
-| **UI ticker（MVP）** | 每帧重绘窗口内容 | 通用，覆盖所有属性；代价是动画期间持续渲染 |
-| 窗口级 DComp 动画（P2） | 对承载交换链的视觉做 opacity/offset 动画，**不重绘** | 窗口淡入淡出/移动几乎零成本；ADR-010 已有 DComp 设备，接入成本低 |
-| 元素级 DComp 动画 | 每元素一个 Visual | 需要保留合成树、双份变换/裁剪同步，**近期不做** |
-
-**建议：MVP 全走 UI ticker**；窗口级 DComp 动画作为 P2 优化（透明度/位置动画期间可跳过重绘）。这与 [01-Layering.md](./01-Layering.md) 中 `UI.Animation` 的"合成器驱动"描述收敛为同一结论；渲染侧的衔接（动画期间不放弃脏区、但不靠脏区省事，动画帧照常全量光栅）见 [10-Rendering.md](./10-Rendering.md) §5。
-
----
-
-## 10. 决策点
-
-### D1 transform 三件套：MVP 引入（建议）
-理由见 §6。反方案（推迟到 P2）会让移动动画只能走每帧重排，R7 名存实亡。
-
-### D2 `Fill::Forwards` 的实现：动画槽持久保留（建议）
-终值留在动画槽直到被替换/清除。替代方案是把终值提交为本地覆盖 —— 会污染用户设置的覆盖项，且回滚语义模糊。
-
-### D3 合成器驱动边界（建议）
-见 §9：MVP = UI ticker，P2 = 窗口级 DComp，元素级 = 非目标（近期）。
-
-### D4 Spring 缓动：P1（建议）
-手感好但需要速度状态与可中断积分器，先以贝塞尔覆盖 MVP；中断语义（§3.2）已为 spring 预留（from 取当前值 + 当前速度）。
-
----
-
-## 11. 内存与体积
-
-| 对象 | 开销 | 备注 |
-| --- | --- | --- |
-| `AnimationEntry` | ~48 B × 活动数 | 每窗口固定池，容量超限按"最旧优先"淘汰并告警 |
-| `Keyframes` / `Easing` LUT | 编译期常量 | 零运行时分配 |
-| 关闭 `DUI_ENABLE_ANIMATION` | 0 | 动画槽、tick、Transition/Animate API 全部编译掉 |
-
----
-
-## 12. 分期
-
-| 期 | 内容 |
+| 方法 | 语义 |
 | --- | --- |
-| **P0** | ticker + 帧循环接入、`Transition`（含中断语义）、`Animate()` 关键帧（迭代/方向/Fill/延迟/完成回调）、预设 + 贝塞尔缓动、transform 三件套、`DUI_ENABLE_ANIMATION` 裁剪 |
-| **P1** | `animation` 进样式声明（命名注册表）、Spring、窗口级 DComp 动画（§9）、暂停/恢复的持久化 |
-| **P2** | `transformOrigin`、变速/seek、滚动联动（[04-Layout.md](./04-Layout.md) D5 惯性滚动） |
+| `OnFinished(std::function<void()> fn)` | 注册完成回调。动画进行中注册则完成时调用一次；已正常完成后注册则**立即调用一次**；已取消或元素已销毁则忽略。重复注册以后者覆盖前者。返回自身便于链式。 |
+| `Cancel() noexcept` | 取消动画、清除动画槽、回落基值并标脏。**幂等**；元素销毁后为 no-op。 |
+
+回调在 **UI 线程**、统一 ticker 的 `Tick()` 内执行，且延后到该元素本轮所有补间推进结束之后，避免重入打乱遍历。回调里可以启动新动画、取消其它动画或销毁元素。
 
 ---
 
-## 13. 待确认
+## 3. 语义契约
 
-1. D1–D4 是否按建议拍板（尤其 transform 是否进 MVP，需回填 [03-Style.md](./03-Style.md)）。
-2. 动画池容量与超限策略（淘汰最旧 vs 拒绝新动画 + 告警）。
-3. `OnFinished` 回调的线程与重入约束（建议：UI 线程、tick 内仅记录延后派发）。
-4. CSS `will-change` 类提示是否需要（当前按属性标志自动判脏，暂无对应优化点，倾向不做）。
-5. 关键帧的百分比进度点是否需要支持 `0%..100%` 字面书写风格（当前为 0..1 浮点，纯口味问题）。
+1. **起点 = 当前显示值**：启动时调 `ResolveProperty(element, prop)`（遍历外路径），它已经包含级联第 1 层，因此中断旧动画时从旧动画的当前值继续，快速反向不跳变。
+2. **同 `(元素, 属性)` 唯一**：新动画替换旧动画 —— 包括已完成但仍保留终值的那条。旧句柄整体作废、不触发其 `OnFinished`。
+3. **动画值不污染本地覆盖**：补间结果写入 `Element::animated_`（稀疏数组），作为级联**第 1 层（最高优先级）**；`TryResolveElement()` 最先查它。遍历内 `StyleContext` 与遍历外 `Style::Resolve` 都经过 `TryResolveElement`，同帧结果一致。`Element::Set()` 的 `overrides_`（第 3 层）不被改写。
+4. **标脏按属性标志**：每次写入调 `MarkDirty(PropFlagsOf(prop))`。当前开放的标签全是 `kFlagPaint` → 每帧仅重绘、不重排。
+5. **完成 = fill forwards**：终值留在动画槽，不再 tick，直到被新动画替换、`Cancel()` 或元素销毁。回调只触发一次。
+6. **取消 / 销毁**：`Cancel()` 移除该属性的动画槽并回落基值；元素析构时 `Lifetime::Kill()` + 从 ticker 注销，`AnimState` 里的生命周期令牌让所有残留句柄自动失效，回调不会被派发到已销毁元素。
+
+---
+
+## 4. 缓动
+
+`Easing` 用二次多项式近似（不是 CSS cubic-bezier 的精确解），`t` 为 `clamp(elapsed / durationMs, 0, 1)`：
+
+| 枚举 | 公式 |
+| --- | --- |
+| `Linear` | \(t\) |
+| `EaseIn` | \(t^2\) |
+| `EaseOut` | \(1-(1-t)^2\) |
+| `EaseInOut` | \(2t^2\) （\(t<0.5\)），\(1-2(1-t)^2\) （\(t\ge 0.5\)） |
+
+---
+
+## 5. 时间源与按需呈现
+
+`AnimationClock`（`UI/Image.h` / `UI/Image.cpp`）是进程级单例，统一驱动三类时间行为；App 层 `Window::SyncTickTimer()` 只启停**一个**窗口定时器（`kTickTimerId`）：
+
+```
+[输入][分发] → [WM_TIMER → AnimationClock::Tick]
+   ├─ 光标闪烁（500ms 半周期）
+   ├─ GIF 帧动画（按各帧自身延迟）
+   └─ 命令式属性动画（每个补间按绝对时刻求 t）
+ → [标脏] → [布局/收集/光栅/呈现] → [SyncTickTimer 重新判定启停与周期]
+```
+
+| 状态 | `NeedsTick()` | `TickPeriodMs()` |
+| --- | --- | --- |
+| 有 GIF 帧动画或有活动属性动画 | true | 20 ms |
+| 只有可闪烁的焦点元素 | true | 500 ms（不因统一 ticker 退化成 20ms 空转） |
+| 都没有 / 窗口最小化 | false | 停表 |
+
+`Tick()` 的顺序是闪烁 → 帧动画 → 属性动画；属性动画放最后，因为完成回调可能改动图像控件或子树。全部补间结束后 `HasActiveAnimations()` 转 false，下一轮 `SyncTickTimer()` 停表，回到 ADR-013 的空闲零功耗。`startMs` 在首次 tick 时取当前时刻（首拍 \(t=0\)），不引入额外的时间 API。
+
+---
+
+## 6. 实现落点
+
+| 文件 | 职责 |
+| --- | --- |
+| `UI/Animation.h` | `AnimProp<T>` 与标签白名单、`AnimConfig`、`AnimationHandle`、`detail::AnimState/AnimSlot`、ticker 桥接声明 |
+| `UI/Animation.cpp` | 注册表、插值/缓动、`Element::StartAnimation` / `Element::TickAnimations`、句柄取消与失效 |
+| `UI/Element.h/.cpp` | `Animate()` 模板、`animated_`（层 1）、`anims_`、析构时注销 |
+| `UI/StyleResolve.cpp` | `TryResolveElement()` 的层 1 查询 |
+| `UI/Image.cpp` | `AnimationClock::{NeedsTick, TickPeriodMs, Tick}` 接入属性动画 |
+| `App/App.cpp` | 单定时器启停 / 换周期（对外无变化） |
+
+---
+
+## 7. 已知边界
+
+- 20 ms 是 Windows 定时器粒度，不是 VSync 对齐的精确帧；补间按 `GetTickCount64()` 的绝对时刻推进，掉帧不会拖长总时长。
+- `durationMs = 0` 等价于 1 ms：仍要等下一次 tick 才写终值、发回调。
+- 颜色在打包的 8 位通道上插值，不做线性光空间混合。
+- GIF 帧动画与光标闪烁不是样式动画，不读写动画槽，也不受 `Cancel()` 影响。
+- 目前没有示例工程调用 `Animate()`；`UI/Animation.cpp` 内的 `AnimationApiContract` 提供 API 形状的编译期契约（强制实例化模板函数体）。

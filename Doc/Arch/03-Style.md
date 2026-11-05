@@ -79,7 +79,7 @@ DUI_PROPERTY(FontSize,        Length,  Inherit | Layout | Text)
 | `Layout` | 改变后需重新度量/布局 | 标 `LayoutDirty` |
 | `Text` | 改变后需重新排版文本 | 标 `TextDirty`（`Layout` 的子集，可单独做增量） |
 | `Paint` | 仅需重绘 | 标 `PaintDirty` |
-| `Animatable` | 可被动画驱动 | 动画系统校验 |
+| ~~`Animatable`~~ | 已取消：可动画性不由属性表标志表达，改由 [05-Animation.md](./05-Animation.md) §2 的 `AnimProp<T>` 标签白名单决定 | — |
 
 > `Layout` 与 `Paint` 可同时置位（如 `borderWidth` 影响内容盒也影响绘制）。
 
@@ -89,7 +89,7 @@ DUI_PROPERTY(FontSize,        Length,  Inherit | Layout | Text)
 
 - 标志位含义见 §3.1；属性全集、类型、默认值、缓存键影响见主表。
 - **布局子系统**消费：`display` / `flex*` / `gap` / `position` / `left-top-right-bottom` / `zIndex` / `overflow` / `grid*` / 盒模型与尺寸类。
-- **动画子系统**消费：`transition` / `animation`（元属性）+ 所有 `Animatable` 属性。
+- **动画子系统**消费：仅 [05-Animation.md](./05-Animation.md) §2 标签白名单列出的 Paint 类标量；样式里没有 `transition` / `animation` 元属性。
 - **文本子系统**消费：`font*` / `text*` / `lineHeight` / `letterSpacing` / `direction`。
 
 ### 3.3 单位
@@ -122,8 +122,8 @@ DUI_PROPERTY(FontSize,        Length,  Inherit | Layout | Text)
 **已定（拍板）：混合方案。**
 
 1. **继承类属性**走遍历期 `StyleContext` 栈：布局与绘制本就是自上而下遍历，继承态搭便车，常驻内存为零，也不需要维护缓存失效。
-2. **非继承属性**（`translation` / `scale` / `rotation`、`backgroundColor` 等）提供**按需 `Style::Resolve(element, Prop)`**：只查元素自身链，O(1–3)，供事件、命中测试、动画与任意代码在遍历外读取。
-3. **过渡旧值槽**：仅对声明了 `Transition` 的属性在元素上保留旧值（内联容量 2，溢出到 Arena），无声明者零开销。
+2. **非继承属性**（`backgroundColor` / `opacity` 等）提供**按需 `Style::Resolve(element, Prop)`**：只查元素自身链，O(1–3)，供事件、命中测试、动画与任意代码在遍历外读取。
+3. **动画值槽**：命令式 `Animate()` 的结果按属性稀疏存在元素上（级联第 1 层），不设"过渡旧值槽"，无动画的元素零开销（[05-Animation.md](./05-Animation.md) §3）。
 
 读路径细则见 [15-Properties.md](./15-Properties.md) §5。代价：遍历外读**继承**属性需 O(树深) 上溯（频率低，不缓存，量可忽略）；收益是两条路径语义明确、互不依赖遍历时机。
 
@@ -156,7 +156,7 @@ DUI_PROPERTY(FontSize,        Length,  Inherit | Layout | Text)
 
 | 层 | 来源 | 说明 |
 | --- | --- | --- |
-| 1 | 动画值 | 动画系统写入；元素持有活动动画链表头指针，`StyleContext` 与 `Style::Resolve` **均经该链表**查此层（[15-Properties.md](./15-Properties.md) §5.3） |
+| 1 | 动画值 | 命令式 `Element::Animate()` 写入 `Element::animated_`（稀疏数组）；遍历内 `StyleContext` 与遍历外 `Style::Resolve` **均经 `TryResolveElement`** 查此层（[05-Animation.md](./05-Animation.md) §3） |
 | 2 | 状态变体 | 每个状态一份 `Decl`（全集见 §6.2）；多状态同时成立时按 `disabled > pressed > selected > focused > hover` 合并 |
 | 3 | 元素本地覆盖 | `element->Set(Prop::X, v)` |
 | 4 | 元素引用的 `Style` | 沿派生链由近及远上溯 |
@@ -234,11 +234,11 @@ static const Style kButton = Style("button")
 disabled  >  pressed  >  selected  >  focused  >  hover
 ```
 
-`disabled` 必须在视觉上压过一切；`pressed` 比 `selected` 更即时。固定顺序可预测、可写进文档，不需要 CSS 那套特异性计算。声明了 `Transition` 的属性仍按合并后的最终值补间。
+`disabled` 必须在视觉上压过一切；`pressed` 比 `selected` 更即时。固定顺序可预测、可写进文档，不需要 CSS 那套特异性计算。状态变体**立即生效、不带过渡**；需要补间时由业务代码显式调用 `Element::Animate()`（[05-Animation.md](./05-Animation.md) §1）。
 
 #### 写入契约（已定）
 
-- **相同值幂等**：`SetState(s, v)` 在 `v` 与当前状态位相同时不做任何事 —— 不标脏、不重建过渡。
+- **相同值幂等**：`SetState(s, v)` 在 `v` 与当前状态位相同时不做任何事 —— 不标脏、不触发任何动画。
 - **标脏帧末合并**：状态切换只标脏，帧末统一解析与重绘；同一帧内的多次写入只产生一次重绘，**不出现中间态**。因此"单选"不需要"先摘旧的、再戴新的"，业务侧一次全量写即可：
 
 ```cpp
@@ -282,7 +282,7 @@ Color c = Style::Resolve(element, Prop::Color);   // 非继承属性 O(1–3)
 | 同上，仅带 `Paint` | 自身矩形加入脏区 | 不触发布局 |
 | `SetStyle(s)` | 按两Style差异集的属性标志取并集 | 简单实现可先按 `Layout|Paint` 最坏情况处理 |
 | 状态切换 | 按该状态 `Decl` 中属性的标志 | 状态变体通常只有 `Paint` 属性 |
-| 动画每帧 | 按被动画属性的标志 | 数值类动画多为 `Paint`（见 [05-Animation.md](./05-Animation.md) §7.3） |
+| 动画每帧 | 按被动画属性的标志 | 目前开放的标签全是 `Paint`（见 [05-Animation.md](./05-Animation.md) §3） |
 | 换主题 | 整树全量标脏 | 低频大动作，走"全失效"路径 |
 
 **`Style` 不可变**是关键约束：不允许原地改一个被 N 个元素共享的 `Style`。需要变更时构造新 `Style` 并 `StyleRegistry::Replace(id, newStyle)`，MVP 直接触发全树失效；精确做法（维护 `Style → 元素` 反向侵入链表，只失效引用者）列为后续优化。
@@ -301,7 +301,7 @@ Color c = Style::Resolve(element, Prop::Color);   // 非继承属性 O(1–3)
 | 继承态 | 0 B 常驻 | 遍历期栈上，约 48 B × 树深 |
 
 - 属性表本身是编译期常量数组，`DUI_ENABLE_TEXT` 关闭时字体/文本类属性由 `#ifdef` 剔除，不进二进制。
-- 动画槽仅在 `DUI_ENABLE_ANIMATION` 开启时存在。
+- 动画槽（`Element::animated_`）常驻但为空时不占堆空间；没有 `DUI_ENABLE_ANIMATION` 编译期裁剪（[05-Animation.md](./05-Animation.md) §1.1）。
 
 ---
 
@@ -312,7 +312,7 @@ Color c = Style::Resolve(element, Prop::Color);   // 非继承属性 O(1–3)
 | `UI.Layout` | 消费 | 读取 `padding` / `margin` / 尺寸 / 字体类属性；文本元素传给 `Text` 层 |
 | `UI.Event` | 消费 | 维护**输入类** `State` 位（`hover` / `pressed` / `focused`）；`disabled` 由属性推导，`selected` 等语义位由业务写入；`cursor` 属性 |
 | `UI.Invalidate` | 消费 | 按属性标志标脏 |
-| `UI.Animation` | 消费 | 动画写入最高优先级槽 |
+| `UI.Animation` | 消费 | 命令式 `Animate()` 写入级联第 1 层动画值槽 |
 | `UI.Widgets` | 双向 | 控件提供默认 `Style`；控件绘制读 `StyleContext` |
 | `Text` | 无直接依赖 | 由 `UI` 转交 `fontSize`/`fontFamily`/`textAlign` 等；`Text` 层不认识样式系统 |
 | `App.Theme` | 提供 | 默认值表与控件默认 `Style` |
@@ -327,6 +327,6 @@ Color c = Style::Resolve(element, Prop::Color);   // 非继承属性 O(1–3)
 4. `background` 是否提前升级为 `Brush`（纯色 / 线性渐变 / 图片）—— 影响是否需要资源引用与资源管理。
 5. 元素本地覆盖是否允许超过 2 条（内联容量取值，决定元素基础尺寸）。
 6. `Style` 注册是进程级还是窗口级（多窗口不同主题时的行为）。
-7. 主题切换是否需要过渡动画（与 `UI.Animation` 联动）。
+7. 主题切换是否需要平滑变化 —— 若需要，由业务代码对受影响属性显式调用 `Animate()`，样式层不提供隐式过渡。
 8. 子元素不写 `color` 时随父级 `selected` 变体变色，一旦写了 `color` 即被第 4 层（元素引用的 `Style`）压住而不再跟随（§5）—— 该"陷阱"是否需要在文档中显式警示，或引入受限的状态下传。
 

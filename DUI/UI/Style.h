@@ -66,7 +66,7 @@ enum class FlexWrap : uint8_t { NoWrap, Wrap };              // 主轴放不下�
 enum class Justify : uint8_t { Start, Center };             // 主轴对齐（04-Layout §4.1，MVP 子集）
 enum class Align : uint8_t { Stretch, Start, Center };      // 交叉轴对齐（默认 Stretch）
 enum class FontWeight : uint8_t { Normal, Medium, SemiBold, Bold };
-enum class Easing : uint8_t { Linear, EaseIn, EaseOut, EaseInOut };
+enum class Easing : uint8_t { Linear, EaseIn, EaseOut, EaseInOut };   // AnimConfig::easing（05-Animation §4）
 
 // 鼠标光标形态（语义同 CSS 的 cursor；仅系统内置形态）
 enum class Cursor : uint8_t {
@@ -87,12 +87,6 @@ struct StyleValue {
 inline Thickness ValueAsThickness(const StyleValue& v) noexcept {
     return {v.f, v.extra[0], v.extra[1], v.extra[2]};
 }
-
-struct TransitionSpec {
-    Prop     prop = Prop::Unknown;
-    uint32_t durationMs = 0;
-    Easing   easing = Easing::EaseOut;
-};
 
 // ---------------------------------------------------------------------------
 // Style：一份样式声明集，既是构建产物也是构建器——链式方法返回 *this，
@@ -123,7 +117,7 @@ public:
     const Style* Parent() const noexcept { return parent_; }
     const char*  Name()   const noexcept { return name_; }
 
-    // 遍历外读生效值（15-Properties §5.2；M3 接入动画槽与本地覆盖层）
+    // 遍历外读生效值（15-Properties §5.2；含级联第 1 层动画值）
     static Color Resolve(const Element* element, Prop p);
 
     // ------------------------------------------------------------------
@@ -181,8 +175,7 @@ public:
     Style& ThumbBorderColor(dui::Color c);
     Style& ThumbBorderWidth(float dip);
 
-    // 动画与状态变体（05-Animation §3 / 03-Style §6.2）
-    Style& Transition(Prop prop, uint32_t durationMs, Easing easing);
+    // 状态变体（03-Style §6.2）：立即换值，不带过渡；动画走 Element::Animate
     Style& When(State s, const Style& variant);
 
 private:
@@ -194,7 +187,6 @@ private:
 
     std::vector<StyleValue>               decls_;
     std::vector<std::pair<State, Style>>  states_;
-    std::vector<TransitionSpec>           transitions_;
     const Style* parent_ = nullptr;       // 派生基（生命周期由使用者保证为静态常量）
     const char*  name_ = nullptr;         // 注册表键 / 调试标识；匿名样式为 nullptr
 };
@@ -224,9 +216,9 @@ enum PropFlags : uint32_t {
     kFlagText   = 1u << 2,
 };
 
-// 层 2/3/4（状态变体 → 本地覆盖 → Style 派生链）
+// 层 1..4（动画值 → 状态变体 → 本地覆盖 → Style 派生链）
 bool TryResolveElement(const Element* e, Prop p, StyleValue& out);
-// 层 2..5（TryResolveElement + 继承属性的父计算值）
+// 层 1..5（TryResolveElement + 继承属性的父计算值）
 bool TryResolve(const Element* e, Prop p, const StyleContext& ctx, StyleValue& out);
 // 遍历内完整解析（层 2..7，含内建默认）
 StyleValue ResolveProperty(const Element* e, Prop p, const StyleContext& ctx);

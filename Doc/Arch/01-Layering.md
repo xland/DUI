@@ -71,7 +71,7 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ 
 | Style | 样式属性表、级联解析、共享与派生、主题（见 [03-Style.md](./03-Style.md)） |
 | Event | 事件路由、命中测试、焦点、键盘导航、处理器绑定（见 [06-Events.md](./06-Events.md)） |
 | Invalidate | 脏区标记与合并、重绘调度 |
-| Animation | 过渡与关键帧动画、缓动、时序引擎（合成器级为 P2，见 [05-Animation.md](./05-Animation.md)） |
+| Animation | 命令式属性动画（标签 / `AnimConfig` / 句柄）、缓动、动画值槽；与帧动画和光标闪烁共用统一 ticker（见 [05-Animation.md](./05-Animation.md)） |
 | Widgets | 具体控件实现（可裁剪） |
 
 ### App
@@ -115,5 +115,5 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ 
 
 ## 5. 可裁剪性
 
-编译期宏控制：`DUI_ENABLE_TEXT`、`DUI_ENABLE_IMAGE`、`DUI_ENABLE_ANIMATION`、`DUI_ENABLE_A11Y` 等。
+编译期宏控制：`DUI_ENABLE_TEXT`、`DUI_ENABLE_IMAGE`、`DUI_ENABLE_A11Y` 等（动画未做编译期裁剪，见 [05-Animation.md](./05-Animation.md) §1.1）。
 关闭后对应模块代码不参与编译，也不参与链接，直接体现在体积指标上。

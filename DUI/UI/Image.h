@@ -63,15 +63,16 @@ private:
     String lastError_;
 };
 
-// UI 层统一时间源（内部）：帧动画与光标闪烁共用一个 ticker，App 层只启停
-// 一个窗口定时器；是否需要节拍、周期多少都由本类决定。进程级单例。
+// UI 层统一时间源（内部）：GIF 帧动画、光标闪烁、命令式属性动画共用一个
+// ticker，App 层只启停一个窗口定时器；是否需要节拍、周期多少都由本类决定。
+// 进程级单例。
 class AnimationClock {
 public:
     static AnimationClock& Instance();
     void Add(Image* img);
     void Remove(Image* img) noexcept;
-    bool NeedsTick() const noexcept;         // 有帧动画 或 有可闪烁的焦点元素
-    unsigned TickPeriodMs() const noexcept;  // 有帧动画 20ms；只有闪烁 500ms
+    bool NeedsTick() const noexcept;         // 有帧动画 / 属性动画 / 可闪烁的焦点元素
+    unsigned TickPeriodMs() const noexcept;  // 有帧动画或属性动画 20ms；只有闪烁 500ms
     void Tick(uint64_t nowMs);
     void Reset() noexcept;                   // 停表时重置闪烁相位
 

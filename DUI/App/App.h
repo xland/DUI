@@ -61,6 +61,9 @@ struct WindowOptions {
     float width = 800.f;         // DIP
     float height = 600.f;        // DIP
     Chrome chrome = Chrome::System;
+    // 初始显示时置于窗口所在显示器**工作区**正中（不含任务栏）。
+    // 默认 false = 沿用系统在 CW_USEDEFAULT 处的层叠摆放。
+    bool center = false;
 };
 
 class Window {

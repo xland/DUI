@@ -377,6 +377,9 @@ int Application::Run(Window& window) {
     }
     window.native_ = &native;   // 平台窗口对象（定时器等平台能力）
 
+    // 初始居中：仍在 OnCreate / Show 之前，构建过程不可见（App.h 契约）
+    if (window.options_.center) native.CenterOnScreen();
+
     if (!device.Init(native.Handle(), lastError_)) {
         std::printf("[DUI] device init failed: %ls\n", lastError_.c_str());
         return 1;

@@ -136,6 +136,21 @@ void NativeWindow::Show() {
     if (hwnd_) ShowWindow(hwnd_, SW_SHOW);
 }
 
+void NativeWindow::CenterOnScreen() {
+    if (hwnd_ == nullptr) return;
+    RECT wr{};
+    if (!GetWindowRect(hwnd_, &wr)) return;
+    const HMONITOR mon = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{sizeof(mi)};
+    if (!GetMonitorInfoW(mon, &mi)) return;
+    const LONG w = wr.right - wr.left;
+    const LONG h = wr.bottom - wr.top;
+    const LONG x = mi.rcWork.left + ((mi.rcWork.right - mi.rcWork.left) - w) / 2;
+    const LONG y = mi.rcWork.top + ((mi.rcWork.bottom - mi.rcWork.top) - h) / 2;
+    SetWindowPos(hwnd_, nullptr, x, y, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 void NativeWindow::Minimize() {
     if (hwnd_) ::ShowWindow(hwnd_, SW_MINIMIZE);
 }
@@ -301,6 +316,26 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                 return 0;
             }
             break;
+        }
+        case WM_NCRBUTTONUP: {
+            // 无边框窗口：右键标题栏 → 弹系统菜单（还原 / 移动 / 大小 / 最小化 /
+            // 最大化 / 关闭）。WS_POPUP 没有系统标题栏，DefWindowProc 不知道该
+            // 在哪弹菜单，必须自己来。wParam 就是 WM_NCHITTEST 报的命中码。
+            if (wp == HTCAPTION && self->borderless_) {
+                const int sx = static_cast<int>(static_cast<short>(LOWORD(lp)));
+                const int sy = static_cast<int>(static_cast<short>(HIWORD(lp)));
+                if (HMENU menu = GetSystemMenu(hwnd, FALSE)) {
+                    // TPM_RETURNCMD：拿菜单项 ID 自己转发成 WM_SYSCOMMAND，
+                    // 不依赖系统菜单的自动派发；SC_* 由 DefWindowProc 执行
+                    // （移动 / 缩放是系统模态循环，最小化 / 关闭走 WM_CLOSE 等）。
+                    const int cmd = static_cast<int>(TrackPopupMenuEx(
+                        menu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD,
+                        sx, sy, hwnd, nullptr));
+                    if (cmd != 0) SendMessageW(hwnd, WM_SYSCOMMAND, static_cast<WPARAM>(cmd), 0);
+                }
+                return 0;
+            }
+            break;   // 系统边框窗口交回 DefWindowProc（它本来就会弹系统菜单）
         }
         case WM_NCHITTEST: {
             // 非客户区命中：上层把"标题栏 / 边框热区"报给系统，由系统接管

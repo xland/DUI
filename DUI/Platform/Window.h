@@ -75,6 +75,9 @@ public:
                 NativeWindowHost& host, String& error, bool borderless = false);
 
     void Show();
+    // 把窗口移到所在显示器工作区正中（尺寸不变）。显示前调用，构建过程仍不可见。
+    // 用 MonitorFromWindow → MONITORINFO.rcWork，跨屏 / 任务栏 / DPI 都按物理像素算。
+    void CenterOnScreen();
     bool Valid() const noexcept { return hwnd_ != nullptr; }
     HWND Handle() const noexcept { return hwnd_; }
     float Scale() const noexcept { return scale_; }

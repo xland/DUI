@@ -41,8 +41,12 @@ public:
     virtual void OnKeyUp(int key, bool ctrl, bool shift, bool alt) = 0;
     // 字符输入（WM_CHAR / WM_IME_CHAR；IME 提交亦走此路）
     virtual void OnChar(wchar_t ch) = 0;
+    // 指针形态（WM_SETCURSOR）：返回 true 表示上层已设置光标（不再走默认箭头）
+    virtual bool OnSetCursor(Vec2 ptDip) { (void)ptDip; return false; }
     // 定时器节拍（WM_TIMER；id 由上层分配并自行管理）
     virtual void OnTimer(uintptr_t id) { (void)id; }
+    // 窗口获得/失去激活（WM_ACTIVATE）：上层据此让编辑控件失焦（光标停止闪烁）
+    virtual void OnActivated(bool active) { (void)active; }
     virtual void OnResized() = 0;
 };
 
@@ -74,12 +78,20 @@ public:
 
     // 隐形系统 caret（IME 插入点）：IME 依 GetCaretPos() 把候选窗口定位到
     // 光标处。我们自绘光标，故另建一个不可见的系统 caret 专门报告插入点。
+    //
+    // 高度不可为 1px：IME 依 caret 的**底边**摆放候选窗口，零高度插入点会让
+    // 输入法把候选窗下移一整行。高度变化时重建位图。
     void EnsureImeCaret();
-    void UpdateImeCaretPos(int pxX, int pyY);
+    void UpdateImeCaretPos(int pxX, int pyY, int pxHeight);
     void RemoveImeCaret();
+
+    // 指针形态（鼠标光标）：idc = Windows 预定义光标资源（IDC_ARROW / IDC_IBEAM …）
+    void SetCursorShape(LPCWSTR idc) const;
 
     Vec2 ClientSizePx() const;      // 客户区物理像素
     Vec2 ClientSizeDip() const;     // 客户区 DIP（12-Windowing §3）
+    // 已最小化（IsIconic）：客户区尺寸为 0 → 不能进帧（App 层据此停表/阻塞）
+    bool IsMinimized() const noexcept;
 
 private:
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -89,7 +101,8 @@ private:
     HWND  hwnd_ = nullptr;
     float scale_ = 1.f;
     NativeWindowHost* host_ = nullptr;
-    HBITMAP caretBmp_ = nullptr;   // 隐形系统 caret 的位图（1×1 全透明）
+    HBITMAP caretBmp_ = nullptr;   // 隐形系统 caret 的位图（1×N 全透明）
+    int caretHeight_ = 0;         // 当前 caret 位图高度（变化时重建）
 };
 
 }  // namespace dui::platform

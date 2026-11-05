@@ -29,6 +29,8 @@ enum class Prop : uint16_t {
     Color, FontSize, FontWeight, LineHeight, TextAlign, FontFamily,
     // 文本编辑（TextBox/TextArea）：选区底色 / 光标色
     SelectionColor, CaretColor,
+    // 指针形态（鼠标光标；语义同 CSS 的 cursor）
+    Cursor,
     // 盒模型
     Padding, Margin, CornerRadius, Opacity, BackgroundColor,
     // 尺寸
@@ -65,6 +67,11 @@ enum class Justify : uint8_t { Start, Center };             // 主轴对齐（04
 enum class Align : uint8_t { Stretch, Start, Center };      // 交叉轴对齐（默认 Stretch）
 enum class FontWeight : uint8_t { Normal, Medium, SemiBold, Bold };
 enum class Easing : uint8_t { Linear, EaseIn, EaseOut, EaseInOut };
+
+// 鼠标光标形态（语义同 CSS 的 cursor；仅系统内置形态）
+enum class Cursor : uint8_t {
+    Arrow, IBeam, Hand, Wait, Crosshair, Move, SizeAll, NotAllowed, Help,
+};
 
 // 样式值：prop + 主值（f/u）+ Thickness 扩展槽。
 // 注：15-Properties §2 原案 StyleValue 为 8B 定长；M3 为内嵌四边 Thickness
@@ -148,6 +155,11 @@ public:
     // 文本编辑（TextBox/TextArea）
     Style& SelectionColor(dui::Color c);        // 选区底色（默认半透明蓝）
     Style& CaretColor(dui::Color c);            // 光标色（默认取文本色）
+    // 指针形态（鼠标光标；语义同 CSS 的 cursor）
+    // 生效范围 = 指针位于该元素上时；命中链就近者胜（未指定则沿链取父级的，
+    // 与 CSS 的 cursor 继承同效）。不需要 hover 变体：指针不在元素上时，
+    // 任何光标形态都不可见。
+    Style& Cursor(dui::Cursor v);
     Style& Padding(const Thickness& t);
     Style& Padding(float all);                   // 四边同值
     Style& Gap(float dip);
@@ -198,6 +210,7 @@ struct StyleContext {
     float    lineHeight = 1.2f;
     uint32_t fontWeight = 0;
     const wchar_t* family = nullptr;   // 继承字体族；nullptr = 引擎默认（微软雅黑）
+    float    scale = 1.f;   // 遍历期 DPI 缩放（图像类控件据此把像素尺寸换算为 DIP）
 
     // 进入元素 e 时计算子级继承态（继承属性：自身链命中则用，否则透传父值）
     StyleContext Child(const Element* e) const;

@@ -97,7 +97,7 @@ WM_DPICHANGED
 | --- | --- | --- |
 | `SwapChain` | `ResizeBuffers` 到新物理尺寸，重建渲染目标 | — |
 | `Text.Layout` | 排版仍用 DIP 宽度（DWrite layout 坐标为 DIP） | 不重新排版（除非 DIP 尺寸变） |
-| `Text.Raster` | `pixelsPerDip = scale`；按新 `pixelSize` 重新光栅化字形（ADR-003：DPI 是离散事件；取整策略见 §9-3） | 不跨尺度复用位图（复用必糊） |
+| `Text.Raster` | `pixelsPerDip = scale`；按新 `pixelSize` 重新光栅化字形（ADR-003：DPI 是离散事件；取整策略见 §9-3） | 不跨尺度复用位图（复用必糊）；**渲染模式固定 `NATURAL`** —— `NATURAL_SYMMETRIC` 的 symmetrization 会改写字形轮廓，且只在**新 pixelSize 档位**暴露（见 11-Text §6） |
 | `GlyphAtlas` | 新档位进缓存，旧档位保留待 LRU 淘汰 | 不主动清空（拖回原屏可复用） |
 | 图片 | 按新 scale 选择多倍图或重采样 | — |
 | `Input` | 消息里的物理坐标 / scale → DIP | 命中测试不做换算（全程 DIP） |
@@ -168,6 +168,8 @@ void MyWindow::OnDpiChanged(const dui::DpiChanged& e) {
 4. **字形缓存按像素尺寸离散**，每档一份位图（ADR-003 已接受该代价）。多显示器来回拖动会积累多个档位，靠 LRU 淘汰。
 5. **DPI 变化的触发源不止拖动**：最小化/还原、显示器热插拔、远程桌面会话切换、系统设置里改缩放比，都会触发。处理路径必须统一，不能假设"只有拖动才变"。
 6. **`GetCursorPos` / `ScreenToClient` 在 DPI 感知进程下返回物理像素**，所有坐标入口都要过一遍换算，漏一处就是命中偏移。
+7. **最小化时不得按"有脏标记"进帧**。最小化 → 客户区尺寸为 0 → 渲染帧直接返回且**不清脏标记** → 脏标记恒为真 → 消息循环永远进不了 `WaitMessage()` → 退化成忙转（CPU 100%）。正确做法：最小化期间直接阻塞等消息，恢复时由 `WM_SIZE` → 重排 + 重绘；脏标记保留不丢（保证最小化期间的内容变更不丢）。同时停掉光标闪烁节拍（窗口不可见，闪烁无意义），恢复后自动重启。
+8. **`WM_ACTIVATE` 必须上抛给上层**：`WA_INACTIVE` 表示用户已把交互交给别的窗口 → UI 层的焦点应随之离开（编辑控件失焦：选区消失、光标隐藏、闪烁停表，见 [06-Events.md](./06-Events.md) §3.3）。注意最小化同样发 `WA_INACTIVE`，须区分（最小化保留焦点，还原后可直接继续输入）—— 判定要延迟到下一轮消息处理之后（`WM_SIZE` 到达后 `IsIconic()` 才准）。
 
 ---
 

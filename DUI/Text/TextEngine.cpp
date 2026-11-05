@@ -32,8 +32,14 @@ namespace {
 //     对齐 Qt 的 m_subPixelPositionCount=4 与 Skia 的 subX 量化。
 //     逐字形取整到整像素会让相邻字形相位失配 → 笔画粗细跳变。
 //
-//  ③ 渲染模式：< 20px 用 NATURAL（横向 AA，锐利），≥ 20px 用
-//     NATURAL_SYMMETRIC（横纵都 AA，曲线/斜线更平滑）——Skia 的同款经验规则。
+//  ③ 渲染模式：统一用 DWRITE_RENDERING_MODE_NATURAL（灰度 AA，不做
+//     symmetrization）。
+//     曾按 Skia 的经验规则对 ≥20px 用 NATURAL_SYMMETRIC（横纵都 AA，曲线更
+//     平滑），但 **symmetrization 会改写字形轮廓**（把上半部镜像对称到下半部），
+//     对上下结构的汉字破坏明显：实测 24px 的「第」字下部两横被挤到几乎粘连。
+//     该问题只在**新字号档位**出现 —— 也就是系统 DPI 变化（新 pixelSize）后
+//     才会用新档位重光栅，看起来"只在 DPI 变化时文字出问题"。
+//     汉字为主的界面不需要 symmetrization，故统一用 NATURAL（跨字号形态一致）。
 //
 //  ④ 不做 gamma/contrast 后处理：Qt(FreeType) 与 Skia 都不对 coverage 做
 //     S 曲线增强；Skia 的 pre-blend 是方向相反的线性化表，且仅在 sRGB surface
@@ -42,8 +48,6 @@ namespace {
 // 亚像素相位：1/4 像素，4 个相位（0/0.25/0.5/0.75 px）
 constexpr float kSubPixelScale = 4.f;
 constexpr float kSubPixelStep  = 1.f / kSubPixelScale;
-// ≥ 该像素字号启用对称（横纵都抗锯齿）渲染
-constexpr uint32_t kSymmetricPixelSize = 20;
 
 // Draw 的用户上下文（layout → renderer 回调携带）
 struct DrawCtx {
@@ -131,10 +135,59 @@ public:
     }
 };
 
-GlyphRenderer& Renderer() {
-    static GlyphRenderer r;
+GlyphRenderer& Renderer() {    static GlyphRenderer r;
     return r;
 }
+
+// 字形探针渲染器：只捕获 layout **实际使用**的字体面，不绘制任何内容。
+// 用途：字形度量（掩码字符垂直居中补偿）。必须走渲染回调才能拿到真实字体面 ——
+// layout 可能因缺字回退到别的字体，与请求的族名无关。
+class GlyphProbe final : public IDWriteTextRenderer {
+public:
+    ~GlyphProbe() { if (face_ != nullptr) face_->Release(); }
+
+    ULONG STDMETHODCALLTYPE AddRef() noexcept override { return 1; }
+    ULONG STDMETHODCALLTYPE Release() noexcept override { return 1; }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) noexcept override {
+        if (out == nullptr) return E_POINTER;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IDWritePixelSnapping) ||
+            riid == __uuidof(IDWriteTextRenderer)) {
+            *out = static_cast<IDWriteTextRenderer*>(this);
+            return S_OK;
+        }
+        *out = nullptr;
+        return E_NOINTERFACE;
+    }
+
+    HRESULT STDMETHODCALLTYPE IsPixelSnappingDisabled(void*, BOOL* disabled) noexcept override {
+        *disabled = FALSE;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetCurrentTransform(void*, DWRITE_MATRIX* m) noexcept override {
+        *m = DWRITE_MATRIX{1.f, 0.f, 0.f, 1.f, 0.f, 0.f};
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetPixelsPerDip(void*, FLOAT* ppd) noexcept override {
+        *ppd = 1.f;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE DrawUnderline(void*, FLOAT, FLOAT, const DWRITE_UNDERLINE*, IUnknown*) noexcept override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE DrawStrikethrough(void*, FLOAT, FLOAT, const DWRITE_STRIKETHROUGH*, IUnknown*) noexcept override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE DrawInlineObject(void*, FLOAT, FLOAT, IDWriteInlineObject*, BOOL, BOOL, IUnknown*) noexcept override { return S_OK; }
+
+    HRESULT STDMETHODCALLTYPE DrawGlyphRun(void*, FLOAT, FLOAT, DWRITE_MEASURING_MODE, const DWRITE_GLYPH_RUN* run,
+                                           const DWRITE_GLYPH_RUN_DESCRIPTION*, IUnknown*) noexcept override {
+        if (face_ == nullptr && run != nullptr && run->fontFace != nullptr) {
+            face_ = const_cast<IDWriteFontFace*>(run->fontFace);
+            face_->AddRef();
+        }
+        return S_OK;
+    }
+
+    IDWriteFontFace* face_ = nullptr;
+};
 
 }  // namespace
 
@@ -328,9 +381,15 @@ uint32_t Engine::HitTestPoint(Paragraph* p, Vec2 localDip) {
 
 bool Engine::CaretRect(Paragraph* p, uint32_t index, Rect& out) {
     if (p == nullptr || p->layout == nullptr) return false;
+    const uint32_t len = static_cast<uint32_t>(p->text.size());
+    // isTrailingHit：该位置是否为"尾随"（位于行/文本末）。
+    //   末尾（index == len）必须传 TRUE —— 否则 DWrite 返回的是**最后一个字符的
+    //   前缘**，光标会压在最后一个字符上（位置错、且与文字粘连显得粗）。
+    //   中间位置传 FALSE → 返回该字符的前缘（插入点语义正确）。
+    const bool trailing = (index >= len);
     FLOAT x = 0.f, y = 0.f;
     DWRITE_HIT_TEST_METRICS m{};
-    if (FAILED(p->layout->HitTestTextPosition(index, FALSE, &x, &y, &m))) return false;
+    if (FAILED(p->layout->HitTestTextPosition(index, trailing, &x, &y, &m))) return false;
     float h = m.height;
     if (!(h > 0.f)) {
         // 文本末尾等位置度量退化 → 退回行高
@@ -383,10 +442,68 @@ void Engine::LineInfos(Paragraph* p, std::vector<LineInfo>& out) {
         info.end = start + m.length - m.newlineLength;   // 不含换行符
         info.top = top;
         info.height = m.height;
+        info.baseline = m.baseline;                      // 相对行顶（DWRITE_LINE_METRICS）
         out.push_back(info);
         start += m.length;
         top += m.height;
     }
+}
+
+// 单字符墨迹中心（相对基线，向上为正）。
+// 用 GDI 兼容度量（GetGlyphOutline）：gmBlackBoxY = 墨迹顶相对基线的高度（向上
+// 为正），gmBlackBoxHeight = 墨迹高；两者均以 em 为单位（emSize 传 1）。
+// 单字符墨迹中心（相对基线，向上为正）。
+//
+// 取字体面的方式：走一次「探针渲染」（只捕获 fontFace，不绘制）—— layout 可能
+// 因缺字回退到别的字体，与请求的族名无关，只有渲染回调里的 fontFace 是真的。
+//
+// 墨迹盒用 GlyphRunAnalysis 的 alpha 纹理范围（真实光栅墨迹，与实际渲染一致；
+// 不用 GetDesignGlyphMetrics —— 设计度量的 vertical-origin 语义与实际基线
+// 位置对不上，会把补偿算偏几个像素）。
+bool Engine::GlyphInkCenterDip(Paragraph* p, wchar_t ch, float& outCenterDip) {
+    outCenterDip = 0.f;
+    if (p == nullptr || p->layout == nullptr || !(p->fontSize > 0.f)) return false;
+
+    GlyphProbe probe;
+    p->layout->Draw(nullptr, &probe, 0.f, 0.f);
+    if (probe.face_ == nullptr) return false;
+
+    const UINT32 cp = static_cast<UINT32>(ch);
+    UINT16 glyphIndex = 0;
+    // 旧版 SDK 的 GetGlyphIndices 只有 3 个参数（无 exists 输出）；
+    // 字形索引 0 = .notdef（字体缺该字符）→ 视为测不到
+    if (FAILED(probe.face_->GetGlyphIndices(&cp, 1, &glyphIndex)) || glyphIndex == 0) return false;
+
+    // 以 4 倍字号测量：alpha 纹理范围是像素对齐的，放大后精度更高（1/4 单位）
+    const float emSize = p->fontSize * 4.f;
+    FLOAT advance = 0.f;
+    DWRITE_GLYPH_RUN run{};
+    run.fontFace = probe.face_;
+    run.fontEmSize = emSize;
+    run.glyphCount = 1;
+    run.glyphIndices = &glyphIndex;
+    run.glyphAdvances = &advance;
+    run.bidiLevel = 0;
+
+    IDWriteGlyphRunAnalysis* an = nullptr;
+    if (FAILED(factory2_->CreateGlyphRunAnalysis(&run, nullptr, DWRITE_RENDERING_MODE_NATURAL,
+                                                 DWRITE_MEASURING_MODE_NATURAL,
+                                                 DWRITE_GRID_FIT_MODE_DISABLED,
+                                                 DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+                                                 0.f, 0.f, &an))) {
+        return false;
+    }
+    RECT rc{};
+    // 范围相对基线、y 向下为正（字形在基线上方 → top/bottom 为负）
+    const bool ok = SUCCEEDED(an->GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1, &rc)) &&
+                    rc.bottom > rc.top;
+    if (ok) {
+        const float top = static_cast<float>(rc.top);
+        const float h = static_cast<float>(rc.bottom - rc.top);
+        outCenterDip = -(top + h * 0.5f) / 4.f;   // 中心（向上为正），换回 DIP
+    }
+    an->Release();
+    return ok;
 }
 
 const GlyphUV& Engine::GetGlyph(const void* face, uint32_t glyphIndex, uint32_t pixelSize,
@@ -411,11 +528,8 @@ bool Engine::RasterCb(void* ctx, const void* face, uint32_t glyphIndex, uint32_t
     // 故 dx 单位即物理像素（对齐 Qt 4 相位 / Skia subX）。
     const DWRITE_MATRIX xform{1.f, 0.f, 0.f, 1.f,
                                static_cast<float>(phase) * kSubPixelStep, 0.f};
-    // 小字号 NATURAL（横向 AA，锐利）；≥20px NATURAL_SYMMETRIC（横纵都 AA，
-    // 曲线/斜线更平滑）——Skia 的同款经验规则。
-    const DWRITE_RENDERING_MODE mode = pixelSize >= kSymmetricPixelSize
-        ? DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC
-        : DWRITE_RENDERING_MODE_NATURAL;
+    // 渲染模式：统一 NATURAL（不做 symmetrization，见文件头注释③）
+    constexpr DWRITE_RENDERING_MODE mode = DWRITE_RENDERING_MODE_NATURAL;
 
     IDWriteGlyphRunAnalysis* an = nullptr;
     // 显式请求灰度 AA：拿到 1 字节/像素的整像素覆盖率（而非子像素覆盖率）

@@ -28,6 +28,7 @@ bool IsInherited(Prop p) {
     case Prop::FontFamily:
     case Prop::LineHeight:
     case Prop::TextAlign:
+    case Prop::Cursor:   // 光标：父元素设了，子元素未设则沿用（同 CSS 的 cursor 继承）
         return true;
     default:
         return false;
@@ -201,6 +202,8 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::AlignItems:
     case Prop::FlexWrap:
         return kFlagLayout;
+    case Prop::Cursor:
+        return kFlagNone;   // 光标形态不影响布局也不影响绘制
     default:
         return kFlagLayout;   // 未知属性按最坏情况处理
     }

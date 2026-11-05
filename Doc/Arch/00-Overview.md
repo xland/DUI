@@ -85,7 +85,7 @@ DUI.slnx                 解决方案：x64 单一平台，五个工程
 DUI/                     库工程（DUI.vcxproj，静态库）
   DUI.h                  公共入口（业务代码唯一 include）
   Core/                  Result、String/Color/Rect/Thickness、协程 Task（M1 骨架）
-  UI/                    Style（声明集 + 链式构造合一）、Element、Panel、Text/Button、TextBox/TextArea、Canvas/Scroller、Focus、事件（M1 骨架）
+  UI/                    Style（声明集 + 链式构造合一）、Element、Panel、Text/Button、TextBox/TextArea、Image、Canvas/Scroller、Focus、事件（M1 骨架）
   App/                   Application、Window/WindowOptions（M1 骨架）
   Platform/              NativeWindow（HWND 封装、窗口过程、DPI 感知清单）（M2）
   Graphics/              Device（D3D11/Flip Model/BGRA8）+ Painter（SDF 圆角矩形 + 字形批 + 形状批 + 原点偏移）（M3/M5/M5.6）
@@ -98,6 +98,7 @@ Samples/                 示例工程（每个示例一个子目录 = 一个工�
   CustomFont/            自定义字体演示（加载未安装的 iconfont.ttf 渲染字体图标）
   PointerEvents/         元素级指针事件演示（移入/移出/移动/按下/弹起/滚轮）
   TextInput/             文本输入演示（单行 TextBox / 密码框 / 多行 TextArea + 焦点与 Tab 链）
+  Image/                 图像控件演示（dui::Image：WIC 解码 / 自然尺寸 / 拉伸 / 透明度）
 Build/                   产物根：Build\<工程>\<配置>\ 最终产物；Build\Temp\<工程>\<配置>\ 中间产物
 DUI.props                公共编译基线（库与子工程共同 import，根目录）
 Doc/Arch/                本文档集
@@ -121,6 +122,7 @@ D3D11 矩形渲染 + 最小输入；M4 Dispatcher + 线程池 + 真协程 + Clic
 | M5.7 | ✅ 自定义字体文件（`dui::LoadFontFamily`）+ 布局换行 `FlexWrap` + 样式 API 合并 | 03-Style / 15-Properties |
 | M5.8 | ✅ 元素级指针事件（移入/移出/移动/按下/弹起/滚轮，冒泡 + handled） | 06-Events |
 | M5.9 | ✅ 键盘事件（KeyDown/KeyUp/Char 冒泡）+ 焦点与 Tab 链 + `dui::TextBox`/`dui::TextArea` | 06-Events / 11-Text |
+| M5.10 | ✅ 图像控件 `dui::Image`（WIC 解码 + 图像批 + 纹理仓库） | 16-Image / 10-Rendering |
 | M6 | 过渡动画 + 观测指标 | 05-Animation / 10-Rendering |
 
 编译基线**已落地并验证**（Debug/Release 均可构建，产物 `DUI.lib`）：

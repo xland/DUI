@@ -7,6 +7,7 @@
 //    UI/Panel.h    容器基类（AddChild 创建即定型）
 //    UI/Text.h     文本控件 + Button
 //    UI/TextBox.h  文本编辑控件（TextBox 单行 / TextArea 多行 / 密码掩码）
+//    UI/Image.h    图像控件（位图；Windows 内置解码器格式）
 //    UI/Focus.h    焦点服务与 Tab 链
 //  本头聚合以上全部并声明跨模块入口（布局 / 命中测试），业务代码仍只
 //  include "DUI/DUI.h"。
@@ -19,12 +20,14 @@
 #include "UI/Panel.h"
 #include "UI/Text.h"
 #include "UI/TextBox.h"
+#include "UI/Image.h"
 #include "UI/Focus.h"
 
 namespace dui {
 
 // Flex 单遍约束布局（UI/Layout.cpp，04-Layout §6）
-void RunLayout(Element* root, const Vec2& sizeDip);
+// scale = 当前 DPI 缩放（图像类控件据此把像素尺寸换算为 DIP）
+void RunLayout(Element* root, const Vec2& sizeDip, float scale = 1.f);
 void ClearDirtyTree(Element* root);
 // 子树是否含布局失效（Frame 决定是否重排：只重绘的帧跳过 Measure/Arrange）
 bool SubtreeLayoutDirty(const Element* e);

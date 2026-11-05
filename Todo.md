@@ -249,8 +249,19 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
      整数像素，采样器仍 POINT。逐字形取整会让相邻字形相位失配。
   ③ **去掉自造 coverage LUT**：Qt(FreeType)/Skia 都不做 gamma/对比度 S 曲线；
      Skia 的 pre-blend 是方向相反的线性化表且仅 sRGB surface 生效。
-  ④ 渲染模式分档：<20px `NATURAL`（横向 AA，锐利），≥20px `NATURAL_SYMMETRIC`
-     （横纵都 AA，曲线/斜线更平滑）——Skia 同款经验规则。
+  ④ 渲染模式：~~分档（<20px `NATURAL` / ≥20px `NATURAL_SYMMETRIC`）~~ → **统一
+      `DWRITE_RENDERING_MODE_NATURAL`**（不做 symmetrization）。
+      **原因**：`NATURAL_SYMMETRIC` 会**改写字形轮廓**（把上半部镜像对称到下半部），
+      对上下结构的汉字破坏明显 —— 实测 24px 的「第」字下部两横被挤到几乎粘连。
+      该缺陷**只在新的字号档位暴露**：symmetrization 的结果依赖字号，而系统 DPI
+      变化才会产生新的 pixelSize 档位去重光栅 → 表现为「只有 DPI 变化后文字才
+      出问题」，很难联想到是渲染模式。汉字为主的界面不需要 symmetrization，统一
+      `NATURAL` 后跨字号形态一致。
+      排查手法：向窗口发 `WM_DPICHANGED`（wParam=新 DPI，lParam=建议矩形）即可
+          模拟 DPI 变化，无需真的改系统缩放。
+      - **图集字节预算修正**：`GlyphAtlas::bytes_` 原按「字形字节」加、按「整页字节」减
+        → 计数会变负，4MB 预算永不触发 → 图集无上限增长（DPI 换档批量新增字形时更易
+        暴露）。改为**按页占用**统计（开页时加 1MB，整页释放时减 1MB），预算 ≈ 4 页。
 - **偏差 2**：`fontEmSize` 即像素尺寸（ppd=1）直接产出物理像素位图；未做
   `DWRITE_TEXT_METRICS` 级缓存与分段计时（M6 观测项）。
 - **偏差 3**：`En` 默认家族写死 "Segoe UI"/"Microsoft YaHei" 回退由 DWrite 系统
@@ -491,7 +502,9 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 - **焦点服务**（新建 `DUI/UI/Focus.h/.cpp`）：焦点唯一，挂在元素上。
   `FocusedElement()` / `IsFocused()` / `SetFocus()`；`Element::Focus()/Blur()/HasFocus()`。
   换焦点时旧元素清 `State::Focused`、新元素置位 → 样式状态变体自动生效；
-  另有 `Element::OnFocusChanged(bool)` 钩子（控件据此把光标放到文本末尾）。
+  另有 `Element::OnFocusChanged(bool)` 钩子（控件据此把光标放到文本末尾；
+  失焦时 `TextBox` 清除选区 —— 否则选区底色留在失焦控件上，且不可见的选区会让
+  再次聚焦后的 Delete/输入替换掉用户看不见的内容）。
 - **Tab 链**：树序（深度优先）收集 `IsFocusable()` 元素，按 `tabIndex` 稳定排序：
   `>0` 组（数值升序）→ `0` 组（文档序）→ `<0` 组（数值升序）；`Shift+Tab` 反向、到头循环。
   `Tab` 键在焦点元素未消费时由框架默认处理（移动焦点）；点击命中可聚焦元素（或其可聚焦
@@ -505,25 +518,50 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
   但**同一元素上的外部绑定仍会收到该事件**（可见 `ev.handled` 已置位）——
   控件自身行为与用户绑定互不覆盖。
 - **文本编辑控件**（新建 `DUI/UI/TextBox.h/.cpp`）：
-  - `dui::TextBox`（单行）/ `dui::TextArea`（多行，继承）；`SetPassword(true)` → `●` 掩码。
+  - `dui::TextBox`（单行）/ `dui::TextArea`（多行，继承）；`SetPassword(true)` → `•` 掩码。
   - 编辑核心：文本 / 光标 / 选区（锚点模型）/ 撤销栈（100 步）/ 剪贴板
     （`Ctrl+C/X/V/A`、`Ctrl+Z/Y`）；方向键、`Home/End`、`Backspace/Delete`、回车
     （单行 → `OnSubmit`，多行 → 插入换行）、`Shift+` 组合扩展选区、`Ctrl+Home/End` 全文首尾。
   - 鼠标：点击定位光标、按住拖动选区（拖动期间靠 `State::Pressed` 判定）。
-  - 渲染：选区矩形 → 文本 → 光标（光标仅在有焦点时显示）；内容溢出裁剪 + 滚动，
-    光标自动滚入可见区。
+  - 渲染：选区矩形 → 文本 → 光标（光标仅在有焦点时显示；选区在失焦时清除）；
+    内容溢出裁剪 + 滚动，光标自动滚入可见区。
   - **光标持续闪烁**：框架窗口定时器（500ms）驱动 —— `Element::IsBlinkable()/OnBlink()`
     钩子 + `NeedsBlinkTick()/DispatchBlink()`（`UI/Focus.h`）+ `Window::SyncBlinkTimer()`；
     焦点离开可闪烁控件即停表；交互（点击/输入/移动光标）重置闪烁相位（光标立即可见）。
-  - **IME 候选窗口跟随光标**：用**系统 caret** 机制 —— 平台层建一个 1×1 全透明位图的
+  - **IME 候选窗口跟随光标**：用**系统 caret** 机制 —— 平台层建一个 1×N 全透明位图的
     隐形 caret（`EnsureImeCaret/UpdateImeCaretPos/RemoveImeCaret`），位置来自 UI 层
-    `Element::InsertionPoint()`（光标底部）→ `QueryInsertionPoint()` → App 层
-    `Window::SyncImeCaret()`（键盘/字符/指针事件后同步）；IME 依 `GetCaretPos()`
-    把候选窗口定位到光标处，不出现双光标。
+    `Element::InsertionPoint()`（返回**矩形**：行顶 → 行底）→ `QueryInsertionPoint()` →
+    App 层 `Window::SyncImeCaret()`（键盘/字符/指针事件后同步）；
+    IME 依 `GetCaretPos()` 把候选窗口定位到光标处，不出现双光标。
+    **caret 必须覆盖整行**：IME 依 caret **底边**摆候选窗，caret 只有 1px 高时输入法
+    会把候选窗整体下移一整行（实测候选窗落到下一行行首、离光标很远）；
+    高度变化要 `DestroyCaret` + `CreateCaret` 重建位图。
     **大坑（已回退）**：在 `WM_IME_COMPOSITION/WM_IME_NOTIFY` 处理期间调用
     `ImmGetContext/ImmReleaseContext` 会**重建输入上下文、打断正在进行的 IME 组合**
     → 表现为「中文打不出来、输入框里没有文字、候选窗口也不定位」。
     现已**不吞任何 IME 消息**，定位改走系统 caret。
+  - **文本框内 I-beam 光标**：`WM_SETCURSOR` → `NativeWindowHost::OnSetCursor(pt)` →
+    命中测试 → `Element::WantsTextCursor()`（`TextBox` 为 true）→ `SetCursor(IDC_IBEAM)`。
+    必须在 `WM_SETCURSOR` 里设置（系统每次鼠标移动后把光标重置为箭头）。
+    **坑**：`WM_SETCURSOR` 的 lParam 坐标在本机不可靠（实测为负值），必须用
+    `GetCursorPos()` + `ScreenToClient()` 换算客户区坐标。
+  - **密码框光标偏粗**：掩码字符由 `●`(U+25CF) 改为 `•`(U+2022) —— 大实心圆与 1px
+    光标条同色紧邻会连成一条粗竖线；另提供 `SetMaskChar(wchar_t)` 自定义。
+    另一根因是 `HitTestTextPosition` 的 `isTrailingHit`：末尾位置必须传 **TRUE**，
+    否则返回最后一个字符的**前缘**，光标压在最后一个字符上（连带显得粗）。
+  - **掩码圆点垂直居中**：bullet 类字符（`•`）的字形墨迹紧贴基线（圆心几乎与基线
+    齐平），按基线对齐绘制会**明显偏下**（实测圆心比输入框中心低 4~5px，且与贯穿
+    整行的光标条错位）。修法：`TextBox::UpdateMaskOffset()` 量出掩码字形的**真实
+    墨迹中心**（相对基线），把整段掩码文本补偿到**行高中心** —— 补偿量并入
+    `TextOrigin()`，绘制/命中/光标/IME 共用同一原点。
+    - 墨迹测量（`Engine::GlyphInkCenterDip`）：本机 SDK 的 `dwrite.h` 是**旧版结构**
+      —— **没有** `IDWriteFontFace::GetGlyphOutline`、`IDWriteGlyphRunAnalysis::GetAlphaBounds`、
+      `IDWriteFont::GetFontFace`；`GetGlyphIndices` 也只有 3 参数（无 `exists` 输出）。
+      可行路径：**探针渲染**（自定义 `IDWriteTextRenderer` 只捕获 `run->fontFace`，不绘制）
+      拿到 layout **实际使用**的字体面（缺字回退时与请求族名无关），再用
+      `IDWriteGlyphRunAnalysis::GetAlphaTextureBounds` 取真实墨迹盒（按 4 倍字号测量
+      再折回 DIP 提精度）。**不要用 `GetDesignGlyphMetrics`** —— 其 vertical-origin
+      语义与实际基线位置对不上，实测会把补偿算偏 4px 以上。
   - 语义事件：`OnTextChanged(const String&)` / `OnSubmit()`。
 - **排版几何 API**（`DUI/Text/TextEngine.h/.cpp`）：`HitTestPoint`（坐标 → 插入点）、
   `CaretRect`（位置 → 光标矩形）、`SelectionRects`（区间 → 逐行高亮矩形）、
@@ -534,6 +572,9 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
     改用基类接口实现：`HitTestPoint`（5 参版）、`HitTestTextPosition`、
     `HitTestTextRange`（选区逐行矩形）、`GetLineMetrics`（数组版，`E_NOT_SUFFICIENT_BUFFER`
     时扩容重试）。
+  - **踩坑**：`HitTestTextPosition` 的 `isTrailingHit` 必须按位置给：文本末尾
+    （index == len）传 **TRUE**，否则返回的是**最后一个字符的前缘** → 光标压在最后
+    一个字符上（位置错，且与掩码/文字粘连显得粗）。中间位置传 FALSE 才是插入点语义。
 - **内容裁剪**（`DUI/App/Frame.cpp`）：`Element::ContentClipRect(Rect&)` 钩子 —— 元素声明
   内容矩形后，收集期把该元素的内容切到独立绘制单元（scissor = 内容矩形 ∩ 当前裁剪，
   原点不变）。**内容矩形是布局空间绝对 DIP，须叠加父级原点平移到窗口空间**
@@ -548,6 +589,64 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
   - 无单词级移动（`Ctrl+←/→`）、无自绘选区手柄、无富文本/拼写检查；
   - 密码模式以 `●`（U+25CF）逐字符掩码（不保留原宽）；
   - 拖选依赖指针未移出控件（无指针捕获）。
+- **修复：失焦清除选区** —— `TextBox::OnFocusChanged(false)` 清除选区：否则选区底色留在
+  失焦控件上；且不可见的选区会让再次聚焦后的 Delete/输入替换掉用户看不见的内容。
+- **修复：最小化 + 文本框聚焦 → CPU 占用飙高** —— 主循环按"子树脏"决定进帧，而最小化时
+  客户区尺寸为 0 → `RenderFrame` 第一行直接 return 且**不清脏标记**（`ClearDirtyTree`
+  在 return 之后）→ 脏标记永远为真 → 主循环永远进不了 `WaitMessage()` → 退化成忙转。
+  **只在文本框聚焦时暴露**：光标闪烁节拍每 500ms 标一次脏（不聚焦时无脏 → 阻塞等消息
+  → CPU 归零）。
+  修法：① 主循环最小化时直接 `WaitMessage()` 阻塞（恢复时由 `WM_SIZE` → `OnResized`
+  触发重排 + 重绘，脏标记保留不丢）；② `SyncBlinkTimer` 最小化时停表（窗口不可见，
+  无需闪烁节拍；恢复后主循环每轮重新同步 → 自动重启）；③ 平台层新增
+  `NativeWindow::IsMinimized()`（`IsIconic`）。
+- **窗口失活 → 文本框失焦**（光标停止闪烁）—— `WM_ACTIVATE(WA_INACTIVE)` → 平台层上抛
+  `NativeWindowHost::OnActivated(false)` → App 层 `SetFocus(nullptr)`：编辑控件随之失焦，
+  选区消失、光标隐藏、闪烁停表（`NeedsBlinkTick()` 依赖焦点非空）。窗口重新激活**不自动
+  恢复焦点**（用户重新点击）。
+  **最小化是例外**：最小化同样发 `WA_INACTIVE`，但应保留焦点（还原后可直接继续输入）——
+  靠"延迟一轮判定"区分（下一轮主循环时 `WM_SIZE(SIZE_MINIMIZED)` 已到达，`IsIconic()`
+  才为准），见 `WindowHostAdapter::pendingDeactivate_/TakeDeactivate()`。
+- **鼠标光标形态（样式属性 `cursor`）** —— 普通 Element 可设置光标（语义同 CSS 的
+  `cursor`）：`Prop::Cursor` + `Style::Cursor(dui::Cursor)`，枚举
+  `Arrow/IBeam/Hand/Wait/Crosshair/Move/SizeAll/NotAllowed/Help`。
+  生效规则：**命中链就近者胜**（子元素未指定 → 沿链取父级的，同 CSS 继承；
+  子元素显式设 `Arrow` 可覆盖父级的 `Hand`）；都没指定 → 回退
+  `Element::WantsTextCursor()`（TextBox 的 I-beam）→ 默认箭头。
+  **不需要 hover 变体** —— 光标只在指针位于元素上时可见，而"指针在元素上"与
+  hover 状态在 DUI 里是同一件事（hover 位由指针进入/离开差分驱动）。
+  平台层 `NativeWindow::SetCursorIBeam()` → `SetCursorShape(LPCWSTR idc)`（IDC_* 宏
+  是 `LPWSTR` 表达式，不能当整数传）；App 层做 `dui::Cursor → IDC_*` 映射。
+  踩坑：`WM_SETCURSOR` 的 lParam 坐标不可靠，必须 `GetCursorPos` + `ScreenToClient`。
+- **M5.10 图像控件 `dui::Image`** —— WIC 解码（Windows 内置解码器：PNG/JPEG/BMP/DIB/
+  GIF(首帧)/TIFF/ICO…）+ Graphics 层**第四批（图像批）** + 纹理仓库（进程级单例，
+  App 层每帧 `Sync`）。架构详见 `Doc/Arch/16-Image.md`；示例 `Samples/Image`。
+  要点：
+  - 解码放 Graphics 层（WIC 是平台能力）；UI 层不碰 D3D（控件持 `shared_ptr<void>`
+    pimpl，公共头不引入 windows.h —— 与 `TextBox::para_` 同模式）。
+  - 图像批顶点格式同字形批 → 复用 `vsG_`/`layoutG_`，只换 PS（彩色采样）+ 线性采样器
+    （字形用 POINT，图像用 LINEAR）；按纹理分组（`ImageGroup`）。
+  - 批序 矩形→字形→形状→**图像** → 同单元内图像会盖住文字 → `Kind::Image` 元素在
+    收集期**单独切绘制单元**（单元顺序即元素树顺序 → z 序与兄弟元素一致）。
+  - DPI：自然尺寸 = 像素 ÷ scale（`StyleContext` 新增 `scale` 字段，`RunLayout` 多一个
+    scale 参数，App 层传 `native.Scale()`）→ 1 图像像素 = 1 物理像素，跨 DPI 不糊。
+  - 踩坑：① `IWICFormatConverter::Initialize` 是 **6 参数**版（Win7+ 签名，不是 3/5）；
+    ② SDK 里**没有 `wincodec.lib`**，WIC 的 import lib 叫 **`windowscodecs.lib`**，用
+    `#pragma comment(lib, ...)` 随编译单元携带（不动 `DUI.props` 的公共编译基线）；
+    ③ 项目编译基线 `/EHs-c-`（异常关闭）→ `std::ofstream` / `std::vector::insert`
+    会触发 **C4530**（示例改用 Win32 文件 API + 裸数组）；④ **颜色约定是 0xAARRGGBB**
+    （低字节 R、高字节 A）—— 传 `0xFF000000` 是"不透明黑"而不是白色，图像会被乘成全黑，
+    白色应写 `0xFFFFFFFF`（或 `(a<<24) | 0x00FFFFFF`）；⑤ 示例自造 BMP 时头部按规范
+    精确写 14+40 字节（`biPlanes`/`biBitCount` 各 2 字节）—— 头部多写 6 字节会越界写坏堆
+    （表现为 `free_dbg` 报堆损坏）。
+  - **图像不该被布局拉伸变形** —— `AlignItems` 默认 Stretch 会把图像横向拉满、flex-shrink
+    会把它压扁（跨轴比例失真）。三处处理：`Kind::Image` 子项未显式给该轴尺寸时交叉轴用
+    自然尺寸；图像从主轴收缩计算中排除；`Image::OnPaint` 按 contain 等比缩放 + 居中。
+  - 踩坑：**命令行 msbuild 全量重建会刷 LNK4020**（"pdb 类型记录已损坏"）—— `/MP` 多进程
+    编译 + `/Zi` 缺 `/FS` 所致；VS 内构建由 `Microsoft.CppCommon.targets` 在 MultiProcCL
+    下自动加 `/FS`，所以 VS 里看不到。规避：命令行加 `-p:AdditionalOptions=/FS`
+    （不改 `DUI.props` 的公共编译基线）。另：不要用 `-p:OutDir=...` 覆盖构建（会把 obj 与
+    pdb 写散，引发 IPDB/IOBJ mismatch）。
 - Debug + Release 全量重建零警告。
 
 参考：`06-Events §3.3/§6`、`15-Properties §4.1.1`、`11-Text`。

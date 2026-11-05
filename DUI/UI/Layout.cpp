@@ -127,13 +127,16 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
         }
     } else if (n > 0 && freeSpace < 0.f && !wrapRow) {
         // 收缩：按 shrink × 当前尺寸加权（CSS 近似；04-Layout §7-7 单遍近似）
+        // 图像元素不参与收缩：保持自然尺寸（被压缩会变形）
         float weight = 0.f;
         for (Element* c : items) {
             const float m = row ? c->measured_.x : c->measured_.y;
+            if (c->GetKind() == Kind::Image) continue;
             weight += ResolveProperty(c, Prop::FlexShrink, ctx).f * m;
         }
         if (weight > 0.f) {
             for (Element* c : items) {
+                if (c->GetKind() == Kind::Image) continue;   // 保持自然尺寸
                 const float s = ResolveProperty(c, Prop::FlexShrink, ctx).f;
                 const float m0 = row ? c->measured_.x : c->measured_.y;
                 const float take = (-freeSpace) * (s * m0 / weight);
@@ -217,6 +220,10 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
             crossPos = (crossLen - cross) / 2.f;
         } else if (fixedCross) {          // Start / Stretch 下的固定尺寸
             cross = v.f;
+        } else if (c->GetKind() == Kind::Image) {
+            // 图像：未显式指定该轴尺寸 → 用自然尺寸，不被 Stretch 拉满
+            // （拉满会把图像拉变形；显式给了 Width/Height 才按用户尺寸铺开）
+            cross = row ? c->measured_.y : c->measured_.x;
         } else {
             cross = crossLen;             // Stretch（默认）
         }
@@ -233,9 +240,10 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
     }
 }
 
-void RunLayout(Element* root, const Vec2& sizeDip) {
+void RunLayout(Element* root, const Vec2& sizeDip, float scale) {
     if (root == nullptr) return;
-    const StyleContext ctx{};
+    StyleContext ctx;
+    ctx.scale = scale > 0.f ? scale : 1.f;   // 图像类控件据此把像素尺寸换算为 DIP
     MeasureElement(root, sizeDip, ctx);
     ArrangeElement(root, Rect{0.f, 0.f, sizeDip.x, sizeDip.y}, ctx, 0);
 }

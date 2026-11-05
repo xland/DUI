@@ -119,17 +119,40 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 - 焦点离开可闪烁控件即停表（`NeedsBlinkTick()` 为 false）；焦点元素被销毁时
   `ClearFocusIf()` 清焦点，避免全局焦点悬空。
 - 交互（点击定位、输入、移动光标）会重置闪烁相位 —— 光标立即可见，随后继续闪烁。
+- **窗口失活 → 焦点离开窗口**：`WM_ACTIVATE(WA_INACTIVE)` → `NativeWindowHost::OnActivated(false)`
+  → App 层 `SetFocus(nullptr)`。编辑控件随之失焦：选区消失、光标隐藏、闪烁停表。
+  最小化是例外 —— 最小化也发 `WA_INACTIVE`，但保留焦点（还原后可直接继续输入），
+  靠延迟一轮判定（下一轮 `WM_SIZE` 已到达，`IsIconic` 为准）区分。
 
 **IME 候选窗口跟随光标**（用**系统 caret** 机制，不是 IMM 搬窗口）：
 
 - IME 依 `GetCaretPos()`（系统 caret 位置）确定候选窗口该出现在哪 —— 这是 Win32 的
   标准机制，对现代 TSF 输入法同样有效（无 TSF 上下文时走 IMM 兼容路径，仍读 caret）。
-- 我们自绘光标，故另建一个**隐形**系统 caret：1×1 单色位图（全 0 = 完全透明），
+- 我们自绘光标，故另建一个**隐形**系统 caret：1×N 单色位图（全 0 = 完全透明），
   只用于向 IME 报告插入点，不会出现双光标。平台层：`NativeWindow::EnsureImeCaret/
   UpdateImeCaretPos/RemoveImeCaret`。
-- 位置来源：UI 层 `Element::InsertionPoint()`（`TextBox` 返回光标底部，客户区 DIP）
-  → `QueryInsertionPoint()` → App 层 `Window::SyncImeCaret()`（DIP × scale → 客户区
-  物理像素）→ 平台层 `SetCaretPos`。在**键盘 / 字符 / 指针事件之后**同步。
+- **caret 必须覆盖整行**：IME 依 caret 的**底边**摆放候选窗口。caret 只有 1px 高
+  （零高度插入点）时，输入法会把候选窗**整体下移一整行**（实测：候选窗顶边落到
+  下一行行首，离光标很远、压在下方面板上）。故 `Element::InsertionPoint()` 返回的是
+  **矩形**（行顶 → 行底），平台层按高度重建 caret 位图（高度变了要 `DestroyCaret`
+  + `CreateCaret`，否则 caret 高度不更新）。
+- 位置来源：UI 层 `Element::InsertionPoint()`（返回矩形：x=光标 x，y=行顶，
+  h=行高；客户区 DIP）→ `QueryInsertionPoint()` → App 层 `Window::SyncImeCaret()`
+  （DIP × scale → 客户区物理像素）→ 平台层 `SetCaretPos`。
+  在**键盘 / 字符 / 指针事件之后**同步。
+- 指针形态：命中编辑控件时鼠标指针应为 **I-beam**。系统在每次鼠标移动后发
+  `WM_SETCURSOR` 并把光标重置为箭头，故须在该消息里设置：平台层
+  `NativeWindowHost::OnSetCursor(clientPtDip)` → App 层命中测试 →
+  `Element::WantsTextCursor()`（`TextBox` 为 true）→ `SetCursor(IDC_IBEAM)`。
+- **普通元素的光标形态**（样式属性 `cursor`，见 [15-Properties.md](./15-Properties.md) §4.1.2）：
+  `WM_SETCURSOR` → 命中测试 → **命中链就近者胜**（元素指定了 `cursor` 就用它的；
+  没指定则沿链向上取父级的，同 CSS 的 `cursor` 继承；都没指定再回退
+  `WantsTextCursor()` 的 I-beam）。命中链上一旦命中即止 —— 子元素显式设 `Arrow`
+  能覆盖父级的 `Hand`。**不需要 hover 变体**：光标只在指针位于元素上时可见，
+  而"指针在元素上"与 hover 状态在 DUI 里是同一件事。
+- **坑（务必记住）**：`WM_SETCURSOR` 的 **lParam 坐标在本机不可靠**（实测解析出
+  负值），必须用 `GetCursorPos()` + `ScreenToClient()` 换算客户区坐标，否则命中
+  测试必然失败、I-beam 永远不生效。
 - **坑（务必记住）**：**不要在 IME 消息处理期间调用 `ImmGetContext`/
   `ImmReleaseContext`** —— 那会重建输入上下文，打断正在进行的组合，表现为
   **「中文打不出来、输入框里没有文字」**。也不要吞掉 `WM_IME_COMPOSITION`/
@@ -224,6 +247,7 @@ list->AddHandler(Event::PointerDown, h, Phase::Tunnel);
 ## 6. 焦点与键盘导航
 
 - 焦点唯一，挂在元素上；`Focus()` / `Blur()`（M5.9 落地，见 §3.3；`ClearFocus()` 未单列，`Blur()` 即清焦点）。
+- **窗口失活即失焦**（切到别的应用 → 焦点离开窗口，见 §3.3）；最小化除外（保留焦点）。
 - **Tab 链**：按树序（深度优先）+ 元素可设 `focusable`（`SetFocusable(true)`）/ `tabIndex`（`SetTabIndex`）排序；`Shift+Tab` 反向。
 - 焦点变化 → 更新元素 `State::Focused` → 样式状态变体自动生效（[03-Style.md](./03-Style.md) §6.2），无需开发者干预。
 - 方向键导航（列表/网格内移动焦点）由具体控件实现，事件系统只提供路由与焦点服务。

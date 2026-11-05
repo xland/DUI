@@ -114,6 +114,23 @@ float4 PSMain(PSInG i) : SV_Target {
 }
 )";
 
+// 图像批（彩色纹理采样）：BGRA8 纹理 × 颜色；输出预乘（ADR-013）。
+// 顶点格式与字形批相同（pos + uv + color）→ 复用 vsG_ / layoutG_，只换 PS。
+constexpr char kPSI[] = R"(
+Texture2D g_tex : register(t0);
+SamplerState g_sampler : register(s0);
+struct PSInI {
+    float4 svpos : SV_Position;
+    float2 uv    : TEXCOORD0;
+    float4 color : COLOR;
+};
+float4 PSMain(PSInI i) : SV_Target {
+    float4 t = g_tex.Sample(g_sampler, i.uv);   // BGRA8（straight alpha）
+    float a = t.a * i.color.a;
+    return float4(t.rgb * i.color.rgb * a, a);   // straight → 预乘（ADR-013）
+}
+)";
+
 // 形状批（SDF 图元）：一个四边形 + 局部空间有符号距离 + 1 像素过渡带 AA。
 // kind：0 胶囊（线段）/ 1 椭圆 / 2 圆角矩形；halfStroke = 0 填充，> 0 描边。
 constexpr char kVSS[] = R"(
@@ -226,6 +243,8 @@ void Painter::Reset() {
     gverts_.clear();
     ggroups_.clear();
     sverts_.clear();
+    iverts_.clear();
+    igroups_.clear();
     originDipX_ = 0.f;
     originDipY_ = 0.f;
     originPxX_ = 0.f;
@@ -255,6 +274,33 @@ void Painter::AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
     };
     for (const GlyphVertex& v : quad) gverts_.push_back(v);
     ggroups_.back().vertexCount += 4;
+}
+
+// 图像四边形：把纹理铺满 dipRect（DIP → 像素；origin 为滚动偏移）
+void Painter::AddImageQuad(uint32_t texture, const Rect& dipRect, Color color, float scale) {
+    const float w = dipRect.w * scale;
+    const float h = dipRect.h * scale;
+    if (w <= 0.f || h <= 0.f) return;
+    if (igroups_.empty() || igroups_.back().texture != texture) {
+        ImageGroup g;
+        g.texture = texture;
+        g.firstVertex = static_cast<uint32_t>(iverts_.size());
+        g.vertexCount = 0;
+        igroups_.push_back(g);
+    }
+    // 0xAARRGGBB（straight）→ R8G8B8A8 内存序（与 FillRoundedRect 一致）
+    const uint32_t packed = ((color & 0xFFu) << 16) | (color & 0xFF00u) |
+                            ((color & 0xFF0000u) >> 16) | ((color >> 24) << 24);
+    const float x = (dipRect.x + originDipX_) * scale;
+    const float y = (dipRect.y + originDipY_) * scale;
+    const GlyphVertex quad[4] = {
+        {x,     y,     0.f, 0.f, packed},
+        {x + w, y,     1.f, 0.f, packed},
+        {x + w, y + h, 1.f, 1.f, packed},
+        {x,     y + h, 0.f, 1.f, packed},
+    };
+    for (const GlyphVertex& v : quad) iverts_.push_back(v);
+    igroups_.back().vertexCount += 4;
 }
 
 // 形状图元：生成一个四边形（4 顶点），片元在局部坐标求 SDF。
@@ -409,10 +455,16 @@ Device::~Device() {
                                    reinterpret_cast<ID3D11DeviceChild*>(sampler_),
                                    reinterpret_cast<ID3D11DeviceChild*>(vsS_),
                                    reinterpret_cast<ID3D11DeviceChild*>(psS_),
-                                   reinterpret_cast<ID3D11DeviceChild*>(layoutS_)}) {
+                                   reinterpret_cast<ID3D11DeviceChild*>(layoutS_),
+                                   reinterpret_cast<ID3D11DeviceChild*>(psI_),
+                                   reinterpret_cast<ID3D11DeviceChild*>(samplerI_)}) {
         if (res != nullptr) res->Release();
     }
     for (GlyphPageTex& t : pages_) {
+        if (t.tex != nullptr) t.tex->Release();
+        if (t.srv != nullptr) t.srv->Release();
+    }
+    for (ImageTex& t : images_) {
         if (t.tex != nullptr) t.tex->Release();
         if (t.srv != nullptr) t.srv->Release();
     }
@@ -559,6 +611,29 @@ bool Device::Init(HWND hwnd, String& error) {
         return false;
     }
 
+    // 图像管线（彩色纹理采样批）：顶点格式同字形批 → 复用 vsG_/layoutG_，
+    // 只需新的 PS（彩色纹理）与线性采样器（图像常被缩放绘制）
+    ID3DBlob* psIBlob = nullptr;
+    if (!CompileShader(kPSI, "PSMain", "ps_5_0", &psIBlob, error)) return false;
+    hr = dev_->CreatePixelShader(psIBlob->GetBufferPointer(), psIBlob->GetBufferSize(), nullptr, &psI_);
+    psIBlob->Release();
+    if (FAILED(hr)) {
+        error = L"CreatePixelShader(image) failed";
+        return false;
+    }
+
+    D3D11_SAMPLER_DESC sdi{};
+    // 线性：图像绘制尺寸常与像素尺寸不等（布局拉伸 / DPI 换算），双线性避免锯齿
+    sdi.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sdi.AddressU = sdi.AddressV = sdi.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sdi.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    sdi.MaxLOD = D3D11_FLOAT32_MAX;
+    hr = dev_->CreateSamplerState(&sdi, &samplerI_);
+    if (FAILED(hr)) {
+        error = L"CreateSamplerState(image) failed";
+        return false;
+    }
+
     // 常量缓冲：仅 rtSize（正交投影在 VS 内完成）
     D3D11_BUFFER_DESC cbd{};
     cbd.ByteWidth = 16;
@@ -680,20 +755,22 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount) {
     ctx_->ClearRenderTargetView(rtv_, kBlack);
     if (units == nullptr || unitCount == 0) return;
 
-    // 顶点总量（各单元三批之和）
+    // 顶点总量（各单元四批之和）
     uint32_t totalVerts = 0;
     uint32_t totalQuads = 0;
     for (uint32_t i = 0; i < unitCount; ++i) {
         const Painter& p = *units[i].painter;
-        totalVerts += (p.QuadCount() + p.GlyphQuadCount() + p.ShapeQuadCount()) * 4;
-        totalQuads += p.QuadCount() + p.GlyphQuadCount() + p.ShapeQuadCount();
+        totalVerts += (p.QuadCount() + p.GlyphQuadCount() + p.ShapeQuadCount() +
+                       p.ImageQuadCount()) * 4;
+        totalQuads += p.QuadCount() + p.GlyphQuadCount() + p.ShapeQuadCount() +
+                      p.ImageQuadCount();
     }
     if (totalVerts == 0) return;
 
     EnsureVertexBuffer(totalVerts);
     if (vb_ == nullptr) return;
 
-    // 一次上传：各单元的顶点段依次排布（三批 stride 不同 → 按实际字节累加）
+    // 一次上传：各单元的顶点段依次排布（四批 stride 不同 → 按实际字节累加）
     D3D11_MAPPED_SUBRESOURCE m{};
     if (FAILED(ctx_->Map(vb_, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) return;
     auto* dst = static_cast<uint8_t*>(m.pData);
@@ -703,15 +780,19 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount) {
         const uint32_t quads = p.QuadCount();
         const uint32_t gquads = p.GlyphQuadCount();
         const uint32_t squads = p.ShapeQuadCount();
+        const uint32_t iquads = p.ImageQuadCount();
         uint8_t* d = dst + byteBase;
         memcpy(d, p.Vertices(), static_cast<size_t>(quads) * 4 * sizeof(Vertex));
         d += static_cast<size_t>(quads) * 4 * sizeof(Vertex);
         memcpy(d, p.GlyphVertices(), static_cast<size_t>(gquads) * 4 * sizeof(GlyphVertex));
         d += static_cast<size_t>(gquads) * 4 * sizeof(GlyphVertex);
         memcpy(d, p.ShapeVertices(), static_cast<size_t>(squads) * 4 * sizeof(ShapeVertex));
+        d += static_cast<size_t>(squads) * 4 * sizeof(ShapeVertex);
+        memcpy(d, p.ImageVertices(), static_cast<size_t>(iquads) * 4 * sizeof(GlyphVertex));
         byteBase += static_cast<size_t>(quads) * 4 * sizeof(Vertex) +
                     static_cast<size_t>(gquads) * 4 * sizeof(GlyphVertex) +
-                    static_cast<size_t>(squads) * 4 * sizeof(ShapeVertex);
+                    static_cast<size_t>(squads) * 4 * sizeof(ShapeVertex) +
+                    static_cast<size_t>(iquads) * 4 * sizeof(GlyphVertex);
     }
     ctx_->Unmap(vb_, 0);
 
@@ -732,7 +813,7 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount) {
     ctx_->OMSetRenderTargets(1, &rtv_, nullptr);
     ctx_->OMSetBlendState(blend_, nullptr, 0xFFFFFFFFu);
 
-    // 逐单元绘制：单元顺序即 z 序；单元内再分三批。
+    // 逐单元绘制：单元顺序即 z 序；单元内再分四批。
     // 每批把 VB 绑到"本批数据段"的字节起点；索引缓冲按"全局 quad 序号"编排
     // （q*4 起 6 个索引），故 BaseVertexLocation 取负值把全局索引拉回本批顶点段：
     //   effective = base + index = 本批段内局部顶点号（均 >= 0，D3D11 合法）。
@@ -743,7 +824,8 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount) {
         const uint32_t quads = p.QuadCount();
         const uint32_t gquads = p.GlyphQuadCount();
         const uint32_t squads = p.ShapeQuadCount();
-        if (quads + gquads + squads == 0) continue;
+        const uint32_t iquads = p.ImageQuadCount();
+        if (quads + gquads + squads + iquads == 0) continue;
 
         // 裁剪（scissor）：滚动容器的内容裁到视口内；空矩形表示整单元不画
         const Rect& c = units[i].clipPx;
@@ -798,10 +880,31 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount) {
             ctx_->DrawIndexed(squads * 6, (quadBase + quads + gquads) * 6, base);
         }
 
+        // 图像批（彩色纹理）：按纹理分组，跨纹理才切换 SRV（顶点格式同字形批）
+        if (iquads > 0) {
+            const UINT off = byteOffset + quads * 4 * sizeof(Vertex) +
+                             gquads * 4 * sizeof(GlyphVertex) +
+                             squads * 4 * sizeof(ShapeVertex);
+            const INT base = -static_cast<INT>((quadBase + quads + gquads + squads) * 4);
+            ctx_->IASetInputLayout(layoutG_);
+            ctx_->IASetVertexBuffers(0, 1, &vb, &kStrideG, &off);
+            ctx_->VSSetShader(vsG_, nullptr, 0);
+            ctx_->PSSetShader(psI_, nullptr, 0);
+            ctx_->PSSetSamplers(0, 1, &samplerI_);
+            for (const ImageGroup& g : p.ImageGroups()) {
+                ID3D11ShaderResourceView* srv = FindImageSrv(g.texture);
+                if (srv == nullptr) continue;
+                ctx_->PSSetShaderResources(0, 1, &srv);
+                const uint32_t gq = quadBase + quads + gquads + squads + g.firstVertex / 4;
+                ctx_->DrawIndexed(g.vertexCount / 4 * 6, gq * 6, base);
+            }
+        }
+
         byteOffset += quads * 4 * sizeof(Vertex) +
                       gquads * 4 * sizeof(GlyphVertex) +
-                      squads * 4 * sizeof(ShapeVertex);
-        quadBase += quads + gquads + squads;
+                      squads * 4 * sizeof(ShapeVertex) +
+                      iquads * 4 * sizeof(GlyphVertex);
+        quadBase += quads + gquads + squads + iquads;
     }
 }
 
@@ -862,6 +965,102 @@ void Device::ReleaseGlyphPage(uint32_t id) {
 
 void Device::Present() {
     if (swap_ != nullptr) swap_->Present(1, 0);   // VSync 默认开（ADR-013）
+}
+
+// ---------------------------------------------------------------------------
+// 图像纹理（BGRA8）
+// ---------------------------------------------------------------------------
+
+ID3D11ShaderResourceView* Device::FindImageSrv(uint32_t id) {
+    for (ImageTex& t : images_) {
+        if (t.id == id) return t.srv;
+    }
+    return nullptr;
+}
+
+void Device::UploadImage(uint32_t id, uint32_t w, uint32_t h, const uint8_t* bgra) {
+    ImageTex* pt = nullptr;
+    for (ImageTex& t : images_) {
+        if (t.id == id) { pt = &t; break; }
+    }
+    if (pt == nullptr) {
+        D3D11_TEXTURE2D_DESC td{};
+        td.Width = w;
+        td.Height = h;
+        td.MipLevels = 1;
+        td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;   // 与交换链同格式（非 sRGB）
+        td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_DEFAULT;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        ID3D11Texture2D* tex = nullptr;
+        if (FAILED(dev_->CreateTexture2D(&td, nullptr, &tex))) return;
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvd{};
+        srvd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        srvd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        srvd.Texture2D.MipLevels = 1;
+        ID3D11ShaderResourceView* srv = nullptr;
+        if (FAILED(dev_->CreateShaderResourceView(tex, &srvd, &srv))) {
+            tex->Release();
+            return;
+        }
+        ImageTex np;
+        np.id = id;
+        np.tex = tex;
+        np.srv = srv;
+        images_.push_back(np);
+        pt = &images_.back();
+    }
+    const D3D11_BOX box{0, 0, 0, w, h, 1};
+    ctx_->UpdateSubresource(pt->tex, 0, &box, bgra, w * 4, 0);   // 行距 = w*4 字节
+}
+
+void Device::ReleaseImage(uint32_t id) {
+    for (auto it = images_.begin(); it != images_.end(); ++it) {
+        if (it->id == id) {
+            if (it->tex != nullptr) it->tex->Release();
+            if (it->srv != nullptr) it->srv->Release();
+            images_.erase(it);
+            return;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 纹理仓库（进程级单例）：控件登记纹理 → App 层每帧同步到 GPU
+// ---------------------------------------------------------------------------
+
+TextureStore& TextureStore::Instance() {
+    static TextureStore inst;
+    return inst;
+}
+
+std::shared_ptr<ImageTexture> TextureStore::Register(uint32_t w, uint32_t h,
+                                                     std::vector<uint8_t>&& pixels) {
+    auto tex = std::make_shared<ImageTexture>();
+    tex->id = nextId_++;
+    tex->width = w;
+    tex->height = h;
+    tex->pixels = std::move(pixels);
+    tex->dirty = true;
+    textures_.push_back(tex);
+    return tex;
+}
+
+void TextureStore::Sync(Device& dev) {
+    for (auto it = textures_.begin(); it != textures_.end(); ) {
+        if (it->use_count() == 1) {
+            // 只有仓库还持有 → 控件已释放该纹理：回收 GPU 资源
+            dev.ReleaseImage((*it)->id);
+            it = textures_.erase(it);
+            continue;
+        }
+        if ((*it)->dirty) {
+            dev.UploadImage((*it)->id, (*it)->width, (*it)->height, (*it)->pixels.data());
+            (*it)->dirty = false;
+        }
+        ++it;
+    }
 }
 
 }  // namespace dui::graphics

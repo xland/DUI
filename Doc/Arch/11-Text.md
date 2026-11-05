@@ -70,6 +70,23 @@ L1  排版与渲染引擎    字体集合/成形/段落排版/光栅化/命中�
 | BiDi / 复杂脚本 / 回退 | DWrite 内建 | |
 | 描边文字、渐变文字 | 自定义绘制回调 + Graphics 层 | P2，走 03-Style `color` 的扩展形态 |
 
+**字形墨迹测量**（掩码字符垂直居中补偿用）：
+
+- 需求：bullet 类掩码字符（`•` U+2022、`●` U+25CF）的字形墨迹紧贴基线 —— 圆心几乎
+  与基线齐平，按基线对齐绘制会明显偏下（实测圆心比输入框中心低 4~5px，与贯穿整行
+  的光标条错位）。需量出掩码字形的**真实墨迹中心**（相对基线）并把整段掩码文本补偿
+  到行高中心（补偿量并入文本原点，绘制/命中/光标/IME 共用同一原点）。
+- 本机 SDK 的 `dwrite.h` 是**旧版结构**：**没有** `IDWriteFontFace::GetGlyphOutline`、
+  `IDWriteGlyphRunAnalysis::GetAlphaBounds`、`IDWriteFont::GetFontFace`；
+  `IDWriteFontFace::GetGlyphIndices` 只有 3 个参数（无 `exists` 输出）。
+- 可行路径：**探针渲染**（自定义 `IDWriteTextRenderer`，`DrawGlyphRun` 里只捕获
+  `run->fontFace`、不绘制）→ 拿到 layout **实际使用**的字体面（缺字回退时与请求的族名
+  无关，`IDWriteFont::GetFontFace` 在本机又不可用）→ 再用
+  `IDWriteGlyphRunAnalysis::GetAlphaTextureBounds` 取真实墨迹盒（按 4 倍字号测量后
+  折回 DIP 以提高精度）。
+- **不要用 `IDWriteFontFace::GetDesignGlyphMetrics`**：其 vertical-origin 语义与实际
+  基线位置对不上，实测会把补偿算偏 4px 以上。
+
 ---
 
 ## 4. L2：富文本文档模型
@@ -114,6 +131,11 @@ Paragraph = 文本缓冲（UTF-16，与 DWrite 零转换）
 ## 6. 渲染质量
 
 - **AA**：MVP 灰度（ADR-003 已定方向：子像素与任意合成冲突）；ClearType 作为待定项保留在 ADR-003。
+- **渲染模式**：统一 `DWRITE_RENDERING_MODE_NATURAL`（灰度 AA，**不做 symmetrization**）。
+  不用 `NATURAL_SYMMETRIC`：它会改写字形轮廓（把上半部镜像对称到下半部），对上下结构的
+  汉字破坏明显（实测 24px 的「第」字下部两横几乎粘连）。该缺陷只在**新字号档位**暴露
+  —— symmetrization 结果依赖字号，而系统 DPI 变化才会产生新 pixelSize 档位去重光栅，
+  于是表现为「只有 DPI 变化后文字才出问题」。
 - **可变字体**：DWrite 有部分支持（Win10 1703 起），列为能力待定，不进 MVP。
 - **超大字号**：轮廓退化路径（ADR-003 已定）。
 

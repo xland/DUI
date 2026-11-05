@@ -41,8 +41,8 @@ bool NeedsBlinkTick() noexcept;
 // 返回 false 表示不需要继续节拍（调用方可停表）。
 bool DispatchBlink();
 
-// 焦点元素的插入点（光标）位置（客户区 DIP）：无焦点或焦点元素不提供插入点
-// 时返回 false。IME 候选窗口据此定位到光标下方。
-bool QueryInsertionPoint(Vec2& outDip);
+// 焦点元素的插入点（光标）矩形（客户区 DIP）：无焦点或焦点元素不提供插入点
+// 时返回 false。IME 候选窗口据此定位到光标处。
+bool QueryInsertionPoint(Rect& outRect);
 
 }  // namespace dui

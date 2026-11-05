@@ -15,6 +15,25 @@
 
 namespace dui {
 
+namespace {
+
+// 光标形态 → Windows 预定义光标资源（映射放在 App 层：Platform 不依赖 UI 层）
+LPCWSTR ToWinCursor(dui::Cursor c) {
+    switch (c) {
+    case dui::Cursor::IBeam:      return IDC_IBEAM;
+    case dui::Cursor::Hand:       return IDC_HAND;
+    case dui::Cursor::Wait:       return IDC_WAIT;
+    case dui::Cursor::Crosshair:  return IDC_CROSS;
+    case dui::Cursor::Move:       return IDC_SIZEALL;
+    case dui::Cursor::SizeAll:    return IDC_SIZEALL;
+    case dui::Cursor::NotAllowed: return IDC_NO;
+    case dui::Cursor::Help:       return IDC_HELP;
+    default:                      return IDC_ARROW;
+    }
+}
+
+}  // namespace
+
 // 平台事件 → dui::Window 事件的适配器（Window 的 friend，App.h 声明）。
 // Platform 层不依赖 App/UI（01-Layering §1），因此由本层做桥接。
 // 注意：必须与 App.h 的 friend 声明同为 dui::WindowHostAdapter（不能进匿名命名空间）。
@@ -171,6 +190,24 @@ public:
         window_.SyncImeCaret();   // 输入后光标右移 → 同步 IME 插入点
     }
 
+    // 指针形态：命中链就近者胜 —— 元素指定了 cursor 就用它；没指定则沿链向上取
+    // 父级的（与 CSS 的 cursor 继承同效）；都没指定再看是否为编辑控件（I-beam）。
+    bool OnSetCursor(Vec2 pt) override {
+        Element* hit = HitTest(window_.Root(), pt);
+        for (Element* e = hit; e != nullptr; e = e->Parent()) {
+            StyleValue v;
+            if (TryResolveElement(e, Prop::Cursor, v)) {
+                native_.SetCursorShape(ToWinCursor(static_cast<dui::Cursor>(v.u)));
+                return true;
+            }
+            if (e->WantsTextCursor()) {
+                native_.SetCursorShape(IDC_IBEAM);
+                return true;
+            }
+        }
+        return false;   // 默认箭头
+    }
+
     // 定时器节拍（光标闪烁）：转发到窗口，由窗口驱动 UI 层闪烁钩子
     void OnTimer(uintptr_t id) override {
         window_.OnTimer(id);
@@ -181,6 +218,24 @@ public:
         // 拖拽边框期间 Windows 在模态循环里连续派发 WM_SIZE，主消息循环被挂起，
         // framePending 要等拖拽结束才被消费 —— 帧必须就地渲染，内容才能实时变化
         Application::RenderFrame(window_, native_, device_);
+    }
+
+    // 窗口激活状态变化：失活 → 焦点离开窗口（编辑控件失焦，光标停止闪烁）。
+    // 延迟一轮判定：最小化也会发 WM_ACTIVATE(WA_INACTIVE)，但最小化应保留焦点
+    // （还原后可直接继续输入）—— 下一轮 WM_SIZE 已到达，IsIconic 才是准的。
+    void OnActivated(bool active) override {
+        if (active) {
+            pendingDeactivate_ = false;
+            return;
+        }
+        pendingDeactivate_ = true;
+    }
+
+    // 取"应清焦点"标志（消费一次）：最小化不算失活，保留焦点
+    bool TakeDeactivate() {
+        if (!pendingDeactivate_) return false;
+        pendingDeactivate_ = false;
+        return !native_.IsMinimized();
     }
 
 private:
@@ -198,6 +253,7 @@ private:
     Vec2     lastPt_{};    // 最近一次指针位置（DIP），移出事件用
     Scroller* dragging_ = nullptr;      // 正在拖拽的滚动条（滑块）
     bool      dragVertical_ = false;
+    bool      pendingDeactivate_ = false;   // 窗口失活待处理（延迟一轮判定最小化）
 };
 
 Window::Window(const WindowOptions& options) : options_(options) {
@@ -226,7 +282,9 @@ constexpr unsigned   kBlinkIntervalMs = 500;   // 光标闪烁周期（半周期
 void Window::SyncBlinkTimer() {
     auto* native = static_cast<platform::NativeWindow*>(native_);
     if (native == nullptr) return;
-    const bool need = NeedsBlinkTick();
+    // 最小化：窗口不可见，无需闪烁节拍 —— 停表（省掉无谓唤醒与脏标记累积）。
+    // 恢复时主循环每轮重新同步 → 自动重启。
+    const bool need = NeedsBlinkTick() && !native->IsMinimized();
     if (need) {
         if (blinkTimer_ == 0) {
             native->StartTimer(kBlinkTimerId, kBlinkIntervalMs);
@@ -244,21 +302,23 @@ void Window::OnTimer(uintptr_t id) {
     SyncBlinkTimer();         // 不再需要闪烁 → 停表
 }
 
-// IME 插入点：UI 层给插入点（光标底部）→ 平台层把隐形系统 caret 移过去。
-// IME 依 GetCaretPos() 定位候选窗口；系统 caret 不可见，故与自绘光标不冲突。
+// IME 插入点：UI 层给插入点矩形（光标所在行：行顶→基线）→ 平台层把隐形系统
+// caret 移过去。IME 依 GetCaretPos() 定位候选窗口；系统 caret 不可见，故与自绘
+// 光标不冲突。caret 高度必须覆盖到基线，否则输入法会把候选窗下移一整行。
 // 注意：这里不碰任何 IMM API —— 在 IME 消息处理期间调用 ImmGetContext 会重建
 // 输入上下文、打断正在进行的组合（中文打不出来）。
 void Window::SyncImeCaret() {
     auto* native = static_cast<platform::NativeWindow*>(native_);
     if (native == nullptr) return;
-    Vec2 dip{};
+    Rect dip{};
     if (!QueryInsertionPoint(dip)) {
         native->RemoveImeCaret();
         return;
     }
     const int px = static_cast<int>(dip.x * scale_ + 0.5f);
     const int py = static_cast<int>(dip.y * scale_ + 0.5f);
-    native->UpdateImeCaretPos(px, py);
+    const int ph = static_cast<int>(dip.h * scale_ + 0.5f);
+    native->UpdateImeCaretPos(px, py, ph);
 }
 
 Application::Application() = default;
@@ -310,8 +370,15 @@ int Application::Run(Window& window) {
             DispatchMessageW(&msg);
         }
         dispatcher_.Drain();
+        // 窗口失活（切到别的应用）→ 清焦点：编辑控件随之失焦 —— 选区消失、
+        // 光标停止闪烁。最小化不在此列（保留焦点，还原后可直接继续输入）。
+        if (host.TakeDeactivate()) SetFocus(nullptr);
         window.SyncBlinkTimer();     // 焦点变化 → 启停光标闪烁节拍（渲染前同步）
-        if (framePending || window.Root()->SubtreeDirty()) {
+        // 最小化：客户区尺寸为 0 → RenderFrame 直接返回且**不清脏标记**，若此时
+        // 仍按 dirty 进帧，主循环永远进不了 WaitMessage → 退化成忙转（CPU 100%）。
+        // 光标闪烁节拍每 500ms 标一次脏，故只在文本框聚焦时暴露。
+        // 最小化期间直接阻塞等消息；恢复时由 WM_SIZE → OnResized 触发重排 + 重绘。
+        if (!native.IsMinimized() && (framePending || window.Root()->SubtreeDirty())) {
             framePending = false;
             RenderFrame(window, native, device);
         } else {

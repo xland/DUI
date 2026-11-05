@@ -74,6 +74,9 @@
     <ClInclude Include="UI\TextBox.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
+    <ClInclude Include="UI\Image.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
     <ClInclude Include="UI\Focus.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
@@ -90,6 +93,9 @@
       <Filter>头文件\Platform</Filter>
     </ClInclude>
     <ClInclude Include="Graphics\Graphics.h">
+      <Filter>头文件\Graphics</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\ImageCodec.h">
       <Filter>头文件\Graphics</Filter>
     </ClInclude>
     <ClInclude Include="Text\GlyphAtlas.h">
@@ -121,6 +127,9 @@
     <ClCompile Include="UI\TextBox.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
+    <ClCompile Include="UI\Image.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
     <ClCompile Include="UI\Focus.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
@@ -149,6 +158,9 @@
       <Filter>源文件\Platform</Filter>
     </ClCompile>
     <ClCompile Include="Graphics\Graphics.cpp">
+      <Filter>源文件\Graphics</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\ImageCodec.cpp">
       <Filter>源文件\Graphics</Filter>
     </ClCompile>
   </ItemGroup>

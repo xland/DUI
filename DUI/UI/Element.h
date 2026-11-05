@@ -23,8 +23,8 @@ namespace graphics {
 class Painter;
 }
 
-// 元素类别（收集时区分文本/容器/滚动容器；/GR- 下不用 RTTI，用虚函数判定）
-enum class Kind : uint8_t { Node, Text, Scroller };
+// 元素类别（收集时区分文本/容器/滚动容器/图像；/GR- 下不用 RTTI，用虚函数判定）
+enum class Kind : uint8_t { Node, Text, Scroller, Image };
 
 // ---------------------------------------------------------------------------
 // 事件（06-Events §3；M4 接入命中测试与路由，M5.8 补齐元素级指针事件）
@@ -249,9 +249,16 @@ public:
     virtual bool IsBlinkable() const { return false; }
     virtual bool OnBlink() { return false; }
 
-    // 插入点（光标）位置：客户区 DIP 绝对坐标。返回 true 表示该元素提供插入点
-    // （编辑控件）；IME 候选窗口据此定位到光标下方。
-    virtual bool InsertionPoint(Vec2& outDip) const { (void)outDip; return false; }
+    // 插入点（光标）矩形：客户区 DIP 绝对坐标。返回 true 表示该元素提供插入点
+    // （编辑控件）；IME 候选窗口据此定位。
+    //
+    // 矩形须**覆盖光标所在行的行首到基线**（而不是一个孤立的点）：IME 依系统
+    // caret 的**底边**摆放候选窗口，若 caret 高只有 1px，输入法会认为插入点
+    // "零高度"，把候选窗口下移一整行（观感：候选窗离光标很远）。
+    virtual bool InsertionPoint(Rect& outRect) const { (void)outRect; return false; }
+
+    // 是否使用文本插入光标（IBEAM）：命中编辑控件时鼠标指针应变为 I-beam。
+    virtual bool WantsTextCursor() const { return false; }
 
     // ------------------------------------------------------------------
     // 控件内部事件钩子（子类重写）：返回 true = 已消费，事件不再向上冒泡。

@@ -54,7 +54,11 @@ const GlyphUV& GlyphAtlas::Get(void* ctx, const void* face, uint32_t glyph,
 GlyphUV GlyphAtlas::Place(const std::vector<uint8_t>& bits, int left, int top, int w, int h) {
     const uint32_t uw = static_cast<uint32_t>(w);
     const uint32_t uh = static_cast<uint32_t>(h);
-    while (bytes_ + bits.size() > kBudgetBytes && !lru_.empty()) EvictBack();
+    // 预算口径：按**页占用**统计（字节加在开页时、减在整页释放时）。
+    // 早前按字形字节加、按整页字节减，bytes_ 会变成负数 → 预算永不触发 → 图集
+    // 无上限增长；DPI 换档会批量产生新 pixelSize 的字形，更容易暴露。
+    const size_t pageBytes = static_cast<size_t>(kPageSize) * kPageSize;
+    while (bytes_ + pageBytes > kBudgetBytes && !lru_.empty()) EvictBack();
 
     // 首个放得下的页（shelf 游标试推进）；无则开新页。
     // 字形间留 1px 空隙：UV 浮点误差不致采到相邻字形（保险，POINT 采样本身无渗色）
@@ -72,6 +76,7 @@ GlyphUV GlyphAtlas::Place(const std::vector<uint8_t>& bits, int left, int top, i
         np.bits.assign(static_cast<size_t>(kPageSize) * kPageSize, 0);
         pages_.push_back(np);
         page = &pages_.back();
+        bytes_ += pageBytes;   // 开页才计占用
     }
 
     for (int row = 0; row < h; ++row) {
@@ -95,7 +100,6 @@ GlyphUV GlyphAtlas::Place(const std::vector<uint8_t>& bits, int left, int top, i
     page->rowH = crh > uh ? crh : uh;
     page->dirty = true;
     page->live++;
-    bytes_ += bits.size();
     return uv;
 }
 

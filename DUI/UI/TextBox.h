@@ -48,8 +48,12 @@ public:
     void OnSubmit(std::function<void()> fn) { onSubmit_ = std::move(fn); }
 
     bool IsPassword() const noexcept { return password_; }
-    // 切换密码模式（掩码 ●）；真实文本不变
+    // 切换密码模式（掩码字符）；真实文本不变
     void SetPassword(bool on);
+    // 密码掩码字符（默认 '•' U+2022）。比 '●'(U+25CF) 更细小 —— 大实心圆与
+    // 1px 光标条同色紧邻时会看成一条粗竖线。
+    void SetMaskChar(wchar_t ch);
+    wchar_t MaskChar() const noexcept { return maskChar_; }
     bool IsMultiline() const noexcept { return multiline_; }
 
 protected:
@@ -59,13 +63,15 @@ protected:
     void OnPaint(graphics::Painter& painter, const StyleContext& ctx, float scale) override;
     // 内容裁剪（文本溢出裁到内容盒）
     bool ContentClipRect(Rect& out) const override;
-    // 焦点变化：取得焦点时把光标放到文本末尾
+    // 焦点变化：取得焦点时把光标放到文本末尾；失焦时清除选区（选区底色随之消失）
     void OnFocusChanged(bool focused) override;
     // 闪烁节拍：光标持续闪烁（框架定时器驱动，500ms 一次）
     bool IsBlinkable() const override { return true; }
     bool OnBlink() override;
-    // 插入点（光标底部）：IME 候选窗口定位用
-    bool InsertionPoint(Vec2& outDip) const override;
+    // 插入点矩形（光标行：行顶→基线）：IME 候选窗口定位用
+    bool InsertionPoint(Rect& outRect) const override;
+    // 命中时鼠标指针用文本插入光标（I-beam）
+    bool WantsTextCursor() const override { return true; }
 
     // 控件内部事件钩子
     bool HandleKeyDown(KeyEvent& ev) override;
@@ -94,6 +100,7 @@ private:
     void NotifyChanged();
     void RebuildDisplay();
     void ResetBlinkPhase();   // 交互后光标立即可见（重置闪烁相位）
+    void UpdateMaskOffset() const;  // 掩码文本的垂直居中补偿（排版就绪后调用）
 
     // ---- 几何 ----
     Rect  ContentBox() const;                  // 内容盒（绝对 DIP）
@@ -109,11 +116,20 @@ private:
     uint32_t dragAnchor_ = 0;
     bool     dragging_ = false;
     bool     password_ = false;
+    wchar_t  maskChar_ = L'\u2022';  // 密码掩码字符（'•'）
     bool     caretVisible_ = true;   // 光标闪烁相位（false = 隐藏相位）
     float    scrollX_ = 0.f;  // 内容滚动偏移（DIP）
     float    scrollY_ = 0.f;
     float    goalX_ = -1.f;   // 上下移动的目标列（-1 = 未记录）
     mutable void* para_ = nullptr;   // text::Paragraph（pimpl：公共头不引入 dwrite）
+    // 掩码文本的垂直补偿（DIP，负 = 上移）：bullet 类掩码的字形墨迹贴近基线，
+    // 直接绘制会明显偏下；补偿后圆点落在行高中心（与光标条中部对齐）。
+    mutable float maskDy_ = 0.f;
+    mutable float    maskDyCached_ = 0.f;   // 上次算出的补偿（缓存命中时直接复用）
+    // 补偿的缓存键（段落 layout 指针 + 字号 + 掩码字符）：避免每帧重做字形测量
+    mutable void*    maskLayout_ = nullptr;
+    mutable float    maskFontSize_ = 0.f;
+    mutable wchar_t  maskCharUsed_ = 0;
 
     struct Snapshot {
         String   text;

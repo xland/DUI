@@ -91,6 +91,21 @@ public:
             return;
         }
 
+        // 图像元素单独成绘制单元：图像批在批序末尾（矩形 → 字形 → 形状 → 图像），
+        // 若与兄弟元素同单元，图像会盖住后画的文字。独立单元后，单元顺序即
+        // 元素树顺序 → z 序与兄弟元素一致。
+        if (e->GetKind() == Kind::Image) {
+            DrawBackground(e, ctx);      // 背景留在父级单元
+            Commit();
+            painter_ = list_.Acquire();
+            painter_->SetOrigin(origin_.x, origin_.y, scale_);
+            e->OnPaint(*painter_, ctx, scale_);
+            Commit();
+            painter_ = list_.Acquire();
+            painter_->SetOrigin(origin_.x, origin_.y, scale_);
+            return;                      // 图像元素无子元素
+        }
+
         // 内容裁剪（TextBox/TextArea 的文本溢出）：背景仍画在父级单元，
         // 元素自身内容切到新单元（裁剪 = 内容矩形 ∩ 当前裁剪）。
         Rect clipRect{};
@@ -210,9 +225,12 @@ void Application::RenderFrame(Window& window, const platform::NativeWindow& nati
 
     device.Resize(px);
 
+    // 图像纹理同步：脏纹理 → GPU；控件已释放的纹理 → 回收 GPU 资源
+    graphics::TextureStore::Instance().Sync(device);
+
     Element* root = window.Root();
     if (root->SubtreeDirty()) {
-        if (SubtreeLayoutDirty(root)) RunLayout(root, native.ClientSizeDip());
+        if (SubtreeLayoutDirty(root)) RunLayout(root, native.ClientSizeDip(), native.Scale());
         ClearDirtyTree(root);
     }
 
@@ -226,7 +244,9 @@ void Application::RenderFrame(Window& window, const platform::NativeWindow& nati
     static DrawList list;   // Painter 池跨帧复用（热路径零分配）
     list.Begin();
     Collector collector(list, native.Scale(), Rect{0.f, 0.f, px.x, px.y});
-    collector.Collect(root, StyleContext{});
+    StyleContext rootCtx;
+    rootCtx.scale = native.Scale();   // 遍历期 DPI 缩放（图像类控件用）
+    collector.Collect(root, rootCtx);
     collector.Finish();
 
     for (text::AtlasPage& page : atlas.Pages()) {

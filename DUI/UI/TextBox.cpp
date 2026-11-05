@@ -22,7 +22,6 @@ ClipboardReadFn  g_clipRead = nullptr;
 ClipboardWriteFn g_clipWrite = nullptr;
 
 constexpr size_t kMaxUndo = 100;
-constexpr wchar_t kMaskChar = L'\u25CF';   // ●
 constexpr float kMinBoxWidth = 120.f;      // 单行输入框最小自然宽（DIP）
 constexpr float kMinAreaWidth = 200.f;     // 多行输入框最小自然宽（DIP）
 constexpr float kMinAreaHeight = 80.f;     // 多行输入框最小自然高（DIP）
@@ -117,12 +116,55 @@ void TextBox::SetPassword(bool on) {
     MarkDirty(kFlagLayout | kFlagPaint);
 }
 
+void TextBox::SetMaskChar(wchar_t ch) {
+    if (ch == maskChar_) return;
+    maskChar_ = ch;
+    RebuildDisplay();
+    MarkDirty(kFlagLayout | kFlagPaint);
+}
+
 void TextBox::RebuildDisplay() {
     if (!password_) {
         display_ = text_;
         return;
     }
-    display_.assign(text_.size(), kMaskChar);
+    display_.assign(text_.size(), maskChar_);
+}
+
+// 掩码文本的垂直居中补偿（排版就绪后调用）。
+//
+// bullet 类掩码字符（'•'/'●'）的字形墨迹紧贴基线（圆心几乎与基线齐平），
+// 按基线对齐绘制会明显偏下：圆点不在行高中心，与贯穿整行的光标条错位。
+// 做法：量出掩码字形的墨迹中心（相对基线），补偿到**行高中心** —— 与光标条
+// （行顶→行底）的中部一致，也与普通输入框里文字的视觉位置一致。
+void TextBox::UpdateMaskOffset() const {
+    maskDy_ = 0.f;
+    if (!password_) return;
+    auto* para = ParaOf(para_);
+    if (para == nullptr || para->layout == nullptr) return;
+    // 缓存：补偿只取决于字体度量与行几何 → 段落 layout / 字号 / 掩码字符不变则跳过
+    // （否则每帧都要重跑一次字形测量）
+    if (maskLayout_ == para->layout && maskFontSize_ == para->fontSize &&
+        maskCharUsed_ == maskChar_) {
+        maskDy_ = maskDyCached_;
+        return;
+    }
+    maskDyCached_ = 0.f;
+    std::vector<text::LineInfo> lines;
+    text::Engine::Get().LineInfos(para, lines);
+    if (!lines.empty()) {
+        // 目标：行高中心（相对基线，向上为正）
+        const float target = lines[0].baseline - lines[0].height * 0.5f;
+        float ink = 0.f;
+        if (text::Engine::Get().GlyphInkCenterDip(para, maskChar_, ink)) {
+            // 圆心相对基线 = ink；整段下移 dy 后 = ink - dy → 令其等于 target
+            maskDyCached_ = ink - target;
+        }
+    }
+    maskDy_ = maskDyCached_;
+    maskLayout_ = para->layout;
+    maskFontSize_ = para->fontSize;
+    maskCharUsed_ = maskChar_;
 }
 
 void TextBox::NotifyChanged() {
@@ -393,7 +435,8 @@ Rect TextBox::ContentBox() const {
 
 Vec2 TextBox::TextOrigin() const {
     const Rect c = ContentBox();
-    return Vec2{c.x - scrollX_, c.y - scrollY_};
+    // 掩码模式：整段显示文本上移 maskDy_（绘制/命中/光标/IME 共用同一原点）
+    return Vec2{c.x - scrollX_, c.y - scrollY_ + maskDy_};
 }
 
 uint32_t TextBox::HitTestIndex(const Vec2& ptAbs) const {
@@ -435,7 +478,7 @@ void TextBox::EnsureCaretVisible() {
         scrollX_ += (caretX + cr.w - c.Right());
     }
     if (multiline_) {
-        const float caretY = c.y + cr.y - scrollY_;
+        const float caretY = c.y + cr.y - scrollY_ + maskDy_;
         if (caretY < c.y) {
             scrollY_ -= (c.y - caretY);
         } else if (caretY + cr.h > c.Bottom()) {
@@ -467,6 +510,7 @@ Vec2 TextBox::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) 
     }
     para_ = en.Shape(ParaOf(para_), display_.c_str(), ctx.fontSize, weight,
                      ctx.lineHeight, wrapW, ctx.family);
+    UpdateMaskOffset();
     Vec2 size = ParaOf(para_) != nullptr ? ParaOf(para_)->size : Vec2{};
     if (!multiline_) {
         size.x = std::max(size.x, kMinBoxWidth);
@@ -487,6 +531,10 @@ void TextBox::OnFocusChanged(bool focused) {
     // 取得焦点（Tab 进入）：光标置于文本末尾（点击进入时随后由指针事件定位）
     if (focused) {
         if (!HasSelection()) SetCaret(static_cast<uint32_t>(text_.size()));
+    } else {
+        // 失焦 → 清除选区（否则选区底色留在失焦控件上；且不可见的选区会让
+        // 再次聚焦后的 Delete/输入替换掉用户看不见的内容）
+        Deselect();
     }
     caretVisible_ = true;
     MarkDirty(kFlagPaint);   // 光标的显示/隐藏随焦点变化
@@ -507,14 +555,33 @@ void TextBox::ResetBlinkPhase() {
     caretVisible_ = true;
 }
 
-// 插入点（光标底部，客户区 DIP）：IME 候选窗口跟随光标
-bool TextBox::InsertionPoint(Vec2& outDip) const {
+// 插入点矩形（客户区 DIP）：IME 候选窗口跟随光标。
+// 矩形覆盖光标所在行的**整行**（行顶 → 行底）：IME 依系统 caret 的**底边**摆放
+// 候选窗口，若 caret 只有 1px 高（零高度插入点），输入法会把候选窗整体下移一整行
+// （观感：候选窗离光标很远、压在下方面板上）；底边落在行底则候选窗顶边紧贴
+// 本行下沿，不会盖住刚输入的文字。
+bool TextBox::InsertionPoint(Rect& outRect) const {
     auto* para = ParaOf(para_);
     if (para == nullptr) return false;
     Rect cr;
     if (!text::Engine::Get().CaretRect(para, caret_, cr)) return false;
     const Vec2 o = TextOrigin();
-    outDip = Vec2{o.x + cr.x, o.y + cr.y + cr.h};   // 光标底部（候选窗口在其下方）
+
+    float top = cr.y;             // 行顶（兜底：取 caret 自身的 y）
+    float height = cr.h * 0.8f;   // 兜底：行高的经验比例
+    std::vector<text::LineInfo> lines;
+    text::Engine::Get().LineInfos(para, lines);
+    if (!lines.empty()) {
+        const uint32_t idx = std::min(caret_, static_cast<uint32_t>(text_.size()));
+        size_t line = 0;
+        for (size_t i = 0; i < lines.size(); ++i) {
+            if (lines[i].start <= idx) line = i; else break;
+        }
+        top = lines[line].top;
+        height = lines[line].height;   // 覆盖整行 → caret 底边 = 行底
+    }
+    if (!(height > 0.f)) height = cr.h * 0.8f;
+    outRect = Rect{o.x + cr.x, o.y + top, 1.f, height};
     return true;
 }
 

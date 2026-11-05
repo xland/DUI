@@ -11,6 +11,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <memory>
 #include <vector>
 
 #include "Core/Core.h"
@@ -36,6 +37,14 @@ struct GlyphVertex {
 // 同一图集页的连续字形顶点区间（跨页才分批）
 struct GlyphGroup {
     uint32_t page = 0;
+    uint32_t firstVertex = 0;
+    uint32_t vertexCount = 0;
+};
+
+// 同一纹理的连续图像顶点区间（跨纹理才切换 SRV）。顶点格式与字形批相同
+// （pos + uv + color），故复用 GlyphVertex。
+struct ImageGroup {
+    uint32_t texture = 0;
     uint32_t firstVertex = 0;
     uint32_t vertexCount = 0;
 };
@@ -76,6 +85,8 @@ public:
     void FillRoundedRect(const Rect& dipRect, float radiusDip, Color color, float opacity, float scale);
     void AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
                       float u0, float v0, float u1, float v1, Color color);
+    // 图像四边形：把纹理铺满 dipRect（DIP 坐标 + scale，与 FillRoundedRect 同语义）
+    void AddImageQuad(uint32_t texture, const Rect& dipRect, Color color, float scale);
 
     // 形状指令（DIP 坐标 + scale，与 FillRoundedRect 同语义；2D 绘图控件用）
     void StrokeLine(Vec2 p0, Vec2 p1, Color color, float widthDip, float scale);
@@ -90,6 +101,9 @@ public:
     const std::vector<GlyphGroup>& GlyphGroups() const noexcept { return ggroups_; }
     const ShapeVertex* ShapeVertices() const noexcept { return sverts_.data(); }
     uint32_t ShapeQuadCount() const noexcept { return static_cast<uint32_t>(sverts_.size()) / 4; }
+    const GlyphVertex* ImageVertices() const noexcept { return iverts_.data(); }
+    uint32_t ImageQuadCount() const noexcept { return static_cast<uint32_t>(iverts_.size()) / 4; }
+    const std::vector<ImageGroup>& ImageGroups() const noexcept { return igroups_; }
 
 private:
     void PushShapeQuad(float cx, float cy, float hw, float hh,
@@ -100,6 +114,8 @@ private:
     std::vector<GlyphVertex> gverts_;
     std::vector<GlyphGroup> ggroups_;
     std::vector<ShapeVertex> sverts_;
+    std::vector<GlyphVertex> iverts_;      // 图像批（顶点格式同字形批）
+    std::vector<ImageGroup> igroups_;
     float originDipX_ = 0.f, originDipY_ = 0.f;   // 原点偏移（DIP）
     float originPxX_ = 0.f, originPxY_ = 0.f;     // 原点偏移（物理像素）
 };
@@ -131,10 +147,15 @@ public:
     void UploadGlyphPage(uint32_t id, uint32_t w, uint32_t h, const uint8_t* bits);
     void ReleaseGlyphPage(uint32_t id);
 
+    // 图像纹理（BGRA8）：创建或全量更新；控件释放纹理后由 TextureStore 调 Release
+    void UploadImage(uint32_t id, uint32_t w, uint32_t h, const uint8_t* bgra);
+    void ReleaseImage(uint32_t id);
+
 private:
     bool CreateSizeDependent(const Vec2& clientPx, String& error);
     void EnsureVertexBuffer(uint32_t vertexCount);
     ID3D11ShaderResourceView* FindGlyphSrv(uint32_t id);
+    ID3D11ShaderResourceView* FindImageSrv(uint32_t id);
 
     ID3D11Device*           dev_ = nullptr;
     ID3D11DeviceContext*    ctx_ = nullptr;
@@ -157,16 +178,55 @@ private:
     ID3D11VertexShader*     vsS_ = nullptr;
     ID3D11PixelShader*      psS_ = nullptr;
     ID3D11InputLayout*      layoutS_ = nullptr;
+    // 图像管线（彩色纹理采样批；顶点格式同字形批，复用 vsG_/layoutG_）
+    ID3D11PixelShader*      psI_ = nullptr;
+    ID3D11SamplerState*     samplerI_ = nullptr;   // 线性采样（图像缩放需平滑）
     struct GlyphPageTex {
         uint32_t id = 0;
         ID3D11Texture2D* tex = nullptr;
         ID3D11ShaderResourceView* srv = nullptr;
     };
+    struct ImageTex {
+        uint32_t id = 0;
+        ID3D11Texture2D* tex = nullptr;
+        ID3D11ShaderResourceView* srv = nullptr;
+    };
     std::vector<GlyphPageTex> pages_;
+    std::vector<ImageTex> images_;
     uint32_t vbCapacity_ = 0;
     float    width_ = 0.f;
     float    height_ = 0.f;
     Painter  painter_;
+};
+
+// ---------------------------------------------------------------------------
+// 图像纹理仓库（进程级单例）
+//
+//  控件（UI 层 dui::Image）解码图像后登记纹理并持有句柄；App 层每帧调用
+//  Sync()：把脏纹理上传到 GPU，并回收控件已释放的纹理（GPU 资源）。
+//  与字形图集同构：CPU 侧数据在 UI 层，GPU 侧资源在 Graphics 层。
+// ---------------------------------------------------------------------------
+struct ImageTexture {
+    uint32_t id = 0;              // GPU 纹理 id
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint8_t> pixels; // BGRA8（straight alpha），行序自上而下
+    bool dirty = true;            // 待上传
+};
+
+class TextureStore {
+public:
+    static TextureStore& Instance();
+
+    // 登记纹理（CPU 像素已就绪）→ 返回控件持有的句柄
+    std::shared_ptr<ImageTexture> Register(uint32_t w, uint32_t h, std::vector<uint8_t>&& pixels);
+
+    // 每帧同步：上传脏纹理 + 回收控件已释放的纹理
+    void Sync(Device& dev);
+
+private:
+    std::vector<std::shared_ptr<ImageTexture>> textures_;
+    uint32_t nextId_ = 1;
 };
 
 }  // namespace dui::graphics

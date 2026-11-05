@@ -2,7 +2,7 @@
 //  TextInput/main.cpp — 文本输入控件演示（TextBox / 密码框 / TextArea）
 //
 //  演示：
-//    · 单行 TextBox、密码 TextBox（● 掩码）、多行 TextArea（自动换行 + 滚动）
+//    · 单行 TextBox、密码 TextBox（• 掩码）、多行 TextArea（自动换行 + 滚动）
 //    · 焦点与 Tab 链：Tab / Shift+Tab 在可聚焦控件间移动；焦点态由
 //      When(State::Focused, ...) 驱动样式（背景变色）
 //    · 键盘事件：元素级 OnKeyDown / OnChar（冒泡；控件内部行为与外部绑定并存）
@@ -73,7 +73,7 @@ protected:
         name_->OnPointerDown([this](dui::PointerEvent&) { UpdateStatus(); });
 
         // ---- 密码框 ----
-        root->AddChild<dui::Text>(L"密码框（● 掩码；真实文本不变）",
+        root->AddChild<dui::Text>(L"密码框（• 掩码；真实文本不变）",
                                   dui::Style().FontSize(12.f).Color(0xFF6B7280));
         password_ = root->AddChild<dui::TextBox>(InputStyle(360.f, 32.f));
         password_->SetPassword(true);

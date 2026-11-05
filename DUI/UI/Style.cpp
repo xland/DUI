@@ -73,6 +73,7 @@ Style& Style::LineHeight(float multiple)      { return SetF(Prop::LineHeight, mu
 Style& Style::Opacity(float v)                { return SetF(Prop::Opacity, v); }
 Style& Style::SelectionColor(dui::Color c)   { return SetU(Prop::SelectionColor, c); }
 Style& Style::CaretColor(dui::Color c)       { return SetU(Prop::CaretColor, c); }
+Style& Style::Cursor(dui::Cursor v)          { return SetU(Prop::Cursor, static_cast<uint32_t>(v)); }
 Style& Style::Gap(float dip)                  { return SetF(Prop::Gap, dip); }
 
 Style& Style::TrackWidth(float dip)            { return SetF(Prop::ScrollbarTrackWidth, dip); }

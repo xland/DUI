@@ -43,6 +43,7 @@ struct LineInfo {
     uint32_t end = 0;      // 行尾字符索引（不含换行符）
     float    top = 0.f;    // 行顶（相对排版原点，DIP）
     float    height = 0.f; // 行高（DIP）
+    float    baseline = 0.f;  // 基线（相对行顶，DIP）—— IME 候选窗口对齐点
 };
 
 class Engine {
@@ -79,6 +80,11 @@ public:
     void SelectionRects(Paragraph* p, uint32_t start, uint32_t end, std::vector<Rect>& out);
     // 全部行的字符区间与几何（一次遍历）
     void LineInfos(Paragraph* p, std::vector<LineInfo>& out);
+
+    // 单字符的**墨迹中心**（相对基线，DIP，向上为正）：掩码字符垂直居中补偿用。
+    // bullet 类字符（•/●）的字形墨迹贴着基线，直接绘制会明显偏下；测量后
+    // 可把圆点补偿到行高中心。字体缺该字形或度量失败 → 返回 false。
+    bool GlyphInkCenterDip(Paragraph* p, wchar_t ch, float& outCenterDip);
 
 private:
     Engine();

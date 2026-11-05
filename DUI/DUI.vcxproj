@@ -82,12 +82,14 @@
     <ClInclude Include="UI\Panel.h" />
     <ClInclude Include="UI\Text.h" />
     <ClInclude Include="UI\TextBox.h" />
+    <ClInclude Include="UI\Image.h" />
     <ClInclude Include="UI\Focus.h" />
     <ClInclude Include="UI\Canvas.h" />
     <ClInclude Include="UI\Scroller.h" />
     <ClInclude Include="App\App.h" />
     <ClInclude Include="Platform\Window.h" />
     <ClInclude Include="Graphics\Graphics.h" />
+    <ClInclude Include="Graphics\ImageCodec.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Core\Dispatcher.cpp" />
@@ -97,6 +99,7 @@
     <ClCompile Include="UI\Element.cpp" />
     <ClCompile Include="UI\Text.cpp" />
     <ClCompile Include="UI\TextBox.cpp" />
+    <ClCompile Include="UI\Image.cpp" />
     <ClCompile Include="UI\Focus.cpp" />
     <ClCompile Include="UI\Canvas.cpp" />
     <ClCompile Include="UI\Scroller.cpp" />
@@ -107,6 +110,7 @@
     <ClCompile Include="App\Frame.cpp" />
     <ClCompile Include="Platform\Window.cpp" />
     <ClCompile Include="Graphics\Graphics.cpp" />
+    <ClCompile Include="Graphics\ImageCodec.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

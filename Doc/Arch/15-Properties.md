@@ -64,6 +64,15 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `selectionColor` | Color | ✗ | Paint | ✓ | 半透明蓝 `0x803399FF` | 选区底色；链式方法 `SelectionColor()` |
 | `caretColor` | Color | ✗ | Paint | ✓ | 取 `color`（文本色） | 光标色；链式方法 `CaretColor()` |
 
+### 4.1.2 指针形态（鼠标光标；语义同 CSS 的 cursor，运行时已接入）
+
+| 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `cursor` | Enum（`dui::Cursor`） | ✓ | 无（不影响布局/绘制） | ✗ | Arrow | `Arrow / IBeam / Hand / Wait / Crosshair / Move / SizeAll / NotAllowed / Help`；链式方法 `Cursor()` |
+
+- **生效条件**：指针位于该元素上时（命中链就近者胜；元素未指定则沿链取父级的，同 CSS 的 `cursor` 继承）。不需要 hover 变体 —— 指针不在元素上时任何形态都不可见。
+- 只能在 `WM_SETCURSOR` 里设置（系统每次鼠标移动后把光标重置为箭头）；`WM_SETCURSOR` 的 lParam 坐标不可靠，须 `GetCursorPos` + `ScreenToClient`。
+
 ### 4.2 盒模型与尺寸
 
 | 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |

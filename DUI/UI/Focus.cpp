@@ -104,9 +104,9 @@ bool DispatchBlink() {
     return g_focus->OnBlink();
 }
 
-bool QueryInsertionPoint(Vec2& outDip) {
+bool QueryInsertionPoint(Rect& outRect) {
     if (g_focus == nullptr) return false;
-    return g_focus->InsertionPoint(outDip);
+    return g_focus->InsertionPoint(outRect);
 }
 
 }  // namespace dui

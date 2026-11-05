@@ -10,4 +10,5 @@
   <Project Path="Samples/CustomFont/CustomFont.vcxproj" Id="6e4b8d52-3a91-4c07-b5f8-9d2e1a6c0f43" />
   <Project Path="Samples/PointerEvents/PointerEvents.vcxproj" Id="b2f45d7c-8a13-4e62-9f05-7c3d8e1a4b26" />
   <Project Path="Samples/TextInput/TextInput.vcxproj" Id="c7e1d5a4-3b62-4f18-9a05-6d2e8b4c1f37" />
+  <Project Path="Samples/Image/Image.vcxproj" Id="7c1d5b30-4a92-4f61-9d3e-2b8f6a1c04e7" />
 </Solution>

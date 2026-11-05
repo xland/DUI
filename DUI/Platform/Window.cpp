@@ -106,6 +106,10 @@ Vec2 NativeWindow::ClientSizeDip() const {
     return {px.x / scale_, px.y / scale_};
 }
 
+bool NativeWindow::IsMinimized() const noexcept {
+    return hwnd_ != nullptr && ::IsIconic(hwnd_) != FALSE;
+}
+
 Vec2 NativeWindow::DipFromLParam(LPARAM lp) const noexcept {
     const float x = static_cast<short>(LOWORD(lp));
     const float y = static_cast<short>(HIWORD(lp));
@@ -129,8 +133,12 @@ void NativeWindow::StopTimer(uintptr_t id) {
 // Win32 的标准机制，且对现代 TSF 输入法同样有效（无 TSF 上下文时走 IMM
 // 兼容路径，仍读 caret）。
 //
-// 我们自绘光标，故另建一个**隐形**系统 caret：1×1 单色位图（全 0 = 完全
+// 我们自绘光标，故另建一个**隐形**系统 caret：1×N 单色位图（全 0 = 完全
 // 透明），只用于向 IME 报告插入点，不会出现双光标。
+//
+// 高度 = 光标所在行「行顶 → 基线」：IME 依 caret 的**底边**摆放候选窗口；
+// caret 只有 1px 高（零高度插入点）时，输入法会把候选窗整体下移一整行，
+// 表现为候选窗口离光标很远、压在下方面板上。
 //
 // 注意：不要在 IME 消息处理期间调用 ImmGetContext/ImmReleaseContext —— 那会
 // 重建输入上下文，打断正在进行的组合（表现为"中文打不出来"）。
@@ -138,10 +146,11 @@ void NativeWindow::StopTimer(uintptr_t id) {
 
 void NativeWindow::EnsureImeCaret() {
     if (caretBmp_ != nullptr) return;
-    // 1×1 单色位图：像素 0 = 透明（画背景色），非 0 = 前景色 → 全 0 即不可见
+    const int h = caretHeight_ > 0 ? caretHeight_ : 1;
+    // 1×h 单色位图：像素 0 = 透明（画背景色），非 0 = 前景色 → 全 0 即不可见
     HDC mem = CreateCompatibleDC(nullptr);
     if (mem == nullptr) return;
-    caretBmp_ = CreateBitmap(1, 1, 1, 1, nullptr);
+    caretBmp_ = CreateBitmap(1, h, 1, 1, nullptr);
     if (caretBmp_ != nullptr) {
         HGDIOBJ old = SelectObject(mem, caretBmp_);
         SetPixel(mem, 0, 0, RGB(0, 0, 0));   // 索引 0 = 透明
@@ -150,10 +159,19 @@ void NativeWindow::EnsureImeCaret() {
     }
     DeleteDC(mem);
     if (caretBmp_ == nullptr) return;
-    ::CreateCaret(hwnd_, caretBmp_, 1, 1);
+    ::CreateCaret(hwnd_, caretBmp_, 1, h);
 }
 
-void NativeWindow::UpdateImeCaretPos(int pxX, int pxY) {
+void NativeWindow::UpdateImeCaretPos(int pxX, int pxY, int pxHeight) {
+    if (pxHeight < 1) pxHeight = 1;
+    if (caretBmp_ != nullptr && pxHeight != caretHeight_) {
+        // 高度变了 → 位图与 caret 都要重建（位图尺寸决定 caret 高度）
+        ::DestroyCaret();
+        DeleteObject(caretBmp_);
+        caretBmp_ = nullptr;
+        caretHeight_ = 0;
+    }
+    caretHeight_ = pxHeight;
     EnsureImeCaret();
     ::SetCaretPos(pxX, pxY);   // 客户区物理像素；无输入焦点时失败（下次事件会补）
 }
@@ -163,6 +181,11 @@ void NativeWindow::RemoveImeCaret() {
     ::DestroyCaret();
     DeleteObject(caretBmp_);
     caretBmp_ = nullptr;
+    caretHeight_ = 0;
+}
+
+void NativeWindow::SetCursorShape(LPCWSTR idc) const {
+    ::SetCursor(::LoadCursorW(nullptr, idc));
 }
 
 LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -187,11 +210,27 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         case WM_SIZE:
             if (wp != SIZE_MINIMIZED) self->host_->OnResized();
             return 0;
+        case WM_ACTIVATE:
+            // 窗口激活状态：失活（切到别的应用）→ 上层让编辑控件失焦，光标停闪
+            self->host_->OnActivated(LOWORD(wp) != WA_INACTIVE);
+            return 0;
         case WM_MOUSEMOVE: {
             TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
             TrackMouseEvent(&tme);
             self->host_->OnPointerMove(self->DipFromLParam(lp));
             return 0;
+        }
+        case WM_SETCURSOR: {
+            // 指针形态：系统每次鼠标移动后都会发 WM_SETCURSOR 并把光标重置为
+            // 箭头 —— 要显示 I-beam 必须在消息里设置。
+            // 注意：lParam 里的坐标不可靠（实测取到的是负值 → 命中测试失败），
+            // 一律用 GetCursorPos 取屏幕坐标再换算到客户区。
+            POINT sp{};
+            ::GetCursorPos(&sp);
+            ::ScreenToClient(hwnd, &sp);
+            const float s = self->scale_;
+            if (self->host_->OnSetCursor(Vec2{sp.x / s, sp.y / s})) return TRUE;
+            break;
         }
         case WM_MOUSELEAVE:
             self->host_->OnPointerLeave();

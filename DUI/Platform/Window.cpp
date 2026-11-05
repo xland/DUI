@@ -8,6 +8,11 @@
 #include "Platform/Window.h"
 
 #include <cstring>
+#include <dwmapi.h>
+
+// DWM 是系统库（不在 MSVC 默认链接列表里）→ 随本编译单元携带链接指令，
+// 不必改根目录 DUI.props 的公共编译基线。
+#pragma comment(lib, "dwmapi.lib")
 
 namespace dui::platform {
 
@@ -15,17 +20,46 @@ namespace {
 
 constexpr wchar_t kClassName[] = L"DUI_Window_v1";
 
-constexpr DWORD kStyle = WS_OVERLAPPEDWINDOW;   // Chrome::System；Borderless 为 M5
+// Chrome::System：系统标题栏 + 边框
+constexpr DWORD kStyleSystem = WS_OVERLAPPEDWINDOW;
+// Chrome::Borderless：无系统边框（标题栏/边框自绘）。
+//   · WS_THICKFRAME 保留 → 配合 WM_NCHITTEST 返回 HT* 可由系统接管缩放；
+//   · WS_POPUP 无标题栏 → 无系统标题栏可盖，客户区由 WM_NCCALCSIZE 扩到整窗；
+//   · 保留 SYSMENU/MINIMIZEBOX/MAXIMIZEBOX → 任务栏按钮与 Alt+F4 正常。
+constexpr DWORD kStyleBorderless = WS_POPUP | WS_THICKFRAME | WS_SYSMENU |
+                                    WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+// WS_POPUP 默认不进任务栏 → 补 WS_EX_APPWINDOW
+constexpr DWORD kExStyleBorderless = WS_EX_APPWINDOW;
 
-// 客户区 DIP → 含非客户区的整窗物理矩形
-RECT OuterRectForDip(float widthDip, float heightDip, UINT dpi) {
-    const float s = static_cast<float>(dpi) / 96.0f;
+// 无边框窗口的 DWM 阴影 / 圆角 / 去系统边框色
+void ApplyDwmFrame(HWND hwnd) {
+    // 把"边框"扩展给 DWM：负边距 = 四周各扩展 1px → DWM 在窗口外侧画投影。
+    // （WS_POPUP 窗口本身没有系统阴影，靠这个扩展边框拿到。）
+    MARGINS margins{-1, -1, -1, -1};
+    DwmExtendFrameIntoClientArea(hwnd, &margins);
+
+    // Win11：圆角 + 去掉系统 1px 边框色（属性值在 Win10 SDK 无常量，手写）
+    const DWORD kCornerPreference = 33;   // DWMWA_WINDOW_CORNER_PREFERENCE
+    const int kRound = 2;                 // DWMWCP_ROUND
+    DwmSetWindowAttribute(hwnd, kCornerPreference, &kRound, sizeof(kRound));
+    const DWORD kBorderColor = 34;        // DWMWA_BORDER_COLOR
+    const COLORREF kColorNone = 0xFFFFFFFE;   // DWMWA_COLOR_NONE
+    DwmSetWindowAttribute(hwnd, kBorderColor, &kColorNone, sizeof(kColorNone));
+}
+
+// 客户区 DIP → 窗口物理矩形
+//   系统边框窗口：AdjustWindowRectExForDpi 把系统标题栏/边框补进来，
+//   客户区尺寸仍等于用户请求的 DIP 尺寸。
+//   无边框窗口：客户区覆盖整窗（WM_NCCALCSIZE 处理），故**不做**边框补偿 ——
+//   补了会让整窗比请求尺寸大出一圈（左右各 8px），业务按 DIP 布局就会错位。
+RECT OuterRectForDip(float widthDip, float heightDip, UINT dpi, DWORD style, bool borderless) {
     RECT rc{
         0, 0,
-        static_cast<LONG>(widthDip * s + 0.5f),
-        static_cast<LONG>(heightDip * s + 0.5f),
+        static_cast<LONG>(widthDip * (static_cast<float>(dpi) / 96.0f) + 0.5f),
+        static_cast<LONG>(heightDip * (static_cast<float>(dpi) / 96.0f) + 0.5f),
     };
-    AdjustWindowRectExForDpi(&rc, kStyle, FALSE, 0, dpi);   // Win10 1607+，基线 1703（ADR-009）
+    if (borderless) return rc;
+    AdjustWindowRectExForDpi(&rc, style, FALSE, 0, dpi);   // Win10 1607+，基线 1703（ADR-009）
     return rc;
 }
 
@@ -62,15 +96,19 @@ bool NativeWindow::EnsureClassRegistered(String& error) {
 }
 
 bool NativeWindow::Create(const wchar_t* title, float widthDip, float heightDip,
-                          NativeWindowHost& host, String& error) {
+                          NativeWindowHost& host, String& error, bool borderless) {
     if (!EnsureClassRegistered(error)) return false;
 
     host_ = &host;
+    borderless_ = borderless;
+
+    const DWORD style = borderless ? kStyleBorderless : kStyleSystem;
+    const DWORD exStyle = borderless ? kExStyleBorderless : 0;
 
     // 先按 96dpi 占位尺寸创建（隐藏），拿到真实显示器 DPI 后再定最终尺寸，
     // 中间过程不可见（App.h OnCreate 契约：构建期间窗口不可见）。
-    const RECT initial = OuterRectForDip(widthDip, heightDip, 96);
-    hwnd_ = CreateWindowExW(0, kClassName, title, kStyle,
+    const RECT initial = OuterRectForDip(widthDip, heightDip, 96, style, borderless);
+    hwnd_ = CreateWindowExW(exStyle, kClassName, title, style,
                             CW_USEDEFAULT, CW_USEDEFAULT,
                             initial.right - initial.left, initial.bottom - initial.top,
                             nullptr, nullptr, GetModuleHandleW(nullptr), this);
@@ -83,9 +121,12 @@ bool NativeWindow::Create(const wchar_t* title, float widthDip, float heightDip,
     const UINT dpi = GetDpiForWindow(hwnd_);
     scale_ = static_cast<float>(dpi) / 96.0f;
 
-    const RECT rc = OuterRectForDip(widthDip, heightDip, dpi);
+    const RECT rc = OuterRectForDip(widthDip, heightDip, dpi, style, borderless);
     SetWindowPos(hwnd_, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+    // 无边框：阴影 / 圆角由 DWM 提供（WS_POPUP 没有系统阴影）
+    if (borderless) ApplyDwmFrame(hwnd_);
 
     host.OnNativeCreated(hwnd_, scale_);
     return true;
@@ -93,6 +134,22 @@ bool NativeWindow::Create(const wchar_t* title, float widthDip, float heightDip,
 
 void NativeWindow::Show() {
     if (hwnd_) ShowWindow(hwnd_, SW_SHOW);
+}
+
+void NativeWindow::Minimize() {
+    if (hwnd_) ::ShowWindow(hwnd_, SW_MINIMIZE);
+}
+
+void NativeWindow::MaximizeOrRestore() {
+    if (hwnd_) ::ShowWindow(hwnd_, IsZoomed(hwnd_) ? SW_RESTORE : SW_MAXIMIZE);
+}
+
+void NativeWindow::RequestClose() {
+    if (hwnd_) ::PostMessageW(hwnd_, WM_CLOSE, 0, 0);
+}
+
+bool NativeWindow::IsMaximized() const {
+    return hwnd_ != nullptr && ::IsZoomed(hwnd_) != FALSE;
 }
 
 Vec2 NativeWindow::ClientSizePx() const {
@@ -214,6 +271,50 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             // 窗口激活状态：失活（切到别的应用）→ 上层让编辑控件失焦，光标停闪
             self->host_->OnActivated(LOWORD(wp) != WA_INACTIVE);
             return 0;
+        case WM_NCCALCSIZE: {
+            // 无边框窗口：客户区覆盖整个窗口矩形（不做系统边框扣减）。
+            //   WM_NCCALCSIZE(wParam=TRUE) 的 rgrc[0] **入参是系统建议的新窗口
+            //   矩形**，出参才是客户区矩形；rgrc[1] 是**上一次**的窗口矩形。
+            //   因此"无边框"只需原样保留 rgrc[0] 并返回 0（不调用 DefWindowProc
+            //   去扣边框）—— 绝不能写 rgrc[0] = rgrc[1]：那会把客户区设成旧尺寸，
+            //   最小化后还原时 rgrc[1] 正是离屏的图标矩形（-32000,…，199×34），
+            //   客户区被压成 199×34 → 内容画不进去，窗口一片空白。
+            if (wp && self->borderless_) {
+                return 0;   // 原样保留 rgrc[0] → 客户区 = 整个窗口矩形
+            }
+            break;
+        }
+        case WM_GETMINMAXINFO: {
+            // 无边框窗口最大化：系统默认把窗口放到比工作区还大（边框外扩），
+            // 底边/右边被屏幕切掉 → 手动约束到工作区（最大化后内容正好铺满）。
+            if (self->borderless_) {
+                const HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi{sizeof(mi)};
+                if (GetMonitorInfoW(mon, &mi)) {
+                    auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
+                    // ptMaxPosition 相对显示器原点；ptMaxSize = 工作区尺寸
+                    mmi->ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
+                    mmi->ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
+                    mmi->ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
+                    mmi->ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
+                }
+                return 0;
+            }
+            break;
+        }
+        case WM_NCHITTEST: {
+            // 非客户区命中：上层把"标题栏 / 边框热区"报给系统，由系统接管
+            // 拖标题栏移动窗口、拖边框缩放 —— 业务不必自己处理鼠标与移动逻辑。
+            // lParam 是屏幕坐标 → 客户区 DIP。
+            const int sx = static_cast<int>(static_cast<short>(LOWORD(lp)));
+            const int sy = static_cast<int>(static_cast<short>(HIWORD(lp)));
+            POINT sp{sx, sy};
+            ScreenToClient(hwnd, &sp);
+            const float s = self->scale_;
+            int hit = HTCLIENT;
+            if (self->host_->OnNcHitTest(Vec2{sp.x / s, sp.y / s}, hit)) return hit;
+            break;   // 未命中热区 → 默认命中测试
+        }
         case WM_MOUSEMOVE: {
             TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
             TrackMouseEvent(&tme);

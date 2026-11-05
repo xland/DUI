@@ -1,11 +1,13 @@
 # DUI 开发任务清单（Todo）
 
-> 最后更新：2026-11-04。
+> 最后更新：2026-11-05。
 > 当前进度：**M5 已完成**（DirectWrite 真实文字渲染 + 灰度字形图集 + DPI 切换分级失效）；
 > **M5.5 已完成**（2D 绘图控件 `dui::Canvas` + Graphics 形状批 + `Samples/Canvas` 示例）；
 > **M5.6 已完成**（滚动容器 `dui::Scroller`：横纵滚动条 + 绘制单元裁剪 + `Samples/Scroller` 示例）；
 > **M5.7/M5.8/M5.9 已完成**（自定义字体 + FlexWrap + 样式 API 合并 / 元素级指针事件 /
-> 键盘事件 + 焦点 Tab 链 + `dui::TextBox`/`dui::TextArea`）。
+> 键盘事件 + 焦点 Tab 链 + `dui::TextBox`/`dui::TextArea`）；
+> **M5.10/M5.11 已完成**（图像控件 `dui::Image` / 无边框窗口与自定义标题栏
+> `Chrome::Borderless` + `Samples/CustomFrame`）。
 > 示例已由 Samples（三栏阅读器 / 单选列表）**替换为 HelloWorld**（居中文字最小示例），
 > 旧示例的交互验收描述见各里程碑历史记录。构建产物统一迁入 `Build\`（见 §0）。
 > 从 **M6** 开始。本文档自包含：环境、约定、每阶段的步骤与验收标准都在这里。
@@ -643,13 +645,84 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
     会把它压扁（跨轴比例失真）。三处处理：`Kind::Image` 子项未显式给该轴尺寸时交叉轴用
     自然尺寸；图像从主轴收缩计算中排除；`Image::OnPaint` 按 contain 等比缩放 + 居中。
   - 踩坑：**命令行 msbuild 全量重建会刷 LNK4020**（"pdb 类型记录已损坏"）—— `/MP` 多进程
-    编译 + `/Zi` 缺 `/FS` 所致；VS 内构建由 `Microsoft.CppCommon.targets` 在 MultiProcCL
-    下自动加 `/FS`，所以 VS 里看不到。规避：命令行加 `-p:AdditionalOptions=/FS`
-    （不改 `DUI.props` 的公共编译基线）。另：不要用 `-p:OutDir=...` 覆盖构建（会把 obj 与
-    pdb 写散，引发 IPDB/IOBJ mismatch）。
+    编译 + `/Zi` 缺 `/FS` 所致；VS 内构建由 `Microsoft.CppCommon.targets` 在 `UseMultiToolTask`
+    为真时自动加 `/FS`，所以 VS 里看不到。规避：命令行加 `-p:UseMultiToolTask=true`
+    （等价于 VS 内构建；`-p:AdditionalOptions=/FS` 对并行编译**无效**，因为它是全局属性、
+    进不了 ClCompile 的项元数据）。不改 `DUI.props` 的公共编译基线。另：不要用
+    `-p:OutDir=...` 覆盖构建（会把 obj 与 pdb 写散，引发 IPDB/IOBJ mismatch）。
 - Debug + Release 全量重建零警告。
 
 参考：`06-Events §3.3/§6`、`15-Properties §4.1.1`、`11-Text`。
+
+---
+
+## M5.11 — 无边框窗口与自定义标题栏 ✅（2026-11-05 完成）
+
+**目标**：支持 `Chrome::Borderless`（无系统边框）—— DWM 阴影、自绘标题栏、拖标题栏移动窗口、
+拖边框缩放窗口。
+
+完成情况与实现说明：
+- **窗口形态声明**（`DUI/App/App.h`）：`WindowOptions.chrome`（`Chrome::System` /
+  `Chrome::Borderless`）→ App 层建窗时传给平台层。
+- **平台层（`DUI/Platform/Window.cpp`）**：
+  - 无边框样式 `WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX`
+    + `WS_EX_APPWINDOW`（`WS_THICKFRAME` 必须保留 —— `HTLEFT` 等缩放命中码靠它生效）。
+  - **DWM 阴影**：`DwmExtendFrameIntoClientArea(hwnd, {-1,-1,-1,-1})`（边框外扩 1px →
+    DWM 在窗口外侧画投影）；Win11 另设圆角 `DWMWA_WINDOW_CORNER_PREFERENCE=33` 与
+    去边框色 `DWMWA_BORDER_COLOR=34`（Win10 SDK 无常量，手写）。
+    `#pragma comment(lib, "dwmapi.lib")` 随编译单元携带（不动 `DUI.props` 公共基线）。
+  - **`WM_NCCALCSIZE`**：无边框时**原样保留 `rgrc[0]` 返回 0**（`wParam=TRUE` 时入参
+    `rgrc[0]` = 系统建议的新窗口矩形、出参 = 客户区矩形；不调 `DefWindowProc` 扣边框
+    → 客户区 = 整窗）。否则 `WS_THICKFRAME` 的系统边框会在内容外留一圈非客户区，
+    边框色被设为"无"时那圈透出桌面。**不能写 `rgrc[0] = rgrc[1]`** —— `rgrc[1]` 是
+    **上一次**的窗口矩形（详见下方踩坑）。
+  - **尺寸语义**：无边框时 `width/height` 就是**整窗**尺寸，**不做** `AdjustWindowRect`
+    边框补偿（补了整窗会大出左右各 8px，业务按 DIP 布局就错位）。
+  - **`WM_GETMINMAXINFO`**：最大化时把 `ptMaxPosition`/`ptMaxSize` 约束到工作区 ——
+    否则系统把窗口放到比工作区还大（边框外扩），底边/右边被屏幕切掉。
+  - **`WM_NCHITTEST`**：屏幕坐标 → 客户区 DIP → 上抛业务；返回 `HTCAPTION`/`HT*`，
+    **移动与缩放全部由系统接管**，业务不处理鼠标与窗口几何。
+- **App 层（`DUI/App/App.h/.cpp`）**：
+  - `Window::OnNcHitTest(Vec2, HitTestCode&)`（业务重写，报标题栏/边框热区）；
+    `HitTestCode` 枚举与 Win32 `HT*` 一一对应（公共头不带 windows.h，故自定义）。
+  - `Window::OnStateChanged()`（尺寸/最大化还原变化 → 业务换自绘按钮图标）；
+  - `Window::Minimize / MaximizeOrRestore / Close / IsMaximized / ClientSizeDip()`。
+- **配套示例** `Samples/CustomFrame`：自绘标题栏 + iconfont 图标按钮（最小化 / 最大化或还原 /
+  关闭）+ 阴影 + 拖标题栏移动 + **拖四边 / 四角缩放**；字体文件随构建拷到 exe 目录。
+- **踩坑**：
+  - **缩放热区必须先于标题栏判定** —— 上边这条窄带压在标题栏上，若先判 `HTCAPTION`，
+    上边与左上 / 右上角全都只能移动窗口、不能缩放（用户实测反馈）。正确顺序：
+    四边四角 `HT*` → 按钮区 `HTCLIENT` → 标题栏其余 `HTCAPTION` → 内容区 `HTCLIENT`。
+    热区之外显式返回 `HTCLIENT`（别 `return false` 落到 `DefWindowProc`，否则
+    `WS_THICKFRAME` 会在最外圈另报一套 `HT*`，最大化时误触缩放）。
+  - **标题栏按钮区必须排除在 `HTCAPTION` 热区之外** —— 命中标题栏的点击被系统当成
+    "拖标题栏"，按钮收不到 `WM_LBUTTONDOWN`，永远点不动。按钮区让出最上面
+    `kResizeBorder`（8 DIP）给上边 / 右上角缩放（原生窗口同理），其余部分返回
+    `HTCLIENT` 照常可点。
+  - `MINMAXINFO` **没有** `rcWork`/`rcWindow` 字段（那是 `MONITORINFO` 的）→
+    `WM_GETMINMAXINFO` 要设 `ptMaxPosition`/`ptMaxSize`。
+  - 拖边框缩放时 Windows 进入模态循环（主消息循环挂起、`WM_SIZE` 连续到达）→ 框架在
+    `OnResized` 里就地渲染，否则内容不跟手。
+  - 最大化后 `IsMaximized()` 为真 → 缩放热区需自行禁用。
+  - `Style().FontFamily` 只存指针 → iconfont 族名串必须长期存活（static 局部变量）。
+  - **最小化 → 还原后窗口一片空白**（无边框窗口特有）：最初误判为"DXGI flip model 在
+    最小化时释放后台缓冲、缓存的 RTV 失效"→ 加 `Device::Resize(force)` 强制重建，
+    实测**无效**（已回退，公共代码恢复原样）。真实原因是 `WM_NCCALCSIZE` 里写了
+    `rgrc[0] = rgrc[1]`：还原时 `rgrc[1]` 是最小化的**离屏图标矩形**
+    （实测 `in1=(-32000,-32000,-31801,-31966)`，199×34 物理像素），客户区被压成
+    199×34 → `WM_SIZE` 的 lParam 与 `GetClientRect()` 都报 199×34、交换链也缩到
+    199×34，渲染出的画面是一片白。且之后**不会再有** `WM_SIZE`，靠"还原后强制再画
+    一帧"补不回来。修法：原样保留 `rgrc[0]` 返回 0。
+    诊断手段：临时日志打印 `WM_NCCALCSIZE` 的 `rgrc[0]/rgrc[1]`、
+    `WM_WINDOWPOSCHANGED` 的窗口/客户矩形、`WM_SIZE` 的 lParam，配合
+    PowerShell `ShowWindow(SW_MINIMIZE/SW_RESTORE)` + 屏幕截图对比还原前后。
+- **已知限制**（后续项）：
+  - 标题栏双击最大化未实现（框架暂无双击事件）；
+  - 阴影依赖 DWM 合成（无 DWM 的环境不可见），阴影样式不可定制；
+  - 缩放热区会占用客户区边缘几像素，布局需留余量。
+- Debug + Release 全量重建零警告。
+
+参考：`12-Windowing §6.1`、`06-Events §3`（点击冒泡）。
 
 ---
 

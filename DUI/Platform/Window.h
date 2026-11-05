@@ -43,6 +43,10 @@ public:
     virtual void OnChar(wchar_t ch) = 0;
     // 指针形态（WM_SETCURSOR）：返回 true 表示上层已设置光标（不再走默认箭头）
     virtual bool OnSetCursor(Vec2 ptDip) { (void)ptDip; return false; }
+    // 非客户区命中（WM_NCHITTEST）：ptDip = 客户区 DIP；返回 true 表示上层已判定
+    // 命中区（hit 取 HTCAPTION / HTLEFT 等），系统据此接管"拖标题栏移动 /
+    // 拖边框缩放"。仅 Borderless 模式有意义。
+    virtual bool OnNcHitTest(Vec2 ptDip, int& hit) { (void)ptDip; (void)hit; return false; }
     // 定时器节拍（WM_TIMER；id 由上层分配并自行管理）
     virtual void OnTimer(uintptr_t id) { (void)id; }
     // 窗口获得/失去激活（WM_ACTIVATE）：上层据此让编辑控件失焦（光标停止闪烁）
@@ -64,13 +68,22 @@ public:
 
     // 创建（保持隐藏）→ 按窗口所在显示器 DPI 定最终尺寸 → OnNativeCreated。
     // 失败时返回 false 并填 error（无异常约定，ADR-007）。
+    // borderless = true → 无系统边框（WS_POPUP）+ DWM 阴影，业务自绘标题栏。
+    //   注意：无边框时 widthDip/heightDip 就是**整窗**尺寸（客户区覆盖全窗，
+    //   WM_NCCALCSIZE 处理），不再做 AdjustWindowRect 边框补偿。
     bool Create(const wchar_t* title, float widthDip, float heightDip,
-                NativeWindowHost& host, String& error);
+                NativeWindowHost& host, String& error, bool borderless = false);
 
     void Show();
     bool Valid() const noexcept { return hwnd_ != nullptr; }
     HWND Handle() const noexcept { return hwnd_; }
     float Scale() const noexcept { return scale_; }
+
+    // 窗口操作（无边框窗口的自绘标题栏按钮需要）
+    void Minimize();                // 最小化
+    void MaximizeOrRestore();       // 最大化 / 从最大化还原
+    void RequestClose();            // 请求关闭（走 WM_CLOSE → 业务可拦截）
+    bool IsMaximized() const;       // 当前是否最大化
 
     // 窗口定时器（上层按需启停；节拍经 NativeWindowHost::OnTimer 上抛）
     void StartTimer(uintptr_t id, unsigned ms);
@@ -100,6 +113,7 @@ private:
 
     HWND  hwnd_ = nullptr;
     float scale_ = 1.f;
+    bool   borderless_ = false;   // 无边框（业务自绘标题栏与边框）
     NativeWindowHost* host_ = nullptr;
     HBITMAP caretBmp_ = nullptr;   // 隐形系统 caret 的位图（1×N 全透明）
     int caretHeight_ = 0;         // 当前 caret 位图高度（变化时重建）

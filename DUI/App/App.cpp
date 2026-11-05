@@ -192,6 +192,16 @@ public:
 
     // 指针形态：命中链就近者胜 —— 元素指定了 cursor 就用它；没指定则沿链向上取
     // 父级的（与 CSS 的 cursor 继承同效）；都没指定再看是否为编辑控件（I-beam）。
+    // 非客户区命中：转发给业务（Chrome::Borderless 的标题栏 / 边框热区）
+    bool OnNcHitTest(Vec2 pt, int& hit) override {
+        HitTestCode code = HitTestCode::Client;
+        if (!window_.OnNcHitTest(pt, code)) return false;
+        hit = static_cast<int>(code);
+        return true;
+    }
+
+    // 指针形态：命中链就近者胜 —— 元素指定了 cursor 就用它；没指定则沿链向上取
+    // 父级的（与 CSS 的 cursor 继承同效）；都没指定再看是否为编辑控件（I-beam）。
     bool OnSetCursor(Vec2 pt) override {
         Element* hit = HitTest(window_.Root(), pt);
         for (Element* e = hit; e != nullptr; e = e->Parent()) {
@@ -218,6 +228,7 @@ public:
         // 拖拽边框期间 Windows 在模态循环里连续派发 WM_SIZE，主消息循环被挂起，
         // framePending 要等拖拽结束才被消费 —— 帧必须就地渲染，内容才能实时变化
         Application::RenderFrame(window_, native_, device_);
+        window_.OnStateChanged();            // 尺寸 / 最大化状态变化（业务自绘按钮用）
     }
 
     // 窗口激活状态变化：失活 → 焦点离开窗口（编辑控件失焦，光标停止闪烁）。
@@ -265,6 +276,33 @@ Window::~Window() = default;
 void* Window::NativeHandle() const noexcept {
     if (native_ == nullptr) return nullptr;
     return static_cast<void*>(static_cast<platform::NativeWindow*>(native_)->Handle());
+}
+
+// 窗口操作（无边框窗口的自绘标题栏按钮）
+void Window::Minimize() {
+    auto* native = static_cast<platform::NativeWindow*>(native_);
+    if (native != nullptr) native->Minimize();
+}
+
+void Window::MaximizeOrRestore() {
+    auto* native = static_cast<platform::NativeWindow*>(native_);
+    if (native != nullptr) native->MaximizeOrRestore();
+}
+
+void Window::Close() {
+    auto* native = static_cast<platform::NativeWindow*>(native_);
+    if (native != nullptr) native->RequestClose();
+}
+
+bool Window::IsMaximized() const {
+    auto* native = static_cast<platform::NativeWindow*>(native_);
+    return native != nullptr && native->IsMaximized();
+}
+
+Vec2 Window::ClientSizeDip() const {
+    auto* native = static_cast<platform::NativeWindow*>(native_);
+    if (native == nullptr) return {};
+    return native->ClientSizeDip();
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +371,8 @@ int Application::Run(Window& window) {
 
     // 建 HWND（隐藏、按显示器 DPI 定尺寸）
     if (!native.Create(window.options_.title, window.options_.width,
-                       window.options_.height, host, lastError_)) {
+                       window.options_.height, host, lastError_,
+                       window.options_.chrome == Chrome::Borderless)) {
         return 1;   // lastError_ 已填（App.h 契约：失败返回非 0）
     }
     window.native_ = &native;   // 平台窗口对象（定时器等平台能力）

@@ -148,6 +148,58 @@ void MyWindow::OnDpiChanged(const dui::DpiChanged& e) {
 
 ---
 
+### 6.1 无边框窗口与自定义标题栏（`Chrome::Borderless`）
+
+窗口形态由构造参数声明，框架负责底层的系统对接，业务只画界面、只报"命中区"：
+
+```cpp
+struct WindowOptions {
+    const wchar_t* title = L"";
+    float width  = 800.f;      // DIP
+    float height = 600.f;      // DIP
+    Chrome chrome = Chrome::System;   // System / Borderless
+};
+
+class Window {
+public:
+    // 自绘标题栏按钮要用的窗口操作
+    void Minimize();  void MaximizeOrRestore();  void Close();
+    bool IsMaximized() const;
+    Vec2 ClientSizeDip() const;      // 客户区 DIP 尺寸（边框热区判定用）
+
+protected:
+    // 非客户区命中：ptDip = 客户区 DIP；返回 true → 采用 hit
+    //   Caption = 拖动可移动窗口；Left/Right/Bottom/四个角 = 拖边框可缩放
+    virtual bool OnNcHitTest(Vec2 ptDip, HitTestCode& hit) { return false; }
+    // 尺寸 / 最大化还原状态变化（业务自绘按钮换图标）
+    virtual void OnStateChanged() {}
+};
+```
+
+框架侧的实现要点（Platform 层，公共 API 不暴露 windows.h）：
+
+| 关注点 | 做法 |
+| --- | --- |
+| 窗口样式 | `WS_POPUP \| WS_THICKFRAME \| WS_SYSMENU \| WS_MINIMIZEBOX \| WS_MAXIMIZEBOX` + `WS_EX_APPWINDOW`。`WS_THICKFRAME` 必须保留 —— `HTLEFT` 等缩放命中码只有带它才生效；`WS_POPUP` 去掉系统标题栏 |
+| 阴影 | `DwmExtendFrameIntoClientArea(hwnd, {-1,-1,-1,-1})`（负边距 = 边框外扩 1px，DWM 在窗口外侧画投影）；Win11 另加圆角 `DWMWA_WINDOW_CORNER_PREFERENCE=33` 与去边框色 `DWMWA_BORDER_COLOR=34`（Win10 SDK 无常量，手写） |
+| 客户区 | `WM_NCCALCSIZE`（`wParam=TRUE`）**原样保留 `rgrc[0]` 并返回 0**：入参 `rgrc[0]` 是系统建议的新窗口矩形，出参即客户区矩形；不调 `DefWindowProc` 扣边框 → 客户区覆盖整窗（否则 `WS_THICKFRAME` 会在内容外留一圈非客户区，边框色设为"无"时那圈透出桌面）。`rgrc[1]` 是**上一次**的窗口矩形，绝不可赋给 `rgrc[0]` |
+| 尺寸语义 | 无边框时 `width/height` 就是**整窗**尺寸（不做 `AdjustWindowRect` 边框补偿 —— 补了会大出左右各 8px，业务按 DIP 布局就错位） |
+| 最大化 | `WM_GETMINMAXINFO` 把 `ptMaxPosition` / `ptMaxSize` 约束到工作区：否则系统把窗口放到比工作区还大（边框外扩），底边/右边被屏幕切掉 |
+| 命中 | `WM_NCHITTEST`（屏幕坐标 → 客户区 DIP）→ 上抛业务 → 返回 `HTCAPTION` / `HT*`，**移动与缩放由系统接管**，业务不必自己处理鼠标与窗口几何 |
+
+业务侧的坑：
+
+1. **四边四角的缩放热区必须先于标题栏判定**：上边这条窄带压在标题栏上，若先判 `HTCAPTION`，上边与左上 / 右上角会全部变成"移动窗口"，拖不动大小。顺序应为：四边四角 → `HT*` → 按钮区 `HTCLIENT` → 标题栏其余 `HTCAPTION` → 内容区 `HTCLIENT`。
+2. **标题栏里的按钮必须排除在 `HTCAPTION` 热区之外**：命中标题栏的点击会被系统当成"拖标题栏"，按钮收不到 `WM_LBUTTONDOWN`，永远点不动。按钮区只需让出最上面一条 `kResizeBorder` 给上边 / 右上角缩放（原生窗口的标题栏顶端同样是一条 resize 带），其余部分返回 `HTCLIENT` 即可照常点击。
+3. **边框热区会吃掉客户区边缘几像素**：缩放热区（示例 8 DIP）覆盖客户区四边，内容贴边处点不到 —— 布局时留出余量，或把热区做窄。热区之外建议显式返回 `HTCLIENT`（不要 `return false` 落到 `DefWindowProc`），否则 `WS_THICKFRAME` 会在窗口最外圈又报一套 `HT*`，最大化时容易误触缩放。
+4. **最大化后 `IsMaximized()` 为真**：此时没有可拖的边框，缩放热区要自行禁用。
+5. **拖边框缩放时 Windows 进入模态循环**：主消息循环被挂起，`WM_SIZE` 连续到达 → 框架在 `OnResized` 里**就地渲染**（否则拖动过程中内容不跟手，松开才更新）。
+6. 双击标题栏最大化需要框架支持双击事件，当前未提供。
+
+配套示例：`Samples/CustomFrame`（自绘标题栏 + iconfont 图标按钮 + 阴影 + 移动 + 缩放）。
+
+---
+
 ## 7. 限制与坑（显式声明）
 
 ### 7.1 高保真的硬要求（不可用"省事优化"换取）
@@ -170,6 +222,14 @@ void MyWindow::OnDpiChanged(const dui::DpiChanged& e) {
 6. **`GetCursorPos` / `ScreenToClient` 在 DPI 感知进程下返回物理像素**，所有坐标入口都要过一遍换算，漏一处就是命中偏移。
 7. **最小化时不得按"有脏标记"进帧**。最小化 → 客户区尺寸为 0 → 渲染帧直接返回且**不清脏标记** → 脏标记恒为真 → 消息循环永远进不了 `WaitMessage()` → 退化成忙转（CPU 100%）。正确做法：最小化期间直接阻塞等消息，恢复时由 `WM_SIZE` → 重排 + 重绘；脏标记保留不丢（保证最小化期间的内容变更不丢）。同时停掉光标闪烁节拍（窗口不可见，闪烁无意义），恢复后自动重启。
 8. **`WM_ACTIVATE` 必须上抛给上层**：`WA_INACTIVE` 表示用户已把交互交给别的窗口 → UI 层的焦点应随之离开（编辑控件失焦：选区消失、光标隐藏、闪烁停表，见 [06-Events.md](./06-Events.md) §3.3）。注意最小化同样发 `WA_INACTIVE`，须区分（最小化保留焦点，还原后可直接继续输入）—— 判定要延迟到下一轮消息处理之后（`WM_SIZE` 到达后 `IsIconic()` 才准）。
+9. **无边框窗口的 `WM_NCCALCSIZE` 不能把 `rgrc[1]` 拷进 `rgrc[0]`**：`wParam=TRUE` 时
+   `rgrc[0]` 入参是**系统建议的新窗口矩形**（出参写客户区矩形），`rgrc[1]` 是**上一次**的窗口矩形。
+   无边框只需原样保留 `rgrc[0]` 返回 0（不调 `DefWindowProc` 扣边框）→ 客户区 = 整窗。
+   若写成 `rgrc[0] = rgrc[1]`，客户区会慢一次尺寸变更；**最小化后还原时 `rgrc[1]` 恰是离屏的
+   图标矩形**（实测 `-32000,-32000,-31801,-31966`，即 199×34 物理像素），客户区被压成 199×34
+   → 内容画不进去、交换链也被缩到 199×34，窗口一片空白。注意此时 `WM_SIZE` 的 lParam 与
+   `GetClientRect()` 都会报 199×34，且之后**不会再有**新的 `WM_SIZE` —— 所以必须从源头修正
+   客户区计算，靠"还原后强制再画一帧"补不回来。
 
 ---
 

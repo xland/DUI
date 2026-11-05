@@ -81,7 +81,7 @@
 ## 6. 当前工程状态
 
 ```
-DUI.slnx                 解决方案：x64 单一平台，五个工程
+DUI.slnx                 解决方案：x64 单一平台，十个工程（1 库 + 9 示例）
 DUI/                     库工程（DUI.vcxproj，静态库）
   DUI.h                  公共入口（业务代码唯一 include）
   Core/                  Result、String/Color/Rect/Thickness、协程 Task（M1 骨架）
@@ -99,6 +99,7 @@ Samples/                 示例工程（每个示例一个子目录 = 一个工�
   PointerEvents/         元素级指针事件演示（移入/移出/移动/按下/弹起/滚轮）
   TextInput/             文本输入演示（单行 TextBox / 密码框 / 多行 TextArea + 焦点与 Tab 链）
   Image/                 图像控件演示（dui::Image：WIC 解码 / 自然尺寸 / 拉伸 / 透明度）
+  CustomFrame/           自定义窗口边框与标题栏演示（Chrome::Borderless + DWM 阴影 + 拖动移动 + 拖边框缩放）
 Build/                   产物根：Build\<工程>\<配置>\ 最终产物；Build\Temp\<工程>\<配置>\ 中间产物
 DUI.props                公共编译基线（库与子工程共同 import，根目录）
 Doc/Arch/                本文档集

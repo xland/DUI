@@ -7,7 +7,7 @@
 //      → 消息循环 → 退出码。
 //    · OnCreate：原生窗口已建、尚未显示；Root() 可用，构建过程不可见。
 //    · 无边框/自定义标题栏 = 构造里换 Chrome + OnCreate 里加标题栏
-//      （12-Windowing §6）。
+//      （12-Windowing §6.1）。
 //
 //  M1 骨架已被 M2 替换：Platform.Window（HWND）+ 消息循环已落地；M5 落地
 //  OnDpiChanged 完整流程（交换链重建 / 字形重光栅）。
@@ -30,10 +30,24 @@ namespace graphics {
 class Device;
 }
 
-// 窗口装饰（12-Windowing §6：无边框 + 自定义标题栏的同一扩展点）
+// 窗口装饰（12-Windowing §6.1：无边框 + 自定义标题栏的同一扩展点）
 enum class Chrome : uint8_t {
     System,       // 系统标题栏 + 边框
-    Borderless,   // 无边框，业务自绘标题栏（M5）
+    Borderless,   // 无边框，业务自绘标题栏（DWM 阴影 + 拖动移动 + 拖边框缩放）
+};
+
+// 非客户区命中码（对应 Win32 的 HT*；公共头不含 windows.h，故在此自定义）
+enum class HitTestCode : int {
+    Client = 1,        // HTCLIENT：普通客户区
+    Caption = 2,       // HTCAPTION：拖动可移动窗口
+    Left = 10,         // HTLEFT：左边缘可缩放
+    Right = 11,        // HTRIGHT
+    Top = 12,          // HTTOP
+    TopLeft = 13,      // HTTOPLEFT
+    TopRight = 14,     // HTTOPRIGHT
+    Bottom = 15,       // HTBOTTOM
+    BottomLeft = 16,   // HTBOTTOMLEFT
+    BottomRight = 17,  // HTBOTTOMRIGHT
 };
 
 struct DpiChanged {
@@ -62,11 +76,30 @@ public:
     float DipToPx(float dip) const noexcept { return dip * scale_; }
     float PxToDip(float px)  const noexcept { return px / scale_; }
 
+    // 窗口操作（无边框窗口的自绘标题栏按钮需要）
+    void Minimize();              // 最小化
+    void MaximizeOrRestore();     // 最大化 / 从最大化还原
+    void Close();                 // 请求关闭（走 WM_CLOSE → OnClosing 可拦截）
+    bool IsMaximized() const;     // 当前是否最大化
+
+    // 客户区尺寸（DIP）：自绘边框热区判定用（OnNcHitTest）
+    Vec2 ClientSizeDip() const;
+
 protected:
     // 原生窗口已创建、尚未显示：唯一搭界面的地方（构建期间窗口不可见）
     virtual void OnCreate() {}
     virtual void OnDpiChanged(const DpiChanged&) {}
     virtual bool OnClosing() { return true; }   // 返回 false 阻止关闭（M2）
+
+    // 非客户区命中（仅 Chrome::Borderless 有意义）：ptDip = 客户区 DIP。
+    // 返回 true → 采用 hit：Caption = 拖动可移动窗口；Left/Right/Top/Bottom/
+    // 四个角 = 拖边框可缩放（由系统接管，业务不必自己处理鼠标与移动逻辑）。
+    virtual bool OnNcHitTest(Vec2 ptDip, HitTestCode& hit) {
+        (void)ptDip; (void)hit;
+        return false;
+    }
+    // 窗口状态变化（尺寸改变 / 最大化还原）：业务可刷新自绘按钮的图标等
+    virtual void OnStateChanged() {}
 
     Panel* Root() noexcept { return root_.get(); }
 

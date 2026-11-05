@@ -63,18 +63,22 @@ private:
     String lastError_;
 };
 
-// 动画节拍（内部）：Image 加载动画时登记，App 层据此启停窗口定时器并分发 tick。
-// 进程级单例；Image 析构 / 换图时注销。
+// UI 层统一时间源（内部）：帧动画与光标闪烁共用一个 ticker，App 层只启停
+// 一个窗口定时器；是否需要节拍、周期多少都由本类决定。进程级单例。
 class AnimationClock {
 public:
     static AnimationClock& Instance();
     void Add(Image* img);
     void Remove(Image* img) noexcept;
-    bool HasAnimations() const noexcept { return !images_.empty(); }
+    bool NeedsTick() const noexcept;         // 有帧动画 或 有可闪烁的焦点元素
+    unsigned TickPeriodMs() const noexcept;  // 有帧动画 20ms；只有闪烁 500ms
     void Tick(uint64_t nowMs);
+    void Reset() noexcept;                   // 停表时重置闪烁相位
 
 private:
     std::vector<Image*> images_;
+    uint64_t nextBlinkMs_ = 0;
+    bool blinkStarted_ = false;
 };
 
 }  // namespace dui

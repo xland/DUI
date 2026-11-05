@@ -110,12 +110,14 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 - Tab 链：树序（深度优先）收集可聚焦元素（`SetFocusable(true)`），按 `tabIndex` 排序 —— `>0` 组（数值升序）→ `0` 组（文档序）→ `<0` 组（数值升序）；`Shift+Tab` 反向，到头循环。Tab 键在焦点元素未消费时由框架默认处理（移动焦点）。
 - 点击取得焦点：指针按下命中可聚焦元素（或其可聚焦祖先）时 `SetFocus`。
 
-**光标闪烁（闪烁节拍）**：编辑控件的光标按固定周期持续闪烁，由框架的**窗口定时器**驱动。
+**光标闪烁（闪烁节拍）**：编辑控件的光标按固定周期持续闪烁，由框架的**统一 ticker**驱动。
 
 - UI 层：`Element::IsBlinkable()`（是否参与节拍）与 `Element::OnBlink()`（切换闪烁状态并标脏，
-  返回 false 表示可以停表）；`NeedsBlinkTick()` / `DispatchBlink()`（`UI/Focus.h`）是节拍入口。
-- App 层：`Window::SyncBlinkTimer()` 按 UI 层需求启停窗口定时器（500ms 一次）；
-  `WM_TIMER` → `NativeWindowHost::OnTimer` → `Window::OnTimer` → `DispatchBlink()`。
+  返回 false 表示可以停表）；`NeedsBlinkTick()` / `DispatchBlink()`（`UI/Focus.h`）由
+  `AnimationClock` 调用（帧动画与闪烁共用一个时间源）。
+- App 层：`Window::SyncTickTimer()` 只启停**一个**窗口定时器，周期由 `AnimationClock` 给出
+  （只有闪烁 500ms，有帧动画 20ms）；`WM_TIMER` → `NativeWindowHost::OnTimer` →
+  `Window::OnTimer` → `AnimationClock::Tick()`。
 - 焦点离开可闪烁控件即停表（`NeedsBlinkTick()` 为 false）；焦点元素被销毁时
   `ClearFocusIf()` 清焦点，避免全局焦点悬空。
 - 交互（点击定位、输入、移动光标）会重置闪烁相位 —— 光标立即可见，随后继续闪烁。

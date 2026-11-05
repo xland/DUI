@@ -4,20 +4,24 @@
 //  加载路径：WIC 解码（Graphics/ImageCodec）→ 登记到纹理仓库
 //  （graphics::TextureStore）→ App 层每帧把脏纹理上传到 GPU。
 //  控件本身只持有纹理句柄，不碰 D3D（分层：UI → Graphics）。
-//  动画 GIF：帧序列留在 UI 层，节拍由 App 层定时器驱动；切帧只替换同一张
-//  纹理的像素并标脏，不重复 Register（避免每帧新建 GPU 纹理）。
+//  动画 GIF：帧序列留在 UI 层，节拍由 UI 层统一 ticker 驱动（与光标闪烁共用）；
+//  切帧只替换同一张纹理的像素并标脏，不重复 Register（避免每帧新建 GPU 纹理）。
 // ============================================================================
 
 #include "UI/Image.h"
 
 #include "Graphics/Graphics.h"
 #include "Graphics/ImageCodec.h"
+#include "UI/Focus.h"
 
 #include <utility>
 
 namespace dui {
 
 namespace {
+
+constexpr uint64_t kFrameTickMs = 20;    // 帧动画节拍；各帧按自身延迟到点才切
+constexpr uint64_t kBlinkTickMs = 500;   // 光标闪烁半周期
 
 const graphics::ImageTexture* AsTexture(const std::shared_ptr<void>& p) noexcept {
     return static_cast<const graphics::ImageTexture*>(p.get());
@@ -50,8 +54,35 @@ void AnimationClock::Remove(Image* img) noexcept {
     }
 }
 
+bool AnimationClock::NeedsTick() const noexcept {
+    return !images_.empty() || NeedsBlinkTick();
+}
+
+unsigned AnimationClock::TickPeriodMs() const noexcept {
+    // 只有闪烁时保持 500ms 唤醒，不因统一 ticker 而退化成 20ms 空转
+    return images_.empty() ? static_cast<unsigned>(kBlinkTickMs)
+                           : static_cast<unsigned>(kFrameTickMs);
+}
+
+void AnimationClock::Reset() noexcept {
+    nextBlinkMs_ = 0;
+    blinkStarted_ = false;
+}
+
 void AnimationClock::Tick(uint64_t nowMs) {
     for (Image* img : images_) img->AdvanceAnimation(nowMs);
+
+    // 光标闪烁：首拍即切换一次（沿用原 500ms 定时器的相位），之后按绝对时刻
+    if (NeedsBlinkTick()) {
+        if (!blinkStarted_ || nowMs >= nextBlinkMs_) {
+            DispatchBlink();
+            blinkStarted_ = true;
+            nextBlinkMs_ = nowMs + kBlinkTickMs;
+        }
+    } else {
+        blinkStarted_ = false;
+        nextBlinkMs_ = 0;
+    }
 }
 
 Image::Image() = default;

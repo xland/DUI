@@ -527,8 +527,8 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
   - 鼠标：点击定位光标、按住拖动选区（拖动期间靠 `State::Pressed` 判定）。
   - 渲染：选区矩形 → 文本 → 光标（光标仅在有焦点时显示；选区在失焦时清除）；
     内容溢出裁剪 + 滚动，光标自动滚入可见区。
-  - **光标持续闪烁**：框架窗口定时器（500ms）驱动 —— `Element::IsBlinkable()/OnBlink()`
-    钩子 + `NeedsBlinkTick()/DispatchBlink()`（`UI/Focus.h`）+ `Window::SyncBlinkTimer()`；
+  - **光标持续闪烁**：统一 ticker（只有闪烁时 500ms）驱动 —— `Element::IsBlinkable()/OnBlink()`
+    钩子 + `NeedsBlinkTick()/DispatchBlink()`（`UI/Focus.h`）+ `Window::SyncTickTimer()`；
     焦点离开可闪烁控件即停表；交互（点击/输入/移动光标）重置闪烁相位（光标立即可见）。
   - **IME 候选窗口跟随光标**：用**系统 caret** 机制 —— 平台层建一个 1×N 全透明位图的
     隐形 caret（`EnsureImeCaret/UpdateImeCaretPos/RemoveImeCaret`），位置来自 UI 层
@@ -599,7 +599,7 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
   **只在文本框聚焦时暴露**：光标闪烁节拍每 500ms 标一次脏（不聚焦时无脏 → 阻塞等消息
   → CPU 归零）。
   修法：① 主循环最小化时直接 `WaitMessage()` 阻塞（恢复时由 `WM_SIZE` → `OnResized`
-  触发重排 + 重绘，脏标记保留不丢）；② `SyncBlinkTimer` 最小化时停表（窗口不可见，
+  触发重排 + 重绘，脏标记保留不丢）；② `SyncTickTimer` 最小化时停表（窗口不可见，
   无需闪烁节拍；恢复后主循环每轮重新同步 → 自动重启）；③ 平台层新增
   `NativeWindow::IsMinimized()`（`IsIconic`）。
 - **窗口失活 → 文本框失焦**（光标停止闪烁）—— `WM_ACTIVATE(WA_INACTIVE)` → 平台层上抛
@@ -647,8 +647,9 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
   - **GIF 动画**：不自己写 GIF 解码器（LZW / 调色板由 WIC 负责）。`DecodeAnimatedImageFile`
     用 `GetFrameCount` / `GetFrame(i)` + GIF 元数据（`/grctlext/Delay|Disposal`、
     `/imgdesc/Left|Top`、`/logscrdesc/Width|Height`）把局部帧按 disposal 合成为统一尺寸的
-    全画布 BGRA8；`Image` 复用同一张纹理换帧（不重复 `Register`），App 层窗口定时器
-    按 20ms 节拍唤醒并按需启停（最小化停表），帧时间用绝对时刻判断。
+    全画布 BGRA8；`Image` 复用同一张纹理换帧（不重复 `Register`）；`AnimationClock`
+    统一驱动帧动画与光标闪烁，App 层只留一个窗口定时器（有帧动画 20ms / 只有闪烁
+    500ms，最小化停表），帧时间用绝对时刻判断。
   - 踩坑：**命令行 msbuild 全量重建会刷 LNK4020**（"pdb 类型记录已损坏"）—— `/MP` 多进程
     编译 + `/Zi` 缺 `/FS` 所致；VS 内构建由 `Microsoft.CppCommon.targets` 在 `UseMultiToolTask`
     为真时自动加 `/FS`，所以 VS 里看不到。规避：命令行加 `-p:UseMultiToolTask=true`

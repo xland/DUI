@@ -80,7 +80,7 @@ WIC 的 import lib 在 SDK 里叫 **`windowscodecs.lib`**（没有 `wincodec.lib
 
 - **解码**：`Graphics/ImageCodec.cpp` 用 WIC `GetFrameCount` / `GetFrame(i)` 取帧，`IWICMetadataQueryReader` 读 `/logscrdesc/Width,Height`（逻辑屏幕）、`/imgdesc/Left,Top`（局部帧偏移）、`/grctlext/Delay`（单位 10ms）、`/grctlext/Disposal`。**LZW / 调色板 / 容器解析由 WIC 负责**，框架只实现动画语义。
 - **合成**：disposal 0/1 保留画布、2 把该帧区域清成透明背景、3 恢复叠加前的画布快照；局部帧按偏移叠加，透明像素（`alpha=0`）保留历史内容。每帧输出逻辑屏幕全尺寸 BGRA8，因此所有帧尺寸一致，contain 与纹理更新都不需要特殊处理。
-- **播放**：App 层 `kAnimTimerId` 定时器只在有动画元素且窗口可见时启动（最小化停表），节拍固定 20ms；各 `Image` 用绝对时刻判断自己是否到点，多个不同延迟的 GIF 互不影响。`Delay` 为 0/1 时按浏览器惯例兜到 100ms。
+- **播放**：UI 层统一 ticker（`AnimationClock`）同时驱动帧动画与光标闪烁，App 层只启停**一个**窗口定时器：有帧动画时 20ms 节拍、只有闪烁时 500ms，最小化 / 空闲停表。各 `Image` 用绝对时刻判断自己是否到点，多个不同延迟的 GIF 互不影响。`Delay` 为 0/1 时按浏览器惯例兜到 100ms。
 - **代价**：内存 ≈ 帧数 × 逻辑屏幕宽 × 高 × 4；每次切帧整张 `UpdateSubresource`。长动画 / 大图需改成按需解码。
 
 ---

@@ -644,6 +644,11 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
   - **图像不该被布局拉伸变形** —— `AlignItems` 默认 Stretch 会把图像横向拉满、flex-shrink
     会把它压扁（跨轴比例失真）。三处处理：`Kind::Image` 子项未显式给该轴尺寸时交叉轴用
     自然尺寸；图像从主轴收缩计算中排除；`Image::OnPaint` 按 contain 等比缩放 + 居中。
+  - **GIF 动画**：不自己写 GIF 解码器（LZW / 调色板由 WIC 负责）。`DecodeAnimatedImageFile`
+    用 `GetFrameCount` / `GetFrame(i)` + GIF 元数据（`/grctlext/Delay|Disposal`、
+    `/imgdesc/Left|Top`、`/logscrdesc/Width|Height`）把局部帧按 disposal 合成为统一尺寸的
+    全画布 BGRA8；`Image` 复用同一张纹理换帧（不重复 `Register`），App 层窗口定时器
+    按 20ms 节拍唤醒并按需启停（最小化停表），帧时间用绝对时刻判断。
   - 踩坑：**命令行 msbuild 全量重建会刷 LNK4020**（"pdb 类型记录已损坏"）—— `/MP` 多进程
     编译 + `/Zi` 缺 `/FS` 所致；VS 内构建由 `Microsoft.CppCommon.targets` 在 `UseMultiToolTask`
     为真时自动加 `/FS`，所以 VS 里看不到。规避：命令行加 `-p:UseMultiToolTask=true`
@@ -663,7 +668,12 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 
 完成情况与实现说明：
 - **窗口形态声明**（`DUI/App/App.h`）：`WindowOptions.chrome`（`Chrome::System` /
-  `Chrome::Borderless`）→ App 层建窗时传给平台层。
+  `Chrome::Borderless`）→ App 层建窗时传给平台层。另加 `WindowOptions.center`（初始居中）。
+- **初始居中（框架窗口能力）**：`Application::Run` 在 `OnCreate`/`Show` **之前**按
+  `options_.center` 调 `NativeWindow::CenterOnScreen()` —— `MonitorFromWindow` +
+  `MONITORINFO.rcWork`（工作区，排除任务栏）按整窗物理像素算中心，跨屏时以窗口所在
+  显示器为准；`SWP_NOSIZE` 只移动，不改尺寸也不激活窗口（构建过程仍不可见）。
+  默认 `true`（所有窗口初始居中）；设 `false` 沿用原有 `CW_USEDEFAULT` 层叠摆放。
 - **平台层（`DUI/Platform/Window.cpp`）**：
   - 无边框样式 `WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX`
     + `WS_EX_APPWINDOW`（`WS_THICKFRAME` 必须保留 —— `HTLEFT` 等缩放命中码靠它生效）。
@@ -682,13 +692,21 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
     否则系统把窗口放到比工作区还大（边框外扩），底边/右边被屏幕切掉。
   - **`WM_NCHITTEST`**：屏幕坐标 → 客户区 DIP → 上抛业务；返回 `HTCAPTION`/`HT*`，
     **移动与缩放全部由系统接管**，业务不处理鼠标与窗口几何。
+  - **右键标题栏 → 系统菜单**：`WS_POPUP` 没有系统标题栏，`DefWindowProc` 不会自己弹菜单。
+    `WM_NCRBUTTONUP` 且 `wParam == HTCAPTION` 时用 `GetSystemMenu(hwnd, FALSE)` +
+    `TrackPopupMenuEx(..., TPM_RETURNCMD)` 弹出（还原 / 移动 / 大小 / 最小化 / 最大化 /
+    关闭），选中项 `SendMessage(WM_SYSCOMMAND, cmd)` 交给 `DefWindowProc` 执行。
+    菜单项启用/置灰由系统在 `WM_INITMENUPOPUP` 自动维护（实测：非最大化时"还原"灰，
+    其余可用），业务不必手动 `EnableMenuItem`。系统边框窗口不受影响（原来就由
+    `DefWindowProc` 弹菜单）。
 - **App 层（`DUI/App/App.h/.cpp`）**：
   - `Window::OnNcHitTest(Vec2, HitTestCode&)`（业务重写，报标题栏/边框热区）；
     `HitTestCode` 枚举与 Win32 `HT*` 一一对应（公共头不带 windows.h，故自定义）。
   - `Window::OnStateChanged()`（尺寸/最大化还原变化 → 业务换自绘按钮图标）；
   - `Window::Minimize / MaximizeOrRestore / Close / IsMaximized / ClientSizeDip()`。
 - **配套示例** `Samples/CustomFrame`：自绘标题栏 + iconfont 图标按钮（最小化 / 最大化或还原 /
-  关闭）+ 阴影 + 拖标题栏移动 + **拖四边 / 四角缩放**；字体文件随构建拷到 exe 目录。
+  关闭）+ 阴影 + 框架默认初始居中 + 拖标题栏移动 + **拖四边 / 四角缩放** +
+  右键标题栏系统菜单；字体文件随构建拷到 exe 目录。
 - **踩坑**：
   - **缩放热区必须先于标题栏判定** —— 上边这条窄带压在标题栏上，若先判 `HTCAPTION`，
     上边与左上 / 右上角全都只能移动窗口、不能缩放（用户实测反馈）。正确顺序：

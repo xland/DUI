@@ -4,12 +4,16 @@
 //  加载路径：WIC 解码（Graphics/ImageCodec）→ 登记到纹理仓库
 //  （graphics::TextureStore）→ App 层每帧把脏纹理上传到 GPU。
 //  控件本身只持有纹理句柄，不碰 D3D（分层：UI → Graphics）。
+//  动画 GIF：帧序列留在 UI 层，节拍由 App 层定时器驱动；切帧只替换同一张
+//  纹理的像素并标脏，不重复 Register（避免每帧新建 GPU 纹理）。
 // ============================================================================
 
 #include "UI/Image.h"
 
 #include "Graphics/Graphics.h"
 #include "Graphics/ImageCodec.h"
+
+#include <utility>
 
 namespace dui {
 
@@ -21,7 +25,38 @@ const graphics::ImageTexture* AsTexture(const std::shared_ptr<void>& p) noexcept
 
 }  // namespace
 
-Image::~Image() = default;
+// 动画状态：帧序列 + 当前帧 + 下一次切帧的绝对时刻（首次 tick 时初始化）
+struct Animation {
+    std::vector<graphics::AnimationFrame> frames;
+    size_t   index = 0;
+    uint64_t nextTickMs = 0;
+};
+
+AnimationClock& AnimationClock::Instance() {
+    static AnimationClock clock;
+    return clock;
+}
+
+void AnimationClock::Add(Image* img) {
+    images_.push_back(img);
+}
+
+void AnimationClock::Remove(Image* img) noexcept {
+    for (size_t i = 0; i < images_.size(); ++i) {
+        if (images_[i] == img) {
+            images_.erase(images_.begin() + i);
+            return;
+        }
+    }
+}
+
+void AnimationClock::Tick(uint64_t nowMs) {
+    for (Image* img : images_) img->AdvanceAnimation(nowMs);
+}
+
+Image::Image() = default;
+
+Image::~Image() { StopAnimation(); }
 
 bool Image::LoadFile(const wchar_t* path) {
     graphics::DecodedImage img;
@@ -30,8 +65,30 @@ bool Image::LoadFile(const wchar_t* path) {
         lastError_ = err;
         return false;
     }
+    StopAnimation();
     tex_ = graphics::TextureStore::Instance().Register(img.width, img.height,
                                                        std::move(img.pixels));
+    lastError_.clear();
+    MarkDirty(kFlagLayout | kFlagPaint);
+    return true;
+}
+
+bool Image::LoadAnimatedFile(const wchar_t* path) {
+    graphics::DecodedAnimation a;
+    String err;
+    if (!graphics::DecodeAnimatedImageFile(path, a, &err)) {
+        lastError_ = err;
+        return false;
+    }
+    StopAnimation();
+
+    auto anim = std::make_unique<Animation>();
+    anim->frames = std::move(a.frames);
+    // 首帧登记纹理；后续帧在 AdvanceAnimation 里覆盖同一张纹理的像素
+    tex_ = graphics::TextureStore::Instance().Register(
+        a.width, a.height, std::vector<uint8_t>(anim->frames[0].pixels));
+    anim_ = std::move(anim);
+    if (anim_->frames.size() > 1) AnimationClock::Instance().Add(this);
     lastError_.clear();
     MarkDirty(kFlagLayout | kFlagPaint);
     return true;
@@ -44,6 +101,7 @@ bool Image::LoadMemory(const void* data, uint32_t size) {
         lastError_ = err;
         return false;
     }
+    StopAnimation();
     tex_ = graphics::TextureStore::Instance().Register(img.width, img.height,
                                                        std::move(img.pixels));
     lastError_.clear();
@@ -52,8 +110,30 @@ bool Image::LoadMemory(const void* data, uint32_t size) {
 }
 
 void Image::Clear() {
+    StopAnimation();
     tex_.reset();
     MarkDirty(kFlagLayout | kFlagPaint);
+}
+
+void Image::StopAnimation() {
+    if (anim_) AnimationClock::Instance().Remove(this);
+    anim_.reset();
+}
+
+void Image::AdvanceAnimation(uint64_t nowMs) {
+    if (anim_ == nullptr || tex_ == nullptr) return;
+    Animation& a = *anim_;
+    if (a.nextTickMs == 0) {
+        a.nextTickMs = nowMs + a.frames[a.index].delayMs;   // 首帧先按自己的延迟显示
+        return;
+    }
+    if (nowMs < a.nextTickMs) return;
+    a.index = (a.index + 1) % a.frames.size();
+    auto* t = static_cast<graphics::ImageTexture*>(tex_.get());
+    t->pixels = a.frames[a.index].pixels;   // 全画布 BGRA8，尺寸恒定
+    t->dirty = true;
+    MarkDirty(kFlagPaint);
+    a.nextTickMs = nowMs + a.frames[a.index].delayMs;
 }
 
 uint32_t Image::PixelWidth() const noexcept {

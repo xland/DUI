@@ -158,6 +158,7 @@ struct WindowOptions {
     float width  = 800.f;      // DIP
     float height = 600.f;      // DIP
     Chrome chrome = Chrome::System;   // System / Borderless
+    bool center = true;        // 初始显示在显示器工作区正中（默认；设 false 沿用系统层叠位置）
 };
 
 class Window {
@@ -169,7 +170,7 @@ public:
 
 protected:
     // 非客户区命中：ptDip = 客户区 DIP；返回 true → 采用 hit
-    //   Caption = 拖动可移动窗口；Left/Right/Bottom/四个角 = 拖边框可缩放
+    //   Caption = 拖动可移动窗口；四边 / 四角 = 拖边框可缩放
     virtual bool OnNcHitTest(Vec2 ptDip, HitTestCode& hit) { return false; }
     // 尺寸 / 最大化还原状态变化（业务自绘按钮换图标）
     virtual void OnStateChanged() {}
@@ -186,6 +187,8 @@ protected:
 | 尺寸语义 | 无边框时 `width/height` 就是**整窗**尺寸（不做 `AdjustWindowRect` 边框补偿 —— 补了会大出左右各 8px，业务按 DIP 布局就错位） |
 | 最大化 | `WM_GETMINMAXINFO` 把 `ptMaxPosition` / `ptMaxSize` 约束到工作区：否则系统把窗口放到比工作区还大（边框外扩），底边/右边被屏幕切掉 |
 | 命中 | `WM_NCHITTEST`（屏幕坐标 → 客户区 DIP）→ 上抛业务 → 返回 `HTCAPTION` / `HT*`，**移动与缩放由系统接管**，业务不必自己处理鼠标与窗口几何 |
+| 初始位置 | `WindowOptions.center`（默认 `true`）→ `Application::Run` 在 `OnCreate`/`Show` 之前调 `NativeWindow::CenterOnScreen()`：`MonitorFromWindow` + `MONITORINFO.rcWork` 取工作区（排除任务栏），按**整窗物理像素**算中心；跨屏时以窗口所在显示器为准；设 `false` 沿用系统 `CW_USEDEFAULT` 层叠摆放 |
+| 系统菜单 | 无边框窗口没有系统标题栏，`DefWindowProc` 不知道该在哪弹菜单 → `WM_NCRBUTTONUP` + `wParam == HTCAPTION` 时用 `GetSystemMenu(hwnd, FALSE)` + `TrackPopupMenuEx(..., TPM_RETURNCMD)` 弹系统菜单，选中项转发成 `WM_SYSCOMMAND`（`SC_*` 由 `DefWindowProc` 执行：移动 / 缩放走系统模态循环，关闭走 `WM_CLOSE`）。菜单项的启用 / 置灰由系统在 `WM_INITMENUPOPUP` 自动维护，业务不必手动 `EnableMenuItem` |
 
 业务侧的坑：
 

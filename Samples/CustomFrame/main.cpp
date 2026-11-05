@@ -75,7 +75,6 @@ public:
               .width  = 900.f,
               .height = 560.f,
               .chrome = dui::Chrome::Borderless,
-              .center = true,       // 框架窗口能力：初始显示在显示器工作区正中
           }) {}
 
 protected:

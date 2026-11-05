@@ -63,9 +63,19 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <!-- 图片随构建拷到 exe 目录，运行时按 exe 所在目录加载 -->
+    <PostBuildEvent>
+      <Command>copy /Y "$(ProjectDir)image.png" "$(OutDir)image.png"
+copy /Y "$(ProjectDir)demo.gif" "$(OutDir)demo.gif"</Command>
+      <Message>拷贝 image.png / demo.gif 到输出目录</Message>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="image.png" />
+    <None Include="demo.gif" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\DUI\DUI.vcxproj">

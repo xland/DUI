@@ -315,6 +315,8 @@ Vec2 Window::ClientSizeDip() const {
 namespace {
 constexpr uintptr_t kBlinkTimerId = 1;
 constexpr unsigned   kBlinkIntervalMs = 500;   // 光标闪烁周期（半周期 500ms）
+constexpr uintptr_t kAnimTimerId = 2;
+constexpr unsigned   kAnimIntervalMs = 20;     // 动画节拍；各帧按自身延迟到点才切
 }
 
 void Window::SyncBlinkTimer() {
@@ -334,10 +336,30 @@ void Window::SyncBlinkTimer() {
     }
 }
 
+// 动画节拍：有动画元素且窗口可见时才唤醒；帧时间由 Image 用绝对时刻自己判断，
+// 因此节拍周期固定即可（多个不同延迟的 GIF 也不会互相拖累）。
+void Window::SyncAnimationTimer() {
+    auto* native = static_cast<platform::NativeWindow*>(native_);
+    if (native == nullptr) return;
+    const bool need = AnimationClock::Instance().HasAnimations() && !native->IsMinimized();
+    if (need) {
+        if (animTimer_ == 0) {
+            native->StartTimer(kAnimTimerId, kAnimIntervalMs);
+            animTimer_ = kAnimTimerId;
+        }
+    } else if (animTimer_ != 0) {
+        native->StopTimer(animTimer_);
+        animTimer_ = 0;
+    }
+}
+
 void Window::OnTimer(uintptr_t id) {
-    if (id != blinkTimer_) return;
-    DispatchBlink();          // 焦点元素切换闪烁状态（并标脏 → 下一帧重绘）
-    SyncBlinkTimer();         // 不再需要闪烁 → 停表
+    if (id == blinkTimer_) {
+        DispatchBlink();          // 焦点元素切换闪烁状态（并标脏 → 下一帧重绘）
+        SyncBlinkTimer();         // 不再需要闪烁 → 停表
+        return;
+    }
+    if (id == animTimer_) AnimationClock::Instance().Tick(::GetTickCount64());
 }
 
 // IME 插入点：UI 层给插入点矩形（光标所在行：行顶→基线）→ 平台层把隐形系统
@@ -416,6 +438,7 @@ int Application::Run(Window& window) {
         // 光标停止闪烁。最小化不在此列（保留焦点，还原后可直接继续输入）。
         if (host.TakeDeactivate()) SetFocus(nullptr);
         window.SyncBlinkTimer();     // 焦点变化 → 启停光标闪烁节拍（渲染前同步）
+        window.SyncAnimationTimer(); // 动画元素变化 → 启停动画节拍
         // 最小化：客户区尺寸为 0 → RenderFrame 直接返回且**不清脏标记**，若此时
         // 仍按 dirty 进帧，主循环永远进不了 WaitMessage → 退化成忙转（CPU 100%）。
         // 光标闪烁节拍每 500ms 标一次脏，故只在文本框聚焦时暴露。

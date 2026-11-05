@@ -62,8 +62,8 @@ struct WindowOptions {
     float height = 600.f;        // DIP
     Chrome chrome = Chrome::System;
     // 初始显示时置于窗口所在显示器**工作区**正中（不含任务栏）。
-    // 默认 false = 沿用系统在 CW_USEDEFAULT 处的层叠摆放。
-    bool center = false;
+    // 默认 true；设 false 沿用系统在 CW_USEDEFAULT 处的层叠摆放。
+    bool center = true;
 };
 
 class Window {
@@ -115,12 +115,14 @@ private:
     void* native_ = nullptr;           // platform::NativeWindow*（平台窗口对象；公共头不带 windows.h）
     std::unique_ptr<Panel> root_;
     uintptr_t blinkTimer_ = 0;         // 光标闪烁节拍定时器（0 = 未启动）
+    uintptr_t animTimer_ = 0;          // 动画节拍定时器（0 = 未启动）
 
     // M2 内部用（M3 交换链创建也需要）；不进公共 API
     void* NativeHandle() const noexcept;   // HWND（App.cpp 定义）
 
-    // 光标闪烁节拍（内部）：按 UI 层需求启停窗口定时器
+    // 光标闪烁 / 动画节拍（内部）：按 UI 层需求启停窗口定时器
     void SyncBlinkTimer();
+    void SyncAnimationTimer();
     void OnTimer(uintptr_t id);
     // IME 插入点：把系统 caret（隐形）移到焦点控件的光标处 —— IME 依
     // GetCaretPos() 把候选窗口定位到光标下方。

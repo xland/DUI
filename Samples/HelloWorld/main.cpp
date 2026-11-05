@@ -32,7 +32,7 @@ protected:
             .AlignItems(dui::Align::Center)
             .Background(0xFFF5F5F5));
         root->AddChild<dui::Text>(L"你好，World", dui::Style()
-            .FontSize(24.f)
+            .FontSize(32.f)
             .Color(0xFF1F1F1F));
     }
 };

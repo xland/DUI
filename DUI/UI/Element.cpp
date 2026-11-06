@@ -25,16 +25,12 @@ void Element::AttachChild(Element* child) {
     MarkDirty(kFlagLayout);   // 子项集合变化 → 重排
 }
 
-void Element::SetOverride(Prop p, float f, uint32_t u) {
+void Element::SetOverride(const StyleValue& nv) {
     for (StyleValue& v : overrides_) {
-        if (v.prop == p) { v.f = f; v.u = u; MarkDirty(PropFlagsOf(p)); return; }
+        if (v.prop == nv.prop) { v = nv; MarkDirty(PropFlagsOf(nv.prop)); return; }
     }
-    StyleValue nv;
-    nv.prop = p;
-    nv.f = f;
-    nv.u = u;
     overrides_.push_back(nv);
-    MarkDirty(PropFlagsOf(p));
+    MarkDirty(PropFlagsOf(nv.prop));
 }
 
 void Element::SetState(State s, bool on) {
@@ -107,6 +103,8 @@ bool Element::HasCapture() const noexcept { return CapturedElement() == this; }
 // ---------------------------------------------------------------------------
 
 Vec2 Element::MeasureContent(const StyleContext& ctx, const Vec2& avail) const {
+    if (ResolveProperty(this, Prop::Display, ctx).u == static_cast<uint32_t>(Display::Grid))
+        return MeasureGridContent(this, ctx, avail);
     const uint32_t dir = ResolveProperty(this, Prop::FlexDirection, ctx).u;
     const uint32_t wrap = ResolveProperty(this, Prop::FlexWrap, ctx).u;
     const float gap = ResolveProperty(this, Prop::Gap, ctx).f;

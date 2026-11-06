@@ -3,7 +3,9 @@
 //
 //  覆盖能力（04-Layout）：FlexDirection Row/Column、Gap、Padding、
 //  FlexGrow（剩余空间分配）、FlexShrink + MinWidth（收缩）、
-//  JustifyContent / AlignItems（主轴/交叉轴对齐）、嵌套容器。
+//  JustifyContent / AlignItems（主轴/交叉轴对齐）、嵌套容器、
+//  Grid（Fixed/Flex/Auto/Percent 轨道 + 自动放置 + 显式行列 + 跨格）。
+//  样式相关示例（Margin / TextAlign / 运行时 Set）见 Samples/Style；
 //  定位相关示例（Relative/Absolute/Fixed/zIndex）见 Samples/Position。
 //
 //  构建产物（Build 布局，DUI.slnx 根目录相对）：
@@ -54,7 +56,7 @@ public:
         : dui::Window(dui::WindowOptions{
               .title  = L"Layout · 布局能力演示",
               .width  = 900.f,
-              .height = 640.f,
+              .height = 800.f,
           }) {}
 
 protected:
@@ -120,6 +122,40 @@ protected:
         NewBox(rowE, L"80", 0xFF7030A0, 80.f, 48.f);
         NewBox(rowE, L"80", 0xFF9C59D0, 80.f, 48.f);
         NewBox(rowE, L"80", 0xFF7030A0, 80.f, 48.f);
+
+        // ---- Grid：四类轨道 + 自动放置 + 显式行列 + 跨格 --------------------
+        NewCaption(root, L"Grid：Fixed / Flex / Auto / Percent 轨道 + 自动放置 + 显式跨格");
+        dui::Panel* grid = root->AddChild<dui::Panel>(dui::Style()
+            .Display(dui::Display::Grid)
+            .GridTemplateColumns({dui::Fixed(120.f), dui::Flex(1.f),
+                                  dui::Auto, dui::Percent(20.f)})
+            .GridTemplateRows({dui::Fixed(52.f), dui::Flex(1.f)})
+            .Gap(8.f)
+            .Height(140.f)
+            .Background(0xFFE7E6E6)
+            .CornerRadius(4.f));
+
+        // 显式放置 + 跨两列：先添加（先占位），其余按序自动填空
+        dui::Panel* wide = grid->AddChild<dui::Panel>(dui::Style()
+            .Background(0xFFC00000).CornerRadius(4.f).Color(0xFFFFFFFF)
+            .JustifyContent(dui::Justify::Center).AlignItems(dui::Align::Center));
+        wide->Set(dui::Prop::GridRow, 1);
+        wide->Set(dui::Prop::GridColumn, 1);
+        wide->Set(dui::Prop::GridColumnSpan, 2);
+        wide->AddChild<dui::Text>(L"显式 row1 col1 · 跨 2 列");
+
+        const wchar_t* labels[] = {
+            L"Fixed 120", L"Flex 1", L"Auto", L"Percent 20", L"auto #5", L"auto #6",
+        };
+        const dui::Color colors[] = {
+            0xFF4472C4, 0xFF70AD47, 0xFFED7D31, 0xFF7030A0, 0xFF5B9BD5, 0xFF548235,
+        };
+        for (int i = 0; i < 6; ++i) {
+            dui::Panel* cell = grid->AddChild<dui::Panel>(dui::Style()
+                .Background(colors[i]).CornerRadius(4.f).Color(0xFFFFFFFF)
+                .JustifyContent(dui::Justify::Center).AlignItems(dui::Align::Center));
+            cell->AddChild<dui::Text>(labels[i]);
+        }
     }
 };
 

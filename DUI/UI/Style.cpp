@@ -20,6 +20,15 @@ const StyleValue* Style::Find(Prop p) const {
     return nullptr;
 }
 
+const std::vector<GridTrack>* Style::FindTracks(Prop p) const noexcept {
+    const bool cols = p == Prop::GridTemplateColumns;
+    for (const Style* s = this; s != nullptr; s = s->parent_) {
+        const std::vector<GridTrack>& t = cols ? s->gridCols_ : s->gridRows_;
+        if (!t.empty()) return &t;
+    }
+    return nullptr;
+}
+
 // ---------------------------------------------------------------------------
 // 链式构造
 // ---------------------------------------------------------------------------
@@ -59,6 +68,17 @@ Style& Style::FlexShrink(float v)                  { return SetF(Prop::FlexShrin
 Style& Style::JustifyContent(dui::Justify v)       { return SetU(Prop::JustifyContent, static_cast<uint32_t>(v)); }
 Style& Style::AlignItems(dui::Align v)             { return SetU(Prop::AlignItems, static_cast<uint32_t>(v)); }
 Style& Style::FlexWrap(dui::FlexWrap v)            { return SetU(Prop::FlexWrap, static_cast<uint32_t>(v)); }
+// Grid：占位声明让 Prop 在级联里可见，变长轨道实体存 vector（push_back 避免异常展开实例化）
+Style& Style::GridTemplateColumns(std::initializer_list<GridTrack> tracks) {
+    gridCols_.clear();
+    for (const GridTrack& t : tracks) gridCols_.push_back(t);
+    return SetU(Prop::GridTemplateColumns, 1);
+}
+Style& Style::GridTemplateRows(std::initializer_list<GridTrack> tracks) {
+    gridRows_.clear();
+    for (const GridTrack& t : tracks) gridRows_.push_back(t);
+    return SetU(Prop::GridTemplateRows, 1);
+}
 // 定位（04-Layout §4.3）：Left/Top/Right/Bottom 只对定位元素生效，Static 下忽略
 Style& Style::Position(dui::Position v)            { return SetU(Prop::Position, static_cast<uint32_t>(v)); }
 Style& Style::Left(float dip)                      { return SetF(Prop::Left, dip); }
@@ -73,6 +93,7 @@ Style& Style::FontSize(float dip)                  { return SetF(Prop::FontSize,
 Style& Style::FontWeight(dui::FontWeight v)        { return SetU(Prop::FontWeight, static_cast<uint32_t>(v)); }
 Style& Style::FontFamily(const wchar_t* name) { Ensure(Prop::FontFamily).family = name; return *this; }
 Style& Style::LineHeight(float multiple)      { return SetF(Prop::LineHeight, multiple); }
+Style& Style::TextAlign(dui::TextAlign v)     { return SetU(Prop::TextAlign, static_cast<uint32_t>(v)); }
 Style& Style::Opacity(float v)                { return SetF(Prop::Opacity, v); }
 Style& Style::SelectionColor(dui::Color c)   { return SetU(Prop::SelectionColor, c); }
 Style& Style::CaretColor(dui::Color c)       { return SetU(Prop::CaretColor, c); }
@@ -99,6 +120,19 @@ Style& Style::Padding(float all) {
 Style& Style::Padding(const Thickness& t) {
     // Thickness 四边内嵌 StyleValue（f = left，extra = top/right/bottom）
     StyleValue& v = Ensure(Prop::Padding);
+    v.f = t.left;
+    v.extra[0] = t.top;
+    v.extra[1] = t.right;
+    v.extra[2] = t.bottom;
+    return *this;
+}
+
+Style& Style::Margin(float all) {
+    return Margin(Thickness(all));
+}
+
+Style& Style::Margin(const Thickness& t) {
+    StyleValue& v = Ensure(Prop::Margin);
     v.f = t.left;
     v.extra[0] = t.top;
     v.extra[1] = t.right;

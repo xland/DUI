@@ -105,18 +105,29 @@ public:
     }
     const Style* StylePtr() const noexcept { return style_; }
 
-    // 运行时动态值（当前帧）；静态外观不要走这里（03-Style §6.1）
+    // 运行时动态值（当前帧）；静态外观不要走这里（03-Style §6.1）。
+    // 标量 / 枚举 / 颜色写 f·u 槽；Thickness 写 f + extra 三边；字体族写零拷贝指针。
+    // 整体替换同 Prop 的 StyleValue，避免 Thickness / family 的旧槽残留。
     template <class V>
     void Set(Prop p, V v) {
-        if constexpr (std::is_enum_v<V>) {
-            SetOverride(p, 0.f, static_cast<uint32_t>(v));
-        } else if constexpr (std::is_integral_v<V>) {
-            SetOverride(p, 0.f, static_cast<uint32_t>(v));
+        StyleValue nv;
+        nv.prop = p;
+        if constexpr (std::is_enum_v<V> || std::is_integral_v<V>) {
+            nv.u = static_cast<uint32_t>(v);
         } else if constexpr (std::is_floating_point_v<V>) {
-            SetOverride(p, static_cast<float>(v), 0u);
+            nv.f = static_cast<float>(v);
+            if (IsThicknessProp(p)) nv.extra[0] = nv.extra[1] = nv.extra[2] = nv.f;
+        } else if constexpr (std::is_same_v<V, dui::Thickness>) {
+            nv.f = v.left;
+            nv.extra[0] = v.top;
+            nv.extra[1] = v.right;
+            nv.extra[2] = v.bottom;
+        } else if constexpr (std::is_convertible_v<V, const wchar_t*>) {
+            nv.family = v;   // 零拷贝：指针须存活到覆盖被替换（建议字面量）
         } else {
             static_assert(!sizeof(V), "dui::Element::Set: unsupported value type");
         }
+        SetOverride(nv);
     }
 
     // 命令式属性动画（05-Animation）：启动一条补间，返回可取消的句柄。
@@ -296,6 +307,8 @@ public:
     const std::vector<Element*>& Children() const noexcept { return children_; }
     // 布局结果（相对父元素，DIP；RunLayout 写入）
     const Rect& Bounds() const noexcept { return bounds_; }
+    // Measure 结果（外边距盒 = 元素盒 + margin）：Grid / 自定义布局读子项占位用
+    Vec2 Measured() const noexcept { return measured_; }
 
     // 失效查询 / 粗粒度入口（窗口尺寸、DPI 变化等）
     bool SubtreeDirty() const noexcept { return subtreeDirty_; }
@@ -347,7 +360,7 @@ public:
 
 protected:
     void AttachChild(Element* child);
-    void SetOverride(Prop p, float f, uint32_t u);
+    void SetOverride(const StyleValue& v);
     void MarkDirty(uint32_t flags);
 
     // 内容自然尺寸（盒模型内容盒，不含 padding）。默认 = 容器子项聚合；
@@ -404,12 +417,14 @@ private:
     std::vector<std::pair<State, Style>> stateVariants_;   // 状态变体（级联第 2 层）
     std::vector<detail::AnimSlot> anims_;    // 活动补间（完成即移除，终值留在 animated_）
     Rect                       bounds_;       // Arrange 结果（相对父，DIP）
-    Vec2                       measured_{};   // Measure 结果（外层盒）
+    Vec2                       measured_{};   // Measure 结果（外边距盒，含 margin）
     uint32_t                   dirty_ = 0;    // 自身待重算标志（PropFlags）
     bool                       subtreeDirty_ = false;   // 子树有待处理（上溯快速判定）
 };
 
 // 布局实现入口（UI/Layout.cpp；Element::MeasureContent 聚合子项时调用）
 Vec2 MeasureElement(Element* e, const Vec2& avail, const StyleContext& parentCtx);
+// Grid 容器的自然尺寸（04-Layout §4.2）；MeasureContent 在 Display::Grid 分支调用
+Vec2 MeasureGridContent(const Element* e, const StyleContext& ctx, const Vec2& avail);
 
 }  // namespace dui

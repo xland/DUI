@@ -141,7 +141,7 @@ struct AnimConfig {
 | `UI/Element.h/.cpp` | `Animate()` 模板、`animated_`（层 1）、`anims_`、析构时注销 |
 | `UI/StyleResolve.cpp` | `TryResolveElement()` 的层 1 查询；`ElementTransform()` 合成 transform 矩阵 |
 | `Core/Core.h` | `Transform2D`（仿射矩阵 / 组合 / 求逆 / DPI 共轭） |
-| `Graphics/Graphics.h/.cpp` | `Painter::SetTransform()` 与四批 quad 的发射期顶点变换 |
+| `Graphics/Graphics.h/.cpp` | `Painter` 状态槽与 `Device::Render` 发射期的顶点变换 |
 | `App/Frame.cpp` | `Collector` 逐元素变换栈、裁剪 AABB、绘制单元下传 |
 | `UI/Event.cpp` | `HitTest` 逐层逆变换 |
 | `UI/Image.cpp` | `AnimationClock::{NeedsTick, TickPeriodMs, Tick}` 接入属性动画 |

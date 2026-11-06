@@ -99,7 +99,7 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ 
    ↓
 [收集]  有脏区/动画 → Arena 重置 → 重建整帧显示列表（遍历可见树；见 10-Rendering §3）
    ↓
-[光栅]  指令排序 → 批合并 → 顶点生成 → 提交 Draw Call
+[光栅]  有序指令 → 流式顶点生成 + 段合并 → 提交 Draw Call
    ↓
 [呈现]  Present（按需：无脏区则不呈现、不占用 CPU）
 ```

@@ -88,12 +88,13 @@ DUI/                     库工程（DUI.vcxproj，静态库）
   UI/                    Style（声明集 + 链式构造合一）、Element、Panel、Text/Button、TextBox/TextArea、Image、Canvas/Scroller、Focus、事件（M1 骨架）
   App/                   Application、Window/WindowOptions（M1 骨架）
   Platform/              NativeWindow（HWND 封装、窗口过程、DPI 感知清单）（M2）
-  Graphics/              Device（D3D11/Flip Model/BGRA8）+ Painter（SDF 圆角矩形 + 字形批 + 形状批 + 原点偏移）（M3/M5/M5.6）
+  Graphics/              Device（D3D11/Flip Model/BGRA8）+ Painter（有序绘制指令 + 状态槽 / SDF 圆角矩形 / 字形 / 形状 / 图像）（M3/M5/M5.6/B2）
   Text/                  DWrite 排版 + GlyphAtlas 灰度图集（M5）
 Samples/                 示例工程（每个示例一个子目录 = 一个工程）
   HelloWorld/            最小示例：窗口正中一行“你好，World”
-  Layout/               布局能力演示（FlexGrow / 定宽+弹性 / FlexShrink / JustifyContent+AlignItems / Gap / 嵌套）
-  Position/             定位能力演示（Relative / Absolute / Fixed 含 Scroller 内 / zIndex 层叠排序）
+  Layout/               布局能力演示（FlexGrow / 定宽+弹性 / FlexShrink / JustifyContent+AlignItems / Gap / 嵌套 / Grid 轨道）
+  Style/                 样式能力演示（复用与派生 / 继承属性 / 状态变体 / 级联优先级 / 视觉属性集 / Margin / TextAlign / 运行时 Set）
+  Position/             定位能力演示（Relative / Absolute / Fixed 含 Scroller 内 / 最近定位祖先 / zIndex 层叠排序）
   Canvas/                2D 绘图控件演示（直线/折线/多边形/矩形/圆角矩形/圆/椭圆/圆弧）
   Scroller/              滚动容器演示（纵向列表 / 双向滚动 / 嵌套滚动）
   CustomFont/            自定义字体演示（加载未安装的 iconfont.ttf 渲染字体图标）
@@ -101,6 +102,7 @@ Samples/                 示例工程（每个示例一个子目录 = 一个工�
   TextInput/             文本输入演示（单行 TextBox / 密码框 / 多行 TextArea + 焦点与 Tab 链）
   Image/                 图像控件演示（dui::Image：WIC 解码 / 自然尺寸 / 拉伸 / 透明度）
   CustomFrame/           自定义窗口边框与标题栏演示（Chrome::Borderless + DWM 阴影 + 拖动移动 + 拖边框缩放）
+  CustomCtrl/            自定义控件演示（派生 Element：自然尺寸 / OnPaint 自绘 / 指针拖拽 / 状态变体 / 变更回调）
   Animation/             动画示例集（属性补间 / 缓动 / 句柄 / 位置·旋转·缩放 / 布局尺寸对照 / 组合动画）
   Async/                 异步示例（协程 Background/Foreground：子线程跑任务，过程中切回 UI 更新界面）
 Build/                   产物根：Build\<工程>\<配置>\ 最终产物；Build\Temp\<工程>\<配置>\ 中间产物

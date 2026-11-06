@@ -12,7 +12,7 @@
 | R2 | 内联流与换行 | 行内排列，空间不足自动换行（`span` / 文本的直觉） |
 | R3 | 弹性布局 | 主轴/交叉轴对齐、`grow` / `shrink` / `basis`、换行、`gap` |
 | R4 | 网格 | 定义轨道（固定/比例/自动），子项占格、可跨行跨列 |
-| R5 | 绝对定位 | 脱离文档流，相对父容器（或定位祖先）定位 |
+| R5 | 绝对定位 | 脱离文档流，相对最近定位祖先（无则根）定位 |
 | R6 | 盒模型 | `content + padding + border + margin`，可切 `box-sizing` |
 | R7 | 尺寸表达 | `auto` / 固定 / 百分比 / `min`·`max` 约束 |
 | R8 | 溢出与滚动 | 内容超出容器可隐藏或滚动 |
@@ -72,6 +72,7 @@ display: Flex; flexDirection: Column; alignItems: Stretch   ← 默认值
 - `width` / `height` 指哪一盒由 `boxSizing` 决定；**默认 `BorderBox`**（与 CSS 默认 `content-box` 不同，但与业界实践一致，写界面更直觉）。
 - `padding` / `borderWidth` / `margin` 为 `Thickness`（四边可独立）。
 - `cornerRadius`（[03-Style.md](./03-Style.md)）只影响绘制裁剪，不影响布局矩形。
+- **`margin` 运行时已落地（M5.22）**：`Style::Margin(float)` / `Margin(Thickness)` 声明四边外边距（左/上/右/下，DIP，默认 0）。`width` / `height` / `minWidth` / `maxWidth` 仍指元素盒；Measure 结果为**外边距盒**（元素盒 + margin），父布局的聚合、grow/shrink、Grid 轨道、Wrap 装箱与滚动容器 `extent` 都按它计算，Arrange 再从槽位收缩出 `Bounds()`。因此 margin 区域不画背景、也不响应命中；相邻 margin 直接叠加、不塌陷（§7-1）。
 
 ---
 
@@ -90,18 +91,24 @@ display: Flex; flexDirection: Column; alignItems: Stretch   ← 默认值
 
 块级流 = `Column + Stretch` 默认组合；行内流 = `Row + Wrap`。
 
-### 4.2 Grid
+### 4.2 Grid（运行时已落地）
 
 ```cpp
-// 结构化轨道定义（不做 CSS 字符串解析）
-gridTemplateColumns({ Flex(1), Fixed(120), Auto, Flex(2) });
-child->Set(Prop::GridColumn, 1);   // 从 0 计
-child->Set(Prop::GridRowSpan, 2);
+grid->SetStyle(dui::Style()
+    .Display(dui::Display::Grid)
+    .GridTemplateColumns({dui::Fixed(120.f), dui::Flex(1.f), dui::Auto, dui::Percent(20.f)})
+    .GridTemplateRows({dui::Fixed(52.f), dui::Flex(1.f)})
+    .Gap(8.f));
+child->Set(dui::Prop::GridColumn, 1);       // 从 0 计
+child->Set(dui::Prop::GridColumnSpan, 2);
 ```
 
-- 轨道类型：`Fixed` / `Flex`（份数）/ `Auto`（取该轨道内容最大值）/ `Percent`。
-- 放置：MVP 支持**按序自动放置** + 显式 `gridRow` / `gridColumn` + `RowSpan` / `ColumnSpan`；不做"命名区域"。
-- 先算 `Auto` 轨道（需要子项自然尺寸），再按剩余空间分 `Flex` 份数。
+- 轨道类型：`Fixed`（DIP）/ `Flex`（份数）/ `Auto`（该轨道内容最大值）/ `Percent`（百分数 0..100）。结构化定义，不做 CSS 字符串解析。
+- `TrackList` 是变长声明，实体存在 `Style` 内（`FindTracks` 沿派生链由近及远找），不走定长 `StyleValue`；因此不可动画、无状态变体、无 `Element::Set` 运行时覆盖。两个 `gridTemplate*` `Prop` 仅作名义声明与失效标志。
+- 放置：**按序自动放置** + 显式 `gridRow` / `gridColumn`（0 基）+ `gridRowSpan` / `gridColumnSpan`（默认 1）；显式格子被占时放宽为按序自动放置。行不足时追加隐式行（未声明 `gridTemplateRows` 时全部按 `Auto`）。不做命名区域。
+- 轨道求解：`Auto` 先取子项自然尺寸（跨格按均摊），再定 `Fixed` / `Percent`，最后把剩余空间按 `Flex` 份数分配；测量阶段（`MeasureGridContent`）与排布阶段共用 `ComputeGrid` 同一套规则，避免测量与排布尺寸不一致。
+- 行列间距统一用 `gap`（`rowGap`/`columnGap` 未做）；子项默认 `AlignItems::Stretch` 占满格子，`Start`/`Center` 用自然尺寸；`JustifyContent` 不参与 Grid（格子已定）。
+- 自然尺寸阶段没有确定容器尺寸，`Percent` / `Flex` 轨道保留内容下界；不设 `gridTemplateColumns` 时退化为单列。示例见 `Samples/Layout` 末段。
 
 ### 4.3 定位（运行时已落地）
 
@@ -111,7 +118,9 @@ row->AddChild<dui::Panel>(dui::Style()
     .Position(dui::Position::Relative).Left(24.f).Top(16.f)
     .Width(120.f).Height(48.f));
 
-// Absolute：脱离流，相对父容器 padding 盒
+// Absolute：脱离流，相对最近 position != Static 的祖先 padding 盒。
+// 想让直接父成为基准，就给父设 Relative；否则一路回溯到根（窗口客户区）。
+parent->SetStyle(dui::Style().Position(dui::Position::Relative));
 parent->AddChild<dui::Panel>(dui::Style()
     .Position(dui::Position::Absolute).Right(12.f).Bottom(12.f)
     .Width(150.f).Height(36.f));
@@ -126,25 +135,27 @@ anyParent->AddChild<dui::Panel>(dui::Style()
 | --- | --- | --- | --- |
 | `Static`（默认） | 是 | 父内容盒 | 随内容 |
 | `Relative` | 是，兄弟不动 | 自身流内位置 + `Left/Top` | 随内容 |
-| `Absolute` | 否 | 父容器 padding 盒（不做 CSS "最近定位祖先"） | 挂在 Scroller 内则随内容 |
+| `Absolute` | 否 | 最近 `position != Static` 祖先的 padding 盒；无则根（窗口客户区） | 随 CB 所在滚动上下文；非 CB 的中间 Scroller 不裁它 |
 | `Fixed` | 否 | 窗口客户区（忽略 Root padding） | 不随滚动，也不随祖先 transform |
 
 - `Left/Top/Right/Bottom` 单位 DIP；**未设的一边 = Auto**（用元素自然尺寸），同设 `Left+Right` / `Top+Bottom` 则拉伸。百分比未做。
 - `Relative` 只认 `Left/Top`（`Right/Bottom` 忽略）；改的是 `Bounds()`，故绘制、命中、焦点链自动一致，偏移也会撑大父的 `extent`（滚动范围，同 CSS overflow region）。
 - `Static` 下四边属性一律忽略 —— 要移动普通元素用 `TranslationX/Y`（Paint 级变换，不改 `Bounds()`、不重排）。
 - 脱离流子项仍被测量（自然尺寸），但不参与父的 measure 聚合、grow/shrink、Wrap 与 `extent`。
-- `Absolute` 只在**所属容器内部**层叠：流内子项按树序先画、脱离流子项按 `zIndex` 升序后画，命中按相同顺序倒序，保证后画者先命中；它仍随父容器滚动、受 Scroller 视口裁剪。
+- `Absolute` 的定位基准与层叠归属都是 **CB（最近定位祖先）**：布局期把每个 Absolute 登记到 CB 名下的锚点表，绘制 / 命中在该 CB 的脱离流趟统一消费（流内子项按树序先画、脱离流项按 `zIndex` 升序后画，命中倒序）。因此可**跨中间容器提升**：非 CB 的中间容器（含 `Scroller`）既不改变基准，也不施加滚动原点 / 视口 scissor / 内容裁剪；CB 自身的 overflow 仍裁它，CB 在滚动内容里则随内容滚动。`Bounds()` 已是绝对布局坐标，跨层无需坐标累加。
+  - 跨层项在 CB 处绘制时，样式继承仍沿**真实父链**重建（`Collector::ContextOf`）；transform 祖先不成为 CB，故中间祖先的变换不施加到跨层项（绘制与命中两侧一致，见 §7-9）。
+  - 锚点表按布局遍历顺序分组、跨帧复用（`clear` 保留容量），稳态零分配；`UseOrderedOutOfFlow()`（存在 Absolute 或使用 zIndex）为 false 时绘制 / 命中四处都走原两趟，未使用 Absolute 的应用零额外遍历与解析。
 - `Fixed` 可挂在**任意层级**（含 Scroller 内部），整棵子树延后到**窗口级 Fixed 层**：主树（含滚动条）全部画完后统一绘制，因此所有 Fixed 都盖过普通内容。绘制与命中都用窗口客户区坐标：
-  - 不受祖先 `TranslationX/Y/Rotation/Scale` 与 Scroller 内容原点（`-off`）影响；Fixed **自身**的 transform 仍生效。与 CSS 不同：带 transform 的祖先**不**成为 containing block。
+  - 不受祖先 `TranslationX/Y/Rotation/Scale` 与 Scroller 内容原点（`-off`）影响；Fixed **自身**的 transform 仍生效。与 CSS 不同：带 transform 的祖先**不**成为 containing block（§7-9）。
   - 祖先 `Display::None` 与 `ContentClipRect` 仍约束它（用记录时的祖先裁剪快照），Scroller 的**视口 scissor 不裁它** —— 否则挂在滚动容器里就退化成 Absolute。
   - `Opacity` 当前是逐元素、非继承属性，祖先 opacity 不累积到 Fixed（15-Properties §4.1）。
   - 多个 Fixed 按遍历顺序（流内子项先、`Absolute` 子树后；同组按树序）记录，倒序命中即"后画者在上"。Fixed 子树内再嵌套 Fixed 不二次提升，就地绘制。
   - 布局期用 `FixedCount()` 统计；计数为 0 时绘制与命中两侧都整段短路，未使用 Fixed 的应用零额外遍历与属性解析（10-Rendering §6.3）。
-- `zIndex`（Int，默认 0，可为负）**只对同一父容器内的 `Absolute` 子项生效**：按值升序绘制（小值在下），同值保持树序；命中按同一有序列表倒序，保证后画者先命中。
-  - 排序由 `ZOrderedOutOfFlow()` 统一提供，`Frame.cpp` 的 `Collect` / `CollectScroller`、`Event.cpp` 的 `HitTestInner` / `CollectFixedLayer` 四处消费同一顺序，故 Fixed 层收集顺序也不会漂移。
-  - **不改**"脱离流子项整体后画"：负 `zIndex` 只沉到其他 Absolute 之下，不会沉到流内内容之下（与 CSS 的 stacking context 不同，见 §7-10）。
-  - `Fixed` 由窗口级 Fixed 层管理，`zIndex` 对它无效（恒视为 0）；流内的 `Static` / `Relative` 子项忽略 `zIndex`。不跨容器排序、不建 stacking context。
-  - 布局期 `ZIndexCount()` 统计是否使用了非默认 `zIndex`；为 0 时四处都走原两趟、不进排序路径，未使用 zIndex 的应用零额外遍历与分配。有序列表缓冲按递归深度分层跨帧复用（同 `Layout.cpp ItemsAt` 的 `unique_ptr` 模式）。
+- `zIndex`（Int，默认 0，可为负）**只对同一 CB 内的 `Absolute` 生效**：按值升序绘制（小值在下），同值保持锚点表顺序（≈ 树序）；命中按同一有序列表倒序，保证后画者先命中。
+  - 排序由 `ZOrderedOutOfFlow()` 统一提供（数据源为归属该 CB 的锚点 + 直接 `Fixed` 子项），`Frame.cpp` 的 `Collect` / `CollectScroller`、`Event.cpp` 的 `HitTestInner` / `CollectFixedLayer` 四处消费同一顺序，故 Fixed 层收集顺序也不会漂移。
+  - **不改**"脱离流子项整体后画"：负 `zIndex` 只沉到同一 CB 的其他 Absolute 之下，不会沉到流内内容之下（与 CSS 的 stacking context 不同，见 §7-10）。
+  - `Fixed` 由窗口级 Fixed 层管理，`zIndex` 对它无效（恒视为 0）；流内的 `Static` / `Relative` 子项忽略 `zIndex`。不建 stacking context。
+  - 布局期 `ZIndexCount()` 统计非默认 `zIndex`、`AbsoluteCount()` 统计 Absolute；两者都为 0 时四处都走原两趟、不进排序路径。有序列表缓冲按递归深度分层跨帧复用（同 `Layout.cpp ItemsAt` 的 `unique_ptr` 模式）。
   - `zIndex` 标脏 `kFlagLayout`（不改几何，只为刷新上述统计），无动画标签。
 - `Left/Top` 有动画标签 `dui::Left` / `dui::Top`，每帧 `kFlagLayout` 全树重排；轻量视觉变换仍用 `dui::TranslationX`（`kFlagPaint`）。
 
@@ -227,8 +238,8 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
 | 6 | 父尺寸 `auto` 时百分比解析为 `auto` | 与 CSS 主流行为一致，显式列出避免歧义 |
 | 7 | 单遍约束近似，不做完整 intrinsic sizing 多遍求解 | 换取实现复杂度大幅下降（"不追求通用"原则）；**有意取舍，不追求与浏览器逐项一致** |
 | 8 | `box-sizing` 默认 `BorderBox` | 业界实践，写界面更直觉 |
-| 9 | 带 transform 的祖先**不**成为 `Fixed` 的 containing block | 保留"Fixed 永远钉在窗口"的直觉，避免逐层逆变换与离屏层；Fixed 自身 transform 仍生效（§4.3） |
-| 10 | 不做 stacking context：`zIndex` 只排同一父容器内的 `Absolute`，负值也不沉到流内之下 | 保持"脱离流统一后画"的简单层叠模型，避免为 zIndex 引入层树与逐层排序（§4.3） |
+| 9 | transform / `contain` 祖先**不**成为 `Absolute` / `Fixed` 的 containing block | 项目无 `contain` 属性；transform 是 Paint 级顶点变换（不改 `Bounds`、不重排、scissor 轴对齐），引入旋转后的布局基准会造成语义撕裂。`Fixed` 保留"永远钉在窗口"的直觉，跨层 Absolute 也不受中间 transform 祖先的变换影响（§4.3） |
+| 10 | 不做 stacking context：`zIndex` 只排同一 CB 内的 `Absolute`，负值也不沉到流内之下 | 保持"脱离流统一后画"的简单层叠模型，避免为 zIndex 引入层树与逐层排序（§4.3） |
 
 ---
 
@@ -246,10 +257,11 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
 | `flexGrow` / `flexShrink` | Float | 默认 0 / 1 |
 | `flexBasis` | Length | 默认 Auto |
 | `gap` / `rowGap` / `columnGap` | Length | 默认 0 |
+| `margin` | Thickness | 四边外边距；外边距盒参与占位、不塌陷（§3/§7-1），运行时已落地 |
 | `boxSizing` | Enum | BorderBox（默认）/ ContentBox |
 | `position` | Enum | Static（默认）/ Relative / Absolute / Fixed（运行时已实现） |
 | `left` / `top` / `right` / `bottom` | Float（DIP） | 未设 = Auto；仅定位元素生效，Static 忽略 |
-| `zIndex` | Int | 默认 0；仅同一父容器内的 `Absolute` 生效，按值升序（同值按树序），Fixed / 流内忽略（§4.3） |
+| `zIndex` | Int | 默认 0；仅同一 CB 内的 `Absolute` 生效，按值升序（同值按树序），Fixed / 流内忽略（§4.3） |
 | `overflow` | Enum | Visible（默认）/ Hidden / Scroll |
 | `gridTemplateColumns` / `gridTemplateRows` | TrackList | 轨道定义 |
 | `gridRow` / `gridColumn` / `gridRowSpan` / `gridColumnSpan` | Int | 显式放置与跨格 |
@@ -277,6 +289,8 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
 
 建议：轨道（Fixed/Flex/Auto/Percent）+ 自动放置 + 显式行列 + 跨格；**不做**命名区域、嵌套 grid 专项优化、`minmax()` / `fit-content()` 等函数式轨道（可用 `min/max` 属性近似）。
 
+已按此边界落地（§4.2，M5.21）；另不做 CSS 字符串解析、`rowGap` / `columnGap`、隐式列。
+
 ### D5 滚动模型
 
 建议：`overflow: Scroll` + 容器内容偏移（不重排）+ 独立滚动条控件；惯性/平滑滚动与 `UI.Animation` 联动，列为 P1。
@@ -287,8 +301,8 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
 
 | 期 | 内容 |
 | --- | --- |
-| **P0** | 盒模型（含 box-sizing）、Flex 全量（§4.1）、**`position` 四值 + 四边定位（已落地，§4.3）**、auto/固定/百分比、min/max、`display: None` |
-| **P1** | Grid（§9-D4 边界）、`overflow: Scroll` + 滚动条、RTL（`direction` 与 flex 主轴联动，依赖 Text 层） |
+| **P0** | 盒模型（含 box-sizing，**`margin` 已落地，§3**）、Flex 全量（§4.1）、**`position` 四值 + 四边定位（已落地，§4.3）**、auto/固定/百分比、min/max、`display: None` |
+| **P1** | **Grid（§4.2，已落地）**、`overflow: Scroll` + 滚动条、RTL（`direction` 与 flex 主轴联动，依赖 Text 层） |
 | **P2** | 普通流的 `zIndex`、`alignItems: Baseline`、嵌套百分比与浏览器对齐的精化（§7-7） |
 
 ---
@@ -297,7 +311,7 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
 
 1. D1–D5 是否按建议拍板。
 2. 默认值组合（`Column + Stretch`）是否作为全局默认 —— 影响所有控件的书写习惯。
-3. Grid 是否进 P0（若控件库对表单/列表有强需求则提前）。
+3. Grid 是否进 P0 —— 已按 P1 边界落地（§4.2），不再待确认。
 4. 富文本 / inline 混排是否进 MVP（影响 §4.4 与 ADR-017）。
 5. `alignItems: Baseline` 是否需要（文本混排场景常用，但实现涉及跨元素基线对齐）。
 6. 滚动的具体形态：像素滚动 vs 行滚动、滚动条常显/悬浮。

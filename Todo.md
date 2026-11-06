@@ -1,6 +1,6 @@
 # DUI 开发任务清单（Todo）
 
-> 最后更新：2026-11-05。
+> 最后更新：2026-11-06。
 > 当前进度：**M5 已完成**（DirectWrite 真实文字渲染 + 灰度字形图集 + DPI 切换分级失效）；
 > **M5.5 已完成**（2D 绘图控件 `dui::Canvas` + Graphics 形状批 + `Samples/Canvas` 示例）；
 > **M5.6 已完成**（滚动容器 `dui::Scroller`：横纵滚动条 + 绘制单元裁剪 + `Samples/Scroller` 示例）；
@@ -823,6 +823,98 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 - 把 `Samples/Layout` 中的 5 段定位示例整体迁入：`Relative` / `Absolute` / `Fixed` / `Fixed 放在 Scroller 内` / `zIndex`；示例视觉与交互行为保持一致（辅助函数 `NewBox` 去掉定位示例未用的 grow/shrink 参数）。
 - `Samples/Layout` 只留 Flex 布局演示（FlexGrow / 定宽+弹性 / FlexShrink / 对齐 / Gap），窗口高度 1240 → 640；`Position` 窗口高度 720。
 - 文档同步 `README.md`、`00-Overview §6`、两个示例的文件头。
+- Debug + Release 全量重建零警告。
+
+---
+
+## M5.17 — B2 有序指令显示列表 ✅（2026-11-06 完成）
+
+- 起因：`Samples/Position` 的 zIndex 示例里底层色块文字穿透上层背景。根因是旧「单元内四批固定顺序（矩形 → 字形 → 形状 → 图像）」在单元范围内按类型重排，牺牲了元素级绘制顺序；`zIndex` 排序本身正确。
+- `Graphics/Graphics.h/.cpp`：`Painter` 从「顶点发射器」改为「指令记录器」—— `PaintCommand`（定宽 64 B，四类 `PaintOp`）+ `PaintState`（DIP 变换 + 滚动原点状态槽）；删除 4 个顶点 vector、`GlyphGroup`/`ImageGroup`、记录期的 `eff_`/`Recompute()`/`Xf()`。
+- `Device::Render`：新增 `float scale` 参数；按指令顺序**一遍流式**发射顶点到动态 VB，顶点按段线性排布；段 = 同单元、同 `op`、同 `resource` 的连续指令（单段受 `kMaxQuads` 限制）；按段 `DrawIndexed(quadCount*6, 0, 0)`，VB 绑到段字节起点。**删除负 `BaseVertexLocation`、跨单元 `quadBase`、固定四批顺序**（M5.x 的整屏错乱坑不复存在）。
+- `App/Frame.cpp`：`SetTransform` 改传 DIP 空间变换（3 处），`TransformScope` 同步；`Render` 传 `native.Scale()`；`BeginClip` 的裁剪 AABB 改用 `EffectiveTransform(scale)`，与发射期共用 `StateTransform()` 推导。`Kind::Image` 单独成单元 P0 保留、P1 清理。
+- 坐标语义（甲方案）：`Rect`/`Image` 存 DIP，`Shape` 存含 origin 的物理像素，`Glyph` 存布局空间物理像素（绑定当前 DPI 图集位图 → DPI 变化时须整体重收集）；滚动只改状态槽。`UI/*`、`Text/*`、`Samples/*` 零改动。
+- **消除既有已知限制**：M5.5「三批分离导致跨批 Z 序不严格 / 形状盖住子元素文字」、M5.10「图像批固定在末尾需单独成单元」不再成立（历史记录保留，描述当时状态）。
+- **代价与后续**：Draw Call 从 O(批数) 变为 O(段数) ≈ 绘制序列的批切换次数，与 R3「Draw Call 与元素数解耦」有张力；P1 指令级视口剔除 / 不变子树指令缓存，P2 tile 脏区光栅 + 合成层。
+- 文档同步 `10-Rendering §6.1`、`16-Image §3/§3.1`、`05-Animation`、`01-Layering`、`00-Overview §6`。
+- Debug + Release 全量重建零警告。
+
+---
+
+## M5.18 — Absolute 最近定位祖先（完整 CSS 语义） ✅（2026-11-06 完成）
+
+- `Absolute` 的定位基准由「直接父盒」改为「最近 `position != Static` 祖先的 padding 盒」，无定位祖先时退回根 / 窗口客户区；`Relative` / `Absolute` / `Fixed` 都算定位祖先。`Bounds()` 已是绝对布局坐标，跨层无需累加换算。
+- 层叠归属同步：布局期按 CB 分组建立锚点表（`ContainingBlockOf` / `NoteAbsoluteAnchor`，跨帧复用、稳态零分配），`ZOrderedOutOfFlow()` 的数据源改为「归属该 CB 的 Absolute + 直接 Fixed 子项」；`Frame.cpp` 的 `Collect` / `CollectScroller`、`UI/Event.cpp` 的 `HitTestInner` / `CollectFixedLayer` 四处共用 `UseOrderedOutOfFlow()` 同一列表，绘制 / 命中顺序仍一致。
+- 因此 Absolute 可跨中间容器提升：非 CB 的中间容器（含 `Scroller`）不改变基准，也不施加滚动原点 / 视口 scissor / 内容裁剪；CB 自身 overflow 仍裁它，CB 在滚动内容里则随内容滚动。`zIndex` 作用域随之由「同一父容器」改为「同一 CB 内」。
+- `Collector::ContextOf` 为跨层项沿真实父链重建样式继承态（直接子项沿用当前 ctx，零额外遍历）。
+- **保留的 CSS 偏差**（`04-Layout §7-9/10`，按方案约定）：transform / `contain` 祖先不成为 CB（跨层项也不受中间 transform 影响）；`Fixed` 仍走窗口级层；不做 stacking context，负 `zIndex` 不沉到流内之下。
+- `Samples/Position`：给原有 Absolute / zIndex 容器补 `Position::Relative`（否则 CB 退到窗口）；新增「最近定位祖先」段，用两个 Static 中间容器里的 Absolute 验证跨容器提升、跨容器 zIndex 排序与点击命中。窗口高度 720 → 900。
+- 文档同步 `04-Layout §4.3/§7`、`15-Properties`、`06-Events`、`10-Rendering §6.3`、`00-Overview §6`。
+- Debug + Release 全量重建零警告。
+
+---
+
+## M5.19 — P1 渲染开销优化（两项） ✅（2026-11-06 完成）
+
+- 清理 `Kind::Image` 单独成单元：B2 后图像是四类 `PaintOp` 之一、按收集顺序提交，旧固定批序时代的绕法已无必要；`App/Frame.cpp` 删掉该分支，图像走普通路径，少了 2 个多余 `DrawUnit` 与随之而来的断段。
+- 指令级视口剔除：`Graphics.cpp::CommandBounds` 按四类 op 各自的坐标语义还原物理像素 AABB（含状态槽 origin / 变换、Shape 描边外扩），`Device::Render` 发射期与当前单元 scissor 求交（留 2 px AA 余量），不相交的指令不发射顶点、不进段 —— 屏外元素与被裁剪子树不再产生段。
+- **未做（有前置条件，非工作量问题）**：不变子树指令缓存 / 显示列表分段缓存受 `10-Rendering §9-5` 双指标约束（P95 收集耗时 > 0.5 ms 且占当帧 CPU > 15%、连续 100 帧），需先落地观测指标面板；tile 脏区光栅 + 合成层受 `§5` 已定 D2（FLIP 交换链 Present 后后台缓冲内容未定义 → 按需全量光栅）与 `§8 P2`「profile 证明全量光栅是瓶颈」约束，须先建脏矩形收集系统与持久离屏纹理。
+- 文档同步 `16-Image §3.1`、`10-Rendering §6.1/§8`。
+- Debug + Release 全量重建零警告。
+
+---
+
+## M5.20 — CustomCtrl 示例：自定义控件 ✅（2026-11-06 完成）
+
+- 新增 `Samples/CustomCtrl`（vcxproj / filters / user + `DUI.slnx` 挂接），一个可拖拽的 `ValueSlider` 走完自定义控件全链路。
+- 覆盖能力：派生 `dui::Element` + `AddChild<T>()` 挂树；`MeasureContent` 报自然尺寸（不设 Width/Height 也能参与布局）；`OnPaint` 用 `Painter` 的圆角矩形 / 直线 / 椭圆自绘；`HandlePointerDown/Move/Up` + `SetCapture()` 拖拽；`InvalidatePaint()` 只标 Paint 脏；`ResolveProperty` 读 `Prop::Color` 配合 `Element::When(State::Hover, …)` 状态变体；`OnChanged` 对外抛值变化。
+- 记录一个公共头边界：`DUI/DUI.h` 只前向声明 `graphics::Painter`，自绘控件需额外包含 `Graphics/Graphics.h`。
+- 文档同步 `00-Overview §6` 示例清单。
+- Debug + Release 全量重建零警告。
+
+---
+
+## M5.21 — Grid 布局 ✅（2026-11-06 完成）
+
+- `Display::Grid` 不再静默退化成 Flex：新增 4 类结构化轨道（`Fixed`/`Flex`/`Auto`/`Percent`）、`GridTemplateColumns/Rows` 变长声明（`Style::FindTracks` 沿派生链查找）、`GridRow/Column/RowSpan/ColumnSpan` 标量属性（追加在 `Prop` 表尾，不重排已有 ID）。
+- `Layout.cpp::ComputeGrid` 统一「自动放置 / 显式行列 / 跨格 / 隐式行 / 轨道求解」；`MeasureGridContent`（Measure 阶段）与 `ArrangeElement`（排布阶段）共用同一规则。显式格子被占时放宽为按序自动放置，避免隐式行无限扩展。
+- 边界（按 `04-Layout §9-D4`）：不做命名区域、`minmax()`/`fit-content()`、嵌套 grid 专项优化、CSS 字符串解析、`rowGap`/`columnGap`；行列间距统一用 `gap`。TrackList 不走定长 `StyleValue`，故不可动画 / 无状态变体 / 无运行时 `Set` 覆盖。
+- `Element::Measured()` 公开读取 Measure 结果（布局侧需子项自然尺寸）；`PropFlagsOf` 把 6 个 Grid 属性归入 `kFlagLayout`，`BuiltinDefault` 给两个 span 默认 1。
+- `Samples/Layout` 新增 Grid 演示段（四类轨道 + 自动放置 + 显式跨格），窗口高度 640 → 800。
+- 文档同步 `04-Layout §4.2/§9-D4/§10/§11`、`15-Properties §4.4`、`00-Overview §6`。
+- Debug + Release 全量重建零警告。
+
+---
+
+## M5.22 — `margin` / `textAlign` 补齐消费链路 ✅（2026-11-06 完成）
+
+- 起因：两个 `Prop` 早在属性表里声明（含失效标志），但全库没有任何读取点，也没有链式 API —— 属于"假能力"。
+- **`margin`**：新增 `Style::Margin(float)` / `Margin(const Thickness&)`（四边 DIP，默认 0）。实现口径是**外边距盒**：`MeasureElement` 把 margin 计入 `measured_`，父布局的聚合 / grow·shrink / Grid 轨道 / Wrap 装箱 / 滚动容器 `extent` 统一按它计算；`ArrangeElement` 从槽位收缩出 `Bounds()`（背景 / 自绘 / 命中都不含 margin）。显式 `Width`/`Height`/`MinWidth` 仍指元素盒，故这些路径改读含 margin 的 `Measured()`；相邻 margin 直接叠加、不塌陷（`04-Layout §7-1`）。
+- **`textAlign`**：新增 `dui::TextAlign::Start/Center/End` 与 `Style::TextAlign()`；补齐继承链（`StyleContext::textAlign` + `TryResolve` 层 5 回退），修掉遍历内 / 外两条读路径不一致。静态 `Text` 在 `Frame.cpp::DrawTextContent` 按内容盒剩余宽度做绘制期平移 —— 不改 `IDWriteTextLayout`，故 `TextBox` 的水平滚动与命中测试不受影响，标 `kFlagPaint` 即可。多行按最长行整体对齐（不逐行居中）；`TextBox` / `TextArea` 不参与。
+- `Samples/Layout` 新增两段演示（Margin 四边同值 / 左右独立 + 不塌陷；TextAlign 三值 + 父级继承），窗口高度 800 → 1020。
+- 文档同步 `15-Properties §4.1/§4.2`、`04-Layout §3/§8/§10`、`11-Text §3`、`00-Overview §6`。
+- Debug + Release 全量重建零警告。
+
+---
+
+## M5.23 — 运行时 `Set()` 支持非标量属性 ✅（2026-11-06 完成）
+
+- 起因：`Element::Set` 模板只接枚举 / 整型 / 浮点，`SetOverride(Prop, float, uint32_t)` 也只写 `f`/`u` 两槽 —— `padding` / `cornerRadius` / `margin`（`Thickness` 存 `f` + `extra[3]`）与 `fontFamily`（零拷贝 `const wchar_t*`）在运行时覆盖路径上完全写不进去，属于"声明了但改不了"。
+- 修法：`Set` 按值形态构造完整 `StyleValue`（`Thickness` 写四边、字体族写 `family`）；`SetOverride` 改为接收 `StyleValue` 并**整体替换**同 `Prop` 的旧值，避免从 Thickness 切回标量、或从字体族切回其它值时残留旧槽。
+- 标量传给四边厚度属性时按**四边同值**展开（`IsThicknessProp()`），与 `Style::Padding(float)` / `Margin(float)` / `CornerRadius(float)` 语义一致。字体族沿用零拷贝指针契约，传入串须活到覆盖被替换（建议字面量）—— 与 `Style::FontFamily()` 的悬空坑同源。
+- `Samples/Layout` 新增点击切换演示（`Thickness` / 标量四边同值 / `L"SimSun"` 字体族），同时实例化 `Set` 的所有新分支；窗口高度 1020 → 1120。
+- 文档同步 `03-Style §6.1`、`15-Properties §5`、`00-Overview §6`。
+- **未覆盖（另有前置约束，非本次根因）**：`GridTemplateColumns/Rows` 是变长 TrackList，实体存 `Style` 而非 `StyleValue`，`GridTracksOf` 不查覆盖层（M5.21 已定边界）；`Animate()` 的标签白名单仍只有 `float` / `Color`，不支持 Thickness 补间；`CornerRadius` 绘制侧（`Frame.cpp::DrawBackground`）只读 `.f` 作统一圆角，`extra[3]` 尚未消费 —— 这是 `Style::CornerRadius(Thickness)` 既有的存储/消费缺口，四角独立半径需 Graphics 层支持。
+- Debug + Release 全量重建零警告。
+
+---
+
+## M5.24 — 新建 Style 示例，样式演示从 Layout 迁出 ✅（2026-11-06 完成）
+
+- 新建 `Samples/Style`（vcxproj / filters / user + `DUI.slnx` 挂接），产物 `Build\Style\Debug|Release\Style.exe`。
+- 示例覆盖样式系统本身：静态 `Style` 复用与 `Style::Derive` 派生链（只存差异）、继承属性沿树下传（`FontSize` / `FontWeight` / `Color` / `FontFamily`）、`When(State::Hover, …)` 状态变体 + `Cursor`、级联优先级（`Style` → 层 3 `Set` → 层 2 变体）、视觉属性集（`Background` / `Opacity` / `CornerRadius` / 字号字重 / `LineHeight` / `Padding`）。
+- 把 M5.22 / M5.23 加进 `Samples/Layout` 的三段非布局演示（Margin / TextAlign / 运行时 `Set`）整体迁入 `Samples/Style`；`Layout` 恢复纯布局演示，窗口高度 1120 → 800。
+- 文档同步 `00-Overview §6`、`README.md` 示例清单。
 - Debug + Release 全量重建零警告。
 
 ---

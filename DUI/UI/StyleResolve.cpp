@@ -55,6 +55,11 @@ StyleValue MakeF(Prop p, float f) {
 
 }  // namespace
 
+const std::vector<GridTrack>* GridTracksOf(const Element* e, Prop p) {
+    const Style* s = e->StylePtr();
+    return s != nullptr ? s->FindTracks(p) : nullptr;
+}
+
 // ---- 层 2/3/4：元素自身链（状态变体 → 本地覆盖 → Style 派生链）------------
 
 bool TryResolveElement(const Element* e, Prop p, StyleValue& out) {
@@ -101,6 +106,7 @@ bool TryResolve(const Element* e, Prop p, const StyleContext& ctx, StyleValue& o
     case Prop::LineHeight: out = MakeF(p, ctx.lineHeight); return true;
     case Prop::FontWeight: out = MakeU(p, ctx.fontWeight); return true;
     case Prop::FontFamily: out.family = ctx.family;        return true;   // nullptr = 引擎默认
+    case Prop::TextAlign:  out = MakeU(p, ctx.textAlign);  return true;
     default:
         return false;   // 非继承属性：交给内建默认（层 7）
     }
@@ -119,6 +125,8 @@ StyleValue BuiltinDefault(Prop p) {
     case Prop::SelectionColor: return MakeU(p, 0x803399FF);
     case Prop::FlexShrink:   return MakeF(p, 1.f);   // 15-Properties §4.4
     case Prop::FlexDirection: return MakeU(p, static_cast<uint32_t>(FlexDirection::Column));
+    case Prop::GridRowSpan:
+    case Prop::GridColumnSpan:  return MakeU(p, 1u);
     // 滚动条：厚 10 DIP，轨道/滑块半透明黑；直角、无边框（圆角/边框走 0 兜底）
     case Prop::ScrollbarTrackWidth:
     case Prop::ScrollbarTrackHeight:
@@ -156,6 +164,7 @@ StyleContext StyleContext::Child(const Element* e) const {
     if (TryResolveElement(e, Prop::LineHeight, v)) c.lineHeight = v.f;
     if (TryResolveElement(e, Prop::FontWeight, v)) c.fontWeight = v.u;
     if (TryResolveElement(e, Prop::FontFamily, v)) c.family = v.family;   // nullptr 透传引擎默认
+    if (TryResolveElement(e, Prop::TextAlign, v))  c.textAlign = v.u;
     return c;
 }
 
@@ -182,11 +191,66 @@ void ResetFixedCount() noexcept { g_fixedCount = 0; }
 void NoteFixed() noexcept { ++g_fixedCount; }
 uint32_t FixedCount() noexcept { return g_fixedCount; }
 
+// ---- 最近定位祖先 / 锚点表（04-Layout §4.3）---------------------------------
+// Absolute 的定位基准与层叠归属都是"最近 position != Static 的祖先"：布局期按
+// 该祖先分组登记，绘制 / 命中在该祖先处统一消费，故可跨中间容器提升（不受中间
+// Scroller 的滚动原点与视口 scissor 影响）。Fixed 仍走窗口级层，不进锚点表。
+const Element* ContainingBlockOf(const Element* e) {
+    const Element* root = e;
+    for (const Element* a = e->Parent(); a != nullptr; a = a->Parent()) {
+        root = a;
+        if (ResolveProperty(a, Prop::Position).u != static_cast<uint32_t>(Position::Static))
+            return a;
+    }
+    return root;   // 无定位祖先 → 初始包含块（根 Bounds = 窗口客户区）
+}
+
+namespace {
+struct AnchorGroup {
+    const Element* cb = nullptr;
+    std::vector<Element*> items;
+};
+uint32_t g_absoluteCount = 0;
+uint32_t g_anchorUsed = 0;
+
+std::vector<AnchorGroup>& AnchorGroups() {
+    static std::vector<AnchorGroup> v;   // 跨帧复用：clear 保留容量，稳态零分配
+    return v;
+}
+const std::vector<Element*>* AnchorsOf(const Element* cb) {
+    const std::vector<AnchorGroup>& groups = AnchorGroups();
+    for (uint32_t i = 0; i < g_anchorUsed; ++i)
+        if (groups[i].cb == cb) return &groups[i].items;
+    return nullptr;
+}
+}  // namespace
+
+void ResetAbsoluteAnchors() noexcept {
+    g_absoluteCount = 0;
+    g_anchorUsed = 0;
+    for (AnchorGroup& g : AnchorGroups()) g.items.clear();
+}
+
+void NoteAbsoluteAnchor(const Element* cb, Element* e) {
+    ++g_absoluteCount;
+    std::vector<AnchorGroup>& groups = AnchorGroups();
+    for (uint32_t i = 0; i < g_anchorUsed; ++i) {
+        if (groups[i].cb == cb) { groups[i].items.push_back(e); return; }
+    }
+    if (g_anchorUsed == groups.size()) groups.emplace_back();
+    AnchorGroup& g = groups[g_anchorUsed++];
+    g.cb = cb;
+    g.items.push_back(e);
+}
+
+uint32_t AbsoluteCount() noexcept { return g_absoluteCount; }
+
 // ---- zIndex（04-Layout §4.3）------------------------------------------------
 static uint32_t g_zIndexCount = 0;
 void ResetZIndexCount() noexcept { g_zIndexCount = 0; }
 void NoteZIndex() noexcept { ++g_zIndexCount; }
 uint32_t ZIndexCount() noexcept { return g_zIndexCount; }
+bool UseOrderedOutOfFlow() noexcept { return ZIndexCount() != 0 || AbsoluteCount() != 0; }
 
 int32_t ZIndexOf(const Element* e) {
     if (IsFixed(e)) return 0;   // Fixed 走窗口级层，不参与容器内排序
@@ -201,7 +265,14 @@ const std::vector<Element*>& ZOrderedOutOfFlow(const Element* e, uint32_t depth)
     if (!pool[depth]) pool[depth] = std::make_unique<std::vector<Element*>>();
     std::vector<Element*>& out = *pool[depth];
     out.clear();
-    for (Element* c : e->Children()) if (IsOutOfFlow(c)) out.push_back(c);
+    if (AbsoluteCount() != 0) {
+        // Absolute 按包含块提升；Fixed 仍按直接子项就地处理（窗口级层 / inFixedLayer）。
+        if (const std::vector<Element*>* a = AnchorsOf(e))
+            for (Element* c : *a) out.push_back(c);
+        for (Element* c : e->Children()) if (IsFixed(c)) out.push_back(c);
+    } else {
+        for (Element* c : e->Children()) if (IsOutOfFlow(c)) out.push_back(c);
+    }
     bool varied = false;
     for (const Element* c : out) if (ZIndexOf(c) != 0) { varied = true; break; }
     if (varied) {
@@ -271,6 +342,13 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::Bottom:
     // zIndex 不改几何，但要靠重排刷新布局期的使用计数（绘制/命中据此短路）
     case Prop::ZIndex:
+    // Grid（04-Layout §4.2）：轨道与放置都改布局盒
+    case Prop::GridTemplateColumns:
+    case Prop::GridTemplateRows:
+    case Prop::GridRow:
+    case Prop::GridColumn:
+    case Prop::GridRowSpan:
+    case Prop::GridColumnSpan:
         return kFlagLayout;
     case Prop::Cursor:
         return kFlagNone;   // 光标形态不影响布局也不影响绘制

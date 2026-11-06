@@ -22,8 +22,17 @@ void DrawTextContent(Element* e, const StyleContext& ctx, graphics::Painter& p, 
     if (para == nullptr) return;
     const StyleValue pv = ResolveProperty(e, Prop::Padding, ctx);
     const StyleValue cv = ResolveProperty(e, Prop::Color, ctx);
+    const StyleValue av = ResolveProperty(e, Prop::TextAlign, ctx);
     const Rect b = e->Bounds();
-    const Vec2 origin{b.x + pv.f, b.y + pv.extra[0]};   // 文本原点 = 内容盒左上
+    // textAlign（15-Properties §4.1）：段落按自然宽左排，绘制期在内容盒剩余宽度内
+    // 整体平移。不改 Paragraph 排版，故 TextBox 的水平滚动与命中测试不受影响；
+    // 多行文本按最长行整体对齐（不逐行居中）。
+    const float boxW = b.w - pv.f - pv.extra[1];
+    const float textW = para->size.x;
+    float dx = 0.f;
+    if (av.u == static_cast<uint32_t>(TextAlign::Center)) dx = (boxW - textW) * 0.5f;
+    else if (av.u == static_cast<uint32_t>(TextAlign::End)) dx = boxW - textW;
+    const Vec2 origin{b.x + pv.f + dx, b.y + pv.extra[0]};   // 文本原点 = 内容盒左上
     text::Engine::Get().Draw(para, p, scale, origin, cv.u);
 }
 
@@ -38,14 +47,10 @@ public:
     }
 
     graphics::Painter* Acquire() {
-        if (used_ < pool_.size()) {
-            graphics::Painter* p = pool_[used_++].get();
-            p->Reset();
-            return p;
-        }
-        pool_.push_back(std::make_unique<graphics::Painter>());
-        graphics::Painter* p = pool_.back().get();
-        ++used_;
+        if (used_ == pool_.size())
+            pool_.push_back(std::make_unique<graphics::Painter>());
+        graphics::Painter* p = pool_[used_++].get();
+        p->Reset();   // 新建与复用两条路径都要有默认状态槽
         return p;
     }
 
@@ -111,26 +116,13 @@ public:
         const bool transformed = !local.IsIdentity();
         if (transformed) {
             xform_ = saved * local;
-            painter_->SetTransform(xform_.Scaled(scale_));
+            painter_->SetTransform(xform_);
         }
         TransformScope scope{*this, saved, transformed};
 
         if (e->GetKind() == Kind::Scroller) {
             CollectScroller(static_cast<Scroller*>(e), ctx, depth);
             return;
-        }
-
-        // 图像元素单独成绘制单元：图像批在批序末尾（矩形 → 字形 → 形状 → 图像），
-        // 若与兄弟元素同单元，图像会盖住后画的文字。独立单元后，单元顺序即
-        // 元素树顺序 → z 序与兄弟元素一致。
-        if (e->GetKind() == Kind::Image) {
-            DrawBackground(e, ctx);      // 背景留在父级单元
-            Commit();
-            painter_ = AcquirePainter(origin_);
-            e->OnPaint(*painter_, ctx, scale_);
-            Commit();
-            painter_ = AcquirePainter(origin_);
-            return;                      // 图像元素无子元素
         }
 
         // 内容裁剪（TextBox/TextArea 的文本溢出）：背景仍画在父级单元，
@@ -150,10 +142,11 @@ public:
         // Event.cpp::CollectFixedLayer 的两趟遍历一致 → 倒序命中即"后画者先命中"。
         for (Element* c : e->Children())
             if (!IsOutOfFlow(c) || (lift && IsFixed(c))) Collect(c, ctx, clipPx_, depth + 1);
-        // Absolute 按 zIndex 升序绘制（同值按树序）；未使用 zIndex 时保持原两趟，零额外遍历。
-        if (ZIndexCount() != 0) {
+        // 脱离流趟：Absolute 提升到所属 CB 处，按 zIndex 升序绘制（同值按树序）。
+        // 未使用 Absolute / zIndex 时保持原两趟，零额外遍历。
+        if (UseOrderedOutOfFlow()) {
             for (Element* c : ZOrderedOutOfFlow(e, depth))
-                if (!(lift && IsFixed(c))) Collect(c, ctx, clipPx_, depth + 1);
+                if (!(lift && IsFixed(c))) Collect(c, ContextOf(c, e, ctx), clipPx_, depth + 1);
         } else {
             for (Element* c : e->Children())
                 if (IsOutOfFlow(c) && !(lift && IsFixed(c))) Collect(c, ctx, clipPx_, depth + 1);
@@ -194,8 +187,21 @@ private:
     graphics::Painter* AcquirePainter(const Vec2& origin) {
         graphics::Painter* p = list_.Acquire();
         p->SetOrigin(origin.x, origin.y, scale_);
-        p->SetTransform(xform_.Scaled(scale_));
+        p->SetTransform(xform_);
         return p;
+    }
+
+    // 跨中间容器提升到 CB 处绘制的 Absolute，样式继承仍须沿其真实父链重建；
+    // 直接子项沿用当前继承态，避免热路径额外遍历。
+    StyleContext ContextOf(Element* element, Element* host, const StyleContext& hostCtx) {
+        if (element->Parent() == host) return hostCtx;
+        static std::vector<Element*> chain;
+        chain.clear();
+        for (Element* a = element->Parent(); a != nullptr; a = a->Parent()) chain.push_back(a);
+        StyleContext c;
+        c.scale = scale_;
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) c = c.Child(*it);
+        return c;
     }
 
     // Collect() 有 Scroller / Image 等提前 return，用作用域守卫统一弹栈。
@@ -207,7 +213,7 @@ private:
         ~TransformScope() {
             if (!active) return;
             c.xform_ = saved;
-            c.painter_->SetTransform(c.xform_.Scaled(c.scale_));
+            c.painter_->SetTransform(c.xform_);
         }
     };
 
@@ -225,7 +231,7 @@ private:
         painter_ = AcquirePainter(st.origin);
         // scissor 只能轴对齐，故取变换后四个角点的 AABB：旋转的裁剪盒不会
         // 留在原位。恒等变换时结果与原矩形完全一致（零回归）。
-        const Transform2D eff = painter_->EffectiveTransform();
+        const Transform2D eff = painter_->EffectiveTransform(scale_);
         const float x0 = (dipRect.x + st.origin.x) * scale_;
         const float y0 = (dipRect.y + st.origin.y) * scale_;
         const float x1 = (dipRect.Right() + st.origin.x) * scale_;
@@ -291,9 +297,9 @@ private:
         const bool lift = !inFixedLayer_ && FixedCount() != 0;
         for (Element* c : sc->Children())
             if (!IsOutOfFlow(c) || (lift && IsFixed(c))) Collect(c, ctx, savedClip, depth + 1);
-        if (ZIndexCount() != 0) {
+        if (UseOrderedOutOfFlow()) {
             for (Element* c : ZOrderedOutOfFlow(sc, depth))
-                if (!(lift && IsFixed(c))) Collect(c, ctx, savedClip, depth + 1);
+                if (!(lift && IsFixed(c))) Collect(c, ContextOf(c, sc, ctx), savedClip, depth + 1);
         } else {
             for (Element* c : sc->Children())
                 if (IsOutOfFlow(c) && !(lift && IsFixed(c))) Collect(c, ctx, savedClip, depth + 1);
@@ -362,7 +368,7 @@ void Application::RenderFrame(Window& window, const platform::NativeWindow& nati
         }
     }
 
-    device.Render(list.Units().data(), static_cast<uint32_t>(list.Units().size()));
+    device.Render(list.Units().data(), static_cast<uint32_t>(list.Units().size()), native.Scale());
     device.Present();
 }
 

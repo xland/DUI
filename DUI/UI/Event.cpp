@@ -59,9 +59,10 @@ Element* HitTestInner(Element* e, const Vec2& ptAbs, bool inFixedLayer = false,
         }
         return HitTestInner(c, qc, inFixedLayer, depth + 1);
     };
-    // 与 Frame.cpp 两趟绘制对应：Absolute 后画 → 先命中（各自内部仍倒序）。
-    // 启用 zIndex 时按绘制侧同一有序列表倒序：值大者后画、先命中。
-    if (ZIndexCount() != 0) {
+    // 与 Frame.cpp 两趟绘制对应：流内子项先画、脱离流后画 → 倒序即先命中脱离流。
+    // 启用锚点 / zIndex 时按绘制侧同一有序列表（含跨层提升到本 CB 的 Absolute）倒序，
+    // 值大者后画、先命中。
+    if (UseOrderedOutOfFlow()) {
         const std::vector<Element*>& ordered = ZOrderedOutOfFlow(e, depth);
         for (auto it = ordered.rbegin(); it != ordered.rend(); ++it) {
             if (Element* hit = TryHit(*it)) return hit;
@@ -89,7 +90,7 @@ void CollectFixedLayer(Element* e, std::vector<Element*>& out, uint32_t depth) {
     for (Element* c : cs)
         if (!IsOutOfFlow(c) || IsFixed(c)) CollectFixedLayer(c, out, depth + 1);
     // 与 Frame.cpp 的第二趟同序：否则 Absolute 子树里的 Fixed 收集顺序会漂移。
-    if (ZIndexCount() != 0) {
+    if (UseOrderedOutOfFlow()) {
         for (Element* c : ZOrderedOutOfFlow(e, depth))
             if (!IsFixed(c)) CollectFixedLayer(c, out, depth + 1);
     } else {

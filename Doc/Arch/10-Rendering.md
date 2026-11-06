@@ -125,13 +125,17 @@
 
 ## 6. 批合并与光栅
 
-### 6.1 批合并
+### 6.1 有序显示列表与批合并（B2）
 
-- 排序规则：**不透明指令前置**（可按材质/图集自由重排，深度测试无关紧要，目标是减状态切换），**半透明指令保持树序**（画家算法，不可重排）。
-- 批的划分：同着色器 + 同图集/纹理 → 一个批；跨批仅在图集切换、层切换、裁剪形态变化处发生。
-- 顶点格式：`pos(2×f32) + uv(2×f32) + color(rgba8)` ≈ 20 B/顶点；矩形 4 顶点 + 6 索引，写入环形缓冲，帧末随 Arena 重置。
-- **当前四批**（共用同一动态 VB，按 stride 重绑 + 负 BaseVertexLocation 重定基）：矩形批 32 B/顶点、字形批 20 B/顶点（按图集页分组）、形状批 48 B/顶点（SDF 图元：`pos + local + params + extra/kind + halfStroke + color`）、图像批 20 B/顶点（顶点格式同字形批，PS 换成彩色纹理采样，按纹理分组）。批序 = 矩形 → 字形 → 形状 → 图像（跨批 z 序不严格，见 Todo 已知限制；图像元素在收集期单独成单元以保证与兄弟元素的 z 序）。
-- 指标：Draw Call 数、批数、顶点数纳入观测（ADR-015：以指标跟踪回归，不设硬门槛）。
+- **收集期**（`Painter`）：按元素树遍历顺序记录 `PaintCommand`（定宽 64 B：`op` / 状态槽索引 / 资源 id / 打包颜色 / 11 个参数）+ `PaintState`（DIP 空间变换 + 滚动原点）。指令不含烘焙后的窗口坐标（字形例外，见下），滚动只改状态槽；容量跨帧复用，稳态零分配。
+- **坐标空间**：`Rect` / `Image` 存 DIP 原值，`Shape` 存记录期换算好的物理像素（含 origin），`Glyph` 存布局空间物理像素 —— 字形绑定当前 DPI 下光栅化的图集位图与 1/4 像素相位，故 **DPI/resize 时字形指令须整体重收集**（与浏览器按 `(device scale, font, size)` 分桶的字形缓存同理）。其余指令可跨 scale 复用。
+- **状态槽**：`SetTransform` / `SetOrigin` 追加或复用状态槽，指令按索引引用。像素空间有效矩阵 `E = Translate(originPx) · xform(px) · Translate(−originPx)` 由 `Painter::StateTransform()` 统一推导，发射期与裁剪 AABB 共用。
+- **发射期**（`Device::Render`）：一遍流式遍历指令，按 `op` 展开成 4 顶点写入动态 VB。顶点按**段顺序线性排布**；段 = 连续同 `op`（着色器 / 顶点格式）+ 同 `resource`（图集页 / 纹理）的指令，且**不得跨绘制单元**（scissor 是单元级），单段 quad 数受静态 IB 容量 `kMaxQuads` 限制。
+- **提交**：静态 IB 是 0-based 局部 quad 索引（`q*4` 起 6 个索引）。每段把 VB 绑到自身字节起点 → `StartIndexLocation = 0`、`BaseVertexLocation = 0`，`DrawIndexed(quadCount*6, 0, 0)`；跨段只切 layout / stride / shader / SRV（相同则缓存跳过）。**不再有负 `BaseVertexLocation` 与跨单元 `quadBase`**。
+- **严格 z 序**：段顺序 = 指令顺序 = 绘制顺序，故单元内严格 painter's algorithm —— 后画的图元无论属于哪一类，都完整遮盖先画者的全部内容（含文字）。半透明按序混合，不引入 depth buffer。跨单元顺序仍由单元顺序决定（scissor / 滚动原点 / 窗口级 Fixed 层仍是单元边界）。
+- 顶点格式：`Vertex` 32 B、`GlyphVertex` 20 B（字形与图像共用）、`ShapeVertex` 48 B；共用一块动态 VB，容量按最大 48 B/顶点预留，上传量与段划分无关。
+- **代价**：Draw Call = O(段数)，段数 ≈ 绘制序列的批切换次数（典型 UI 每个元素「背景 → 文字」交替 → ≈ 2×元素数），与 R3「Draw Call 与元素数解耦」存在张力。P1 已落地的指令级视口剔除在发射期丢掉屏外 / 被裁剪的指令（不生成顶点、不建段），段数只按可见指令计算；不变子树指令缓存与 P2 tile 脏区光栅 / 合成层继续摊薄（§8）。
+- 指标：Draw Call 数、段数、顶点数纳入观测（ADR-015：以指标跟踪回归，不设硬门槛）。
 
 ### 6.2 片元着色
 
@@ -167,9 +171,10 @@ float alpha = 1.0f - smoothstep(-w, w, d);
 
 - `Clip` 栈与元素树的 `overflow` 联动：`Hidden` → `PushClip(RoundedRect)`；`Scroll` → 裁剪 + 内容偏移（不重排，04-Layout §6.1）。
 - 矩形裁剪优先 scissor（零成本），圆角裁剪走片元 SDF；同一批内裁剪状态一致才可合并。
-- **实现形态（M5.6 落地）**：绘制单元 = 一个 `Painter` + 一个裁剪矩形（物理像素），
-  `Device::Render(const DrawUnit*, uint32_t)` 按单元顺序提交；每个单元先
-  `RSSetScissorRects` 再画三批，嵌套裁剪区域取交集。
+- **实现形态（M5.6 落地，M5.17 改为有序指令）**：绘制单元 = 一个 `Painter`（指令序列）+ 一个裁剪矩形（物理像素），
+  `Device::Render(const DrawUnit*, uint32_t, float scale)` 按单元顺序提交；每个单元先
+  `RSSetScissorRects` 再按 §6.1 的段顺序逐段 `DrawIndexed`，嵌套裁剪区域取交集。
+  段不得跨单元，故单元边界仍是 scissor / 滚动原点 / 窗口级 Fixed 层的硬边界。
   - 滚动容器的内容单独成单元：`Painter::SetOrigin(-offsetX, -offsetY, scale)`
     只平移绘制坐标（布局结果不变），裁剪 = 视口 ∩ 外层裁剪；
   - 滚动条画在内容之上的父级单元（不随内容滚动）；
@@ -183,19 +188,20 @@ float alpha = 1.0f - smoothstep(-w, w, d);
     视口 scissor 影响，且盖过所有普通内容（含滚动条）。`HitTest` 在普通树遍历之前
     按同一顺序倒序命中该层；布局期 `FixedCount() == 0` 时绘制与命中两侧都整段
     短路，未使用 Fixed 的应用零额外遍历与属性解析。
-  - **`zIndex`（04-Layout §4.3）**：第二趟的脱离流子项改由 `ZOrderedOutOfFlow()`
-    提供（按 `zIndex` 升序、同值按树序的稳定排序），`Frame.cpp` 两处收集与
-    `UI/Event.cpp` 的 `HitTestInner` / `CollectFixedLayer` 共用同一有序列表，四处顺序
-    一致；命中倒序即"值大者后画、先命中"。缓冲按递归深度分层跨帧复用（遍历逐层
-    下传 `depth`），热路径零分配；布局期 `ZIndexCount() == 0` 时四处都走原两趟，
-    未使用 zIndex 的应用零额外遍历与解析。
+  - **`Absolute` / `zIndex`（04-Layout §4.3）**：第二趟的脱离流项改由 `ZOrderedOutOfFlow()`
+    提供（数据源是布局期按 CB 分组的锚点表 + 直接 Fixed 子项；按 `zIndex` 升序、
+    同值按锚点顺序稳定排序），`Frame.cpp` 两处收集与 `UI/Event.cpp` 的
+    `HitTestInner` / `CollectFixedLayer` 共用同一有序列表，四处顺序一致；命中倒序即
+    "值大者后画、先命中"。跨中间容器提升的 Absolute 在 CB 处进入当前绘制单元，
+    故沿用 CB 的滚动原点与 scissor。缓冲按递归深度分层跨帧复用（遍历逐层下传
+    `depth`），热路径零分配；`UseOrderedOutOfFlow() == false` 时四处都走原两趟。
 
 ### 6.4 发射期顶点变换（Paint 级 transform，已落地）
 
 `TranslationX/Y`（DIP）、`Rotation`（度，支点 = 元素盒中心）、`Scale`（等比）是四个普通 Paint 类属性，**不改 `Bounds()`、不重排**，标脏 `kFlagPaint`。它们由 `ElementTransform()`（`UI/StyleResolve.cpp`）合成为布局 DIP 空间的仿射矩阵 \(T(p)=c+t+M(p-c)\)，`Core::Transform2D` 提供组合 / 求逆 / DPI 共轭（`Scaled(s)`）。
 
-- **收集**：`App/Frame.cpp` 的 `Collector` 逐元素压栈 \(T_{\text{parent}}\cdot T_{\text{child}}\)，按 `scale` 共轭后下传给 `Painter::SetTransform()`；恒等变换不压栈，未使用 transform 的元素零额外开销。
-- **发射**：`Painter` 维护有效矩阵 \(E=\text{Translate}(o_{px})\cdot T_{px}\cdot\text{Translate}(-o_{px})\)，其中 \(T_{px}\) 与滚动原点无关，只有 `E` 依赖原点 —— 嵌套 `Scroller` 切换原点时无需重算祖先变换链。`FillRoundedRect` / `AddGlyphQuad` / `AddImageQuad` / `PushShapeQuad` 四个发射点把 quad 的 4 个角点过 `E`；变换烘进顶点，故同一 `Painter` 可承载多个不同变换的元素，无需拆分绘制单元。
+- **收集**：`App/Frame.cpp` 的 `Collector` 逐元素压栈 \(T_{\text{parent}}\cdot T_{\text{child}}\)，以 **DIP 空间**矩阵下传给 `Painter::SetTransform()`（缩放共轭推迟到发射期）；恒等变换不压栈，未使用 transform 的元素零额外开销。
+- **发射**：`Device::Render` 遍历指令时按 `Painter::StateTransform(state, scale)` 推导有效矩阵 \(E=\text{Translate}(o_{px})\cdot T_{px}\cdot\text{Translate}(-o_{px})\)，其中 \(T_{px}\) 与滚动原点无关，只有 `E` 依赖原点 —— 嵌套 `Scroller` 切换原点时无需重算祖先变换链。`FillRoundedRect` / `AddGlyphQuad` / `AddImageQuad` / `PushShapeQuad` 四类 `PaintOp` 的顶点生成都过 `E`；变换烘进顶点，故同一 `Painter` 可承载多个不同变换的元素，无需拆分绘制单元。
 - **SDF 不变**：`Vertex.lx/ly`、`ShapeVertex` 的局部坐标与形状参数、字形 `uv` 全部保持原值。旋转是等距变换，片元在局部空间求出的距离场梯度模长仍为 1 → 圆角 / 描边 / 1px AA 过渡带都不失真；等比缩放只让过渡带变成 `s` px（略糊），这是不做非等比缩放的硬理由。**着色器、顶点格式、输入布局、VB/IB 编排全部未改**。
 - **命中测试**：`UI/Event.cpp` 沿祖先链逐层施加 `T_e⁻¹`，等价于整体 \(T^{-1}\)；`Scroller` 的滚动条 / 视口 / `+off` 换算都用逆变换后的局部坐标。`Scale → 0` 时矩阵不可逆，该元素视为不可命中。
 - **裁剪**：scissor 天然轴对齐。`BeginClip` 取变换后内容矩形四个角点的 AABB 再与外层裁剪求交；滚动容器视口保持窗口空间矩形、不随容器 transform 旋转。
@@ -222,9 +228,9 @@ float alpha = 1.0f - smoothstep(-w, w, d);
 
 | 期 | 内容 |
 | --- | --- |
-| **P0** | 按需进帧（无脏区不工作）、显示列表全量重建、不透明前置 + 批合并、SDF 圆角矩形、字形/图标图集、裁剪栈、opacity/transform 离屏层、设备丢失恢复 |
-| **P1** | 脏区限定的 scissor 光栅、模糊/阴影、观测指标面板（Draw Call / 批数 / 帧耗时） |
-| **P2** | 持久离屏缓冲 + 脏区像素更新（若 profile 证明全量光栅是瓶颈）、窗口级 DComp 动画（05-Animation §7.4）、显示列表分段缓存 |
+| **P0** | 按需进帧（无脏区不工作）、显示列表全量重建、**有序指令显示列表 + 按段合并提交（严格 painter's algorithm，§6.1）**、SDF 圆角矩形、字形/图标图集、裁剪栈、opacity/transform 离屏层、设备丢失恢复 |
+| **P1** | 已落地：指令级视口剔除（发射期按单元 scissor 剔除）、清理 `Kind::Image` 单独成单元；待做：脏区限定的 scissor 光栅、不变子树指令缓存 / 显示列表分段缓存（受 §9-5 指标约束）、模糊/阴影、观测指标面板（Draw Call / 段数 / 帧耗时） |
+| **P2** | 持久离屏缓冲 + 脏区像素更新（若 profile 证明全量光栅是瓶颈）、tile 脏区光栅 + 合成层、窗口级 DComp 动画（05-Animation §7.4）、显示列表分段缓存 |
 
 ---
 

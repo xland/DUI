@@ -195,6 +195,17 @@ a->Set(Prop::Color, 0xFFC00000);           // 单元素覆盖，优先级更高
 auto* b = panel->AddChild<Text>(L"副标题", kTitle);
 ```
 
+`Set` 是运行时覆盖入口（级联第 3 层），支持的值形态：
+
+| 值形态 | 写入槽 | 示例 |
+| --- | --- | --- |
+| 枚举 / 整型 / `Color` | `u` | `a->Set(Prop::Color, 0xFFC00000)` |
+| 浮点 | `f`；`IsThicknessProp` 的属性同时把 `extra[3]` 填成同值 | `a->Set(Prop::CornerRadius, 8.f)` |
+| `dui::Thickness` | `f` + `extra[3]` | `a->Set(Prop::Padding, dui::Thickness(8.f, 16.f))` |
+| `const wchar_t*` | `family`（零拷贝） | `a->Set(Prop::FontFamily, L"SimSun")` |
+
+同 `Prop` 的新值**整体替换**旧的 `StyleValue`，因此从 `Thickness` 切回标量、或从字体族切回其它值时不会残留旧槽。`fontFamily` 只存指针、不拷贝字符串：传入的宽字符串必须活到该覆盖被替换（建议字面量或 `static` 缓存），与 `Style::FontFamily()` 契约相同。
+
 ### 6.2 状态变体（挂在元素上）
 
 `When` 是 **`Element`** 的方法，`Style` 上没有。静态外观写进 `Style`，交互态差异逐元素附加：

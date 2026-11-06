@@ -53,7 +53,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `fontWeight` | Enum | ✓ | Layout·Text | ✗ | Normal | 排版缓存键 |
 | `fontFamily` | String（`const wchar_t*` 指针） | ✓ | Layout·Text | ✓ | Microsoft YaHei | 框架默认微软雅黑；开发者可指定系统已安装任意字体族，指针生命周期由调用方保证（建议字面量）；未安装时 DWrite 自动回退默认。未安装字体经 `dui::LoadFontFamily` 装入，仅支持 ttf/otf/ttc（DWrite 只认 SFNT，woff2 不支持，需先转换） |
 | `fontStyle` | Enum | ✓ | Layout·Text | ✗ | Normal | 排版缓存键 |
-| `textAlign` | Enum | ✓ | Layout·Text | ✗ | Start | |
+| `textAlign` | Enum | ✓ | **Paint** | ✗ | Start | 运行时已接入；`dui::TextAlign::Start/Center/End` + `Style::TextAlign()`；静态 `Text` 在内容盒内对齐（绘制期平移，不改 DWrite 排版，故标 Paint），`TextBox` 不参与；多行按最长行整体对齐 |
 | `lineHeight` | Length（倍数） | ✓ | Layout·Text | ✓ | 1.2 | |
 | `letterSpacing` | Length | ✓ | Layout·Text | ✓ | 0 | |
 | `textDecoration` | Enum | ✓ | Paint | ✗ | None | |
@@ -80,7 +80,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
 | `padding` | Thickness | ✗ | Layout | ✓ | 0 | |
-| `margin` | Thickness | ✗ | Layout | ✓ | 0 | 不做塌陷（04-Layout §7） |
+| `margin` | Thickness | ✗ | Layout | ✓ | 0 | 运行时已接入；`Style::Margin(float)` / `Margin(Thickness)`；作为**外边距盒**参与父布局占位，`Bounds()` 仍是元素盒；不做塌陷（04-Layout §3/§7-1） |
 | `width` / `height` | Length | ✗ | Layout | ✓ | Auto | measure 缓存键 |
 | `minWidth` / `maxWidth` / `minHeight` / `maxHeight` | Length | ✗ | Layout | ✓ | Auto | |
 | `boxSizing` | Enum | ✗ | Layout | ✗ | BorderBox | |
@@ -124,13 +124,13 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `flexShrink` | Float | ✗ | Layout | ✓ | 1 | |
 | `flexBasis` | Length | ✗ | Layout | ✓ | Auto | |
 | `gap` / `rowGap` / `columnGap` | Length | ✗ | Layout | ✓ | 0 | |
-| `position` | Enum | ✗ | Layout | ✗ | Static | Static / Relative / Absolute / Fixed（运行时已实现，见 04-Layout §4.3） |
+| `position` | Enum | ✗ | Layout | ✗ | Static | Static / Relative / Absolute / Fixed；非 Static 即成为后代 Absolute 的 CB（04-Layout §4.3） |
 | `left` / `top` / `right` / `bottom` | Float（DIP） | ✗ | Layout | ✓（`left`/`top`） | 未设 = Auto | 仅 Relative / Absolute / Fixed 生效；Static 忽略；Relative 只认 left/top |
-| `zIndex` | Int | ✗ | Layout | ✗ | 0 | 仅同一父容器内的 `Absolute` 生效；按值升序绘制、同值按树序；Fixed / 流内忽略（04-Layout §4.3） |
+| `zIndex` | Int | ✗ | Layout | ✗ | 0 | 仅同一 CB 内的 `Absolute` 生效；按值升序绘制、同值按树序；Fixed / 流内忽略（04-Layout §4.3） |
 | `overflow` | Enum | ✗ | Layout·Paint | ✗ | Visible | Visible / Hidden / Scroll |
-| `gridTemplateColumns` / `gridTemplateRows` | TrackList | ✗ | Layout | ✗ | 空 | |
-| `gridRow` / `gridColumn` | Int | ✗ | Layout | ✗ | Auto | 显式放置 |
-| `gridRowSpan` / `gridColumnSpan` | Int | ✗ | Layout | ✗ | 1 | 跨格 |
+| `gridTemplateColumns` / `gridTemplateRows` | TrackList | ✗ | Layout | ✗ | 空 | 变长声明存 `Style`（`FindTracks` 沿派生链），不走 `StyleValue`；04-Layout §4.2 已落地 |
+| `gridRow` / `gridColumn` | Int | ✗ | Layout | ✗ | Auto | 显式放置（0 基）；已落地 |
+| `gridRowSpan` / `gridColumnSpan` | Int | ✗ | Layout | ✗ | 1 | 跨格；已落地 |
 
 ### 4.5 变换（Paint 级；运行时已接入）
 
@@ -188,6 +188,8 @@ StyleValue opacity = ResolveProperty(element, Prop::Opacity);
 - **继承属性**：自元素向上找最近设置了该属性的祖先，O(树深)；调用频率低（事件类路径），不做缓存。
 - 两条路径都先查级联第 1 层动画值槽；transform 属性的遍历外读取由 `ElementTransform()` 完成，含该动画值槽（[10-Rendering.md](./10-Rendering.md) §6.4）。
 
+**写入口**（级联第 3 层）：`Element::Set(Prop, v)` 支持枚举 / 整型 / `Color`（`u`）、浮点（`f`）、`dui::Thickness`（`f` + `extra[3]`）、`const wchar_t*`（`family`，零拷贝指针）。`padding` / `cornerRadius` / `margin` 传标量时按四边同值展开（`IsThicknessProp()`）；同 `Prop` 的新值整体替换 `StyleValue`，不残留旧槽。字体族指针的生命周期契约见 [03-Style.md](./03-Style.md) §6.1。
+
 ### 5.3 动画值槽（级联第 1 层）
 
 - 命令式 `Animate()` 把每帧插值结果稀疏写入 `Element::animated_`（`std::vector<StyleValue>`）；`TryResolveElement()` 最先查它，因此遍历内 `StyleContext` 与遍历外 `Style::Resolve` 同帧一致。
@@ -205,6 +207,6 @@ StyleValue opacity = ResolveProperty(element, Prop::Opacity);
 ## 7. 待确认
 
 1. `shadow` / `textDecoration` 是否进 MVP（当前列在表内但排期靠后）。
-2. `zIndex` 是否扩展到普通流（当前仅同一父容器内的 Absolute，已落地，见 04-Layout §4.3）。
+2. `zIndex` 是否扩展到普通流（当前仅同一 CB 内的 Absolute，已落地，见 04-Layout §4.3）。
 3. `alignItems: Baseline` 是否纳入（文本混排场景常用）。
 4. 是否需要 `letterSpacing` 之外的 `wordSpacing`。

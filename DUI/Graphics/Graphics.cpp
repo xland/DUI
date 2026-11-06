@@ -232,6 +232,40 @@ bool CompileShader(const char* src, const char* entry, const char* target, ID3DB
     return true;
 }
 
+// 指令在物理像素空间的 AABB，用于视口剔除。四类 op 的坐标语义不同
+// （Rect / Image 存 DIP、Glyph 存布局空间物理像素、Shape 存含 origin 的物理像素），
+// 先各自还原矩形，再施加状态槽的有效矩阵取四角包围盒。
+Rect CommandBounds(const PaintCommand& c, const PaintState& st,
+                   const Transform2D& eff, float scale) {
+    float x0, y0, x1, y1;
+    if (c.op == static_cast<uint32_t>(PaintOp::Rect) ||
+        c.op == static_cast<uint32_t>(PaintOp::Image)) {
+        x0 = (c.p[0] + st.originDipX) * scale;
+        y0 = (c.p[1] + st.originDipY) * scale;
+        x1 = x0 + c.p[2] * scale;
+        y1 = y0 + c.p[3] * scale;
+    } else if (c.op == static_cast<uint32_t>(PaintOp::Glyph)) {
+        x0 = c.p[0] + st.originDipX * scale;
+        y0 = c.p[1] + st.originDipY * scale;
+        x1 = x0 + c.p[2];
+        y1 = y0 + c.p[3];
+    } else {   // Shape：p[9] 是描边半宽，SDF 会在该外扩范围内着色
+        const float pad = c.p[9];
+        x0 = c.p[0] - c.p[2] - pad;
+        y0 = c.p[1] - c.p[3] - pad;
+        x1 = c.p[0] + c.p[2] + pad;
+        y1 = c.p[1] + c.p[3] + pad;
+    }
+    if (eff.IsIdentity()) return Rect{x0, y0, x1 - x0, y1 - y0};
+    const Vec2 a = eff.Apply({x0, y0}), b = eff.Apply({x1, y0});
+    const Vec2 d = eff.Apply({x0, y1}), e = eff.Apply({x1, y1});
+    const float l = std::min(std::min(a.x, b.x), std::min(d.x, e.x));
+    const float t = std::min(std::min(a.y, b.y), std::min(d.y, e.y));
+    const float r = std::max(std::max(a.x, b.x), std::max(d.x, e.x));
+    const float bo = std::max(std::max(a.y, b.y), std::max(d.y, e.y));
+    return Rect{l, t, r - l, bo - t};
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -239,111 +273,80 @@ bool CompileShader(const char* src, const char* entry, const char* target, ID3DB
 // ---------------------------------------------------------------------------
 
 void Painter::Reset() {
-    verts_.clear();
-    gverts_.clear();
-    ggroups_.clear();
-    sverts_.clear();
-    iverts_.clear();
-    igroups_.clear();
+    commands_.clear();
+    states_.clear();
+    states_.push_back(PaintState{});
+    curState_ = 0;
     originDipX_ = 0.f;
     originDipY_ = 0.f;
-    originPxX_ = 0.f;
-    originPxY_ = 0.f;
-    xform_ = {};
-    Recompute();
+}
+
+// 状态槽：与当前槽完全相同则复用，避免每元素一槽。
+void Painter::UseState(const PaintState& next) {
+    const PaintState& cur = states_[curState_];
+    if (cur.originDipX == next.originDipX && cur.originDipY == next.originDipY &&
+        cur.xform.a == next.xform.a && cur.xform.b == next.xform.b &&
+        cur.xform.c == next.xform.c && cur.xform.d == next.xform.d &&
+        cur.xform.tx == next.xform.tx && cur.xform.ty == next.xform.ty) return;
+    states_.push_back(next);
+    curState_ = static_cast<uint32_t>(states_.size()) - 1;
+}
+
+void Painter::SetOrigin(float dipX, float dipY, float) {
+    originDipX_ = dipX;
+    originDipY_ = dipY;
+    PaintState next = states_[curState_];
+    next.originDipX = dipX;
+    next.originDipY = dipY;
+    UseState(next);
+}
+
+void Painter::SetTransform(const Transform2D& dipXform) {
+    PaintState next = states_[curState_];
+    next.xform = dipXform;
+    UseState(next);
+}
+
+PaintCommand& Painter::NewCommand(PaintOp op, uint32_t resource, uint32_t packed) {
+    commands_.push_back(PaintCommand{static_cast<uint32_t>(op), curState_, resource, packed, {}});
+    return commands_.back();
+}
+
+// 0xAARRGGBB（straight）→ R8G8B8A8 内存序；alpha 乘 opacity（近似合成）
+static uint32_t PackColor(Color color, float opacity) {
+    const uint32_t a8 = static_cast<uint32_t>(static_cast<float>(color >> 24) * opacity + 0.5f);
+    return ((color & 0xFFu) << 16) | (color & 0xFF00u) |
+           ((color & 0xFF0000u) >> 16) | (a8 << 24);
 }
 
 void Painter::AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
                            float u0, float v0, float u1, float v1, Color color) {
     if (w <= 0.f || h <= 0.f) return;
-    if (ggroups_.empty() || ggroups_.back().page != page) {
-        GlyphGroup g;
-        g.page = page;
-        g.firstVertex = static_cast<uint32_t>(gverts_.size());
-        g.vertexCount = 0;
-        ggroups_.push_back(g);
-    }
-    // 0xAARRGGBB（straight）→ R8G8B8A8 内存序（与 FillRoundedRect 一致）
-    const uint32_t packed = ((color & 0xFFu) << 16) | (color & 0xFF00u) |
-                            ((color & 0xFF0000u) >> 16) | ((color >> 24) << 24);
-    x += originPxX_;   // 滚动内容整体平移（像素空间）
-    y += originPxY_;
-    // 只变换 4 个角点的位置；uv / color 与局部 SDF 字段保持原值
-    const Vec2 p0 = Xf(x, y);
-    const Vec2 p1 = Xf(x + w, y);
-    const Vec2 p2 = Xf(x + w, y + h);
-    const Vec2 p3 = Xf(x, y + h);
-    const GlyphVertex quad[4] = {
-        {p0.x, p0.y, u0, v0, packed},
-        {p1.x, p1.y, u1, v0, packed},
-        {p2.x, p2.y, u1, v1, packed},
-        {p3.x, p3.y, u0, v1, packed},
-    };
-    for (const GlyphVertex& v : quad) gverts_.push_back(v);
-    ggroups_.back().vertexCount += 4;
+    // 字形坐标是布局空间物理像素（绑定当前 scale 下的图集位图），
+    // origin 与变换在发射期施加；DPI 变化时此类指令需整体重收集。
+    PaintCommand& c = NewCommand(PaintOp::Glyph, page, PackColor(color, 1.f));
+    c.p[0] = x; c.p[1] = y; c.p[2] = w; c.p[3] = h;
+    c.p[4] = u0; c.p[5] = v0; c.p[6] = u1; c.p[7] = v1;
 }
 
 // 图像四边形：把纹理铺满 dipRect（DIP → 像素；origin 为滚动偏移）
-void Painter::AddImageQuad(uint32_t texture, const Rect& dipRect, Color color, float scale) {
-    const float w = dipRect.w * scale;
-    const float h = dipRect.h * scale;
-    if (w <= 0.f || h <= 0.f) return;
-    if (igroups_.empty() || igroups_.back().texture != texture) {
-        ImageGroup g;
-        g.texture = texture;
-        g.firstVertex = static_cast<uint32_t>(iverts_.size());
-        g.vertexCount = 0;
-        igroups_.push_back(g);
-    }
-    // 0xAARRGGBB（straight）→ R8G8B8A8 内存序（与 FillRoundedRect 一致）
-    const uint32_t packed = ((color & 0xFFu) << 16) | (color & 0xFF00u) |
-                            ((color & 0xFF0000u) >> 16) | ((color >> 24) << 24);
-    const float x = (dipRect.x + originDipX_) * scale;
-    const float y = (dipRect.y + originDipY_) * scale;
-    const Vec2 p0 = Xf(x, y);
-    const Vec2 p1 = Xf(x + w, y);
-    const Vec2 p2 = Xf(x + w, y + h);
-    const Vec2 p3 = Xf(x, y + h);
-    const GlyphVertex quad[4] = {
-        {p0.x, p0.y, 0.f, 0.f, packed},
-        {p1.x, p1.y, 1.f, 0.f, packed},
-        {p2.x, p2.y, 1.f, 1.f, packed},
-        {p3.x, p3.y, 0.f, 1.f, packed},
-    };
-    for (const GlyphVertex& v : quad) iverts_.push_back(v);
-    igroups_.back().vertexCount += 4;
+void Painter::AddImageQuad(uint32_t texture, const Rect& dipRect, Color color, float) {
+    if (dipRect.w <= 0.f || dipRect.h <= 0.f) return;
+    PaintCommand& c = NewCommand(PaintOp::Image, texture, PackColor(color, 1.f));
+    c.p[0] = dipRect.x; c.p[1] = dipRect.y;
+    c.p[2] = dipRect.w; c.p[3] = dipRect.h;
 }
 
-// 形状图元：生成一个四边形（4 顶点），片元在局部坐标求 SDF。
-// 参数均为物理像素（调用方已完成 DIP → 像素换算）。
+// 形状图元：记录一条 Shape 指令（参数均为物理像素，调用方已完成 DIP → 像素换算）。
+// 含 origin 的坐标与局部 SDF 参数原样保留，变换在发射期施加。
 void Painter::PushShapeQuad(float cx, float cy, float hw, float hh,
                             float p0x, float p0y, float p1x, float p1y,
                             float extra, float halfStroke, Color color, uint32_t kind) {
     if (hw <= 0.f || hh <= 0.f) return;
-    // 0xAARRGGBB（straight）→ R8G8B8A8 内存序（与 FillRoundedRect 一致）
-    const uint32_t packed = ((color & 0xFFu) << 16) | (color & 0xFF00u) |
-                            ((color & 0xFF0000u) >> 16) | ((color >> 24) << 24);
-    const float sx[4] = {-1.f, 1.f, 1.f, -1.f};
-    const float sy[4] = {-1.f, -1.f, 1.f, 1.f};
-    for (int i = 0; i < 4; ++i) {
-        ShapeVertex v;
-        const Vec2 p = Xf(cx + sx[i] * hw, cy + sy[i] * hh);
-        v.x = p.x;
-        v.y = p.y;
-        // lx/ly 与形状参数保持在未变换的局部空间：SDF 由片元在局部坐标求值，
-        // 旋转是等距变换，梯度模长仍为 1 → 圆角/描边/AA 过渡带都不失真。
-        v.lx = sx[i] * hw;
-        v.ly = sy[i] * hh;
-        v.p0x = p0x;
-        v.p0y = p0y;
-        v.p1x = p1x;
-        v.p1y = p1y;
-        v.extra = extra;
-        v.kind = static_cast<float>(kind);
-        v.halfStroke = halfStroke;
-        v.color = packed;
-        sverts_.push_back(v);
-    }
+    PaintCommand& c = NewCommand(PaintOp::Shape, 0, PackColor(color, 1.f));
+    c.p[0] = cx; c.p[1] = cy; c.p[2] = hw; c.p[3] = hh;
+    c.p[4] = p0x; c.p[5] = p0y; c.p[6] = p1x; c.p[7] = p1y;
+    c.p[8] = extra; c.p[9] = halfStroke; c.p[10] = static_cast<float>(kind);
 }
 
 // 线段：胶囊 SDF（圆头端点），线宽 = widthDip
@@ -411,43 +414,13 @@ void Painter::StrokeRoundRect(const Rect& dipRect, float radiusDip, float widthD
     PushShapeQuad(cx, cy, hw + half, hh + half, hw, hh, 0.f, 0.f, radius, half, color, 2);
 }
 
-void Painter::FillRoundedRect(const Rect& dipRect, float radiusDip, Color color, float opacity, float scale) {
-    const float x = (dipRect.x + originDipX_) * scale;
-    const float y = (dipRect.y + originDipY_) * scale;
-    const float w = dipRect.w * scale;
-    const float h = dipRect.h * scale;
-    if (w <= 0.f || h <= 0.f) return;
-
-    float radius = radiusDip * scale;
-    if (radius < 1.f) radius = 0.f;                 // §9-3：CPU 收集端退化直角
-    if (radius > w * 0.5f) radius = w * 0.5f;
-    if (radius > h * 0.5f) radius = h * 0.5f;
-
-    // 0xAARRGGBB（straight）→ R8G8B8A8 内存序；alpha 乘 opacity（近似合成，离屏层列 P0 后段）
-    const uint32_t a8 = static_cast<uint32_t>(static_cast<float>(color >> 24) * opacity + 0.5f);
-    const uint32_t packed = ((color & 0xFFu) << 16) | (color & 0xFF00u) |
-                            ((color & 0xFF0000u) >> 16) | (a8 << 24);
-
-    const float cx = x + w * 0.5f;
-    const float cy = y + h * 0.5f;
-    const float hw = w * 0.5f;
-    const float hh = h * 0.5f;
-    const float sx[4] = {-1.f, 1.f, 1.f, -1.f};
-    const float sy[4] = {-1.f, -1.f, 1.f, 1.f};
-    for (int i = 0; i < 4; ++i) {
-        Vertex v;
-        const Vec2 p = Xf(cx + sx[i] * hw, cy + sy[i] * hh);
-        v.x = p.x;
-        v.y = p.y;
-        // 局部坐标 / 半宽 / 半径不改：SDF 仍在原局部像素空间求值
-        v.lx = sx[i] * hw;
-        v.ly = sy[i] * hh;
-        v.hw = hw;
-        v.hh = hh;
-        v.radius = radius;
-        v.color = packed;
-        verts_.push_back(v);
-    }
+void Painter::FillRoundedRect(const Rect& dipRect, float radiusDip, Color color, float opacity, float) {
+    if (dipRect.w <= 0.f || dipRect.h <= 0.f) return;
+    // 存 DIP 原值：origin / scale / 变换都在发射期施加（10-Rendering §6.2）
+    PaintCommand& c = NewCommand(PaintOp::Rect, 0, PackColor(color, opacity));
+    c.p[0] = dipRect.x; c.p[1] = dipRect.y;
+    c.p[2] = dipRect.w; c.p[3] = dipRect.h;
+    c.p[4] = radiusDip;
 }
 
 // ---------------------------------------------------------------------------
@@ -765,57 +738,119 @@ void Device::EnsureVertexBuffer(uint32_t vertexCount) {
     if (FAILED(dev_->CreateBuffer(&bd, nullptr, &vb_))) return;
 }
 
-void Device::Render(const DrawUnit* units, uint32_t unitCount) {
+void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
     if (rtv_ == nullptr) return;
     constexpr float kBlack[4] = {0.f, 0.f, 0.f, 1.f};
     ctx_->ClearRenderTargetView(rtv_, kBlack);
     if (units == nullptr || unitCount == 0) return;
 
-    // 顶点总量（各单元四批之和）
+    // 每条指令 = 一个 quad；VB 按段顺序线性排布（段内 stride 一致）
     uint32_t totalVerts = 0;
-    uint32_t totalQuads = 0;
-    for (uint32_t i = 0; i < unitCount; ++i) {
-        const Painter& p = *units[i].painter;
-        totalVerts += (p.QuadCount() + p.GlyphQuadCount() + p.ShapeQuadCount() +
-                       p.ImageQuadCount()) * 4;
-        totalQuads += p.QuadCount() + p.GlyphQuadCount() + p.ShapeQuadCount() +
-                      p.ImageQuadCount();
-    }
+    for (uint32_t i = 0; i < unitCount; ++i)
+        totalVerts += static_cast<uint32_t>(units[i].painter->Commands().size()) * 4;
     if (totalVerts == 0) return;
 
     EnsureVertexBuffer(totalVerts);
     if (vb_ == nullptr) return;
 
-    // 一次上传：各单元的顶点段依次排布（四批 stride 不同 → 按实际字节累加）
+    segments_.clear();
+    unitFirstSeg_.clear();
     D3D11_MAPPED_SUBRESOURCE m{};
     if (FAILED(ctx_->Map(vb_, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) return;
     auto* dst = static_cast<uint8_t*>(m.pData);
-    uint32_t byteBase = 0;   // 已写入字节数
-    for (uint32_t i = 0; i < unitCount; ++i) {
-        const Painter& p = *units[i].painter;
-        const uint32_t quads = p.QuadCount();
-        const uint32_t gquads = p.GlyphQuadCount();
-        const uint32_t squads = p.ShapeQuadCount();
-        const uint32_t iquads = p.ImageQuadCount();
-        uint8_t* d = dst + byteBase;
-        memcpy(d, p.Vertices(), static_cast<size_t>(quads) * 4 * sizeof(Vertex));
-        d += static_cast<size_t>(quads) * 4 * sizeof(Vertex);
-        memcpy(d, p.GlyphVertices(), static_cast<size_t>(gquads) * 4 * sizeof(GlyphVertex));
-        d += static_cast<size_t>(gquads) * 4 * sizeof(GlyphVertex);
-        memcpy(d, p.ShapeVertices(), static_cast<size_t>(squads) * 4 * sizeof(ShapeVertex));
-        d += static_cast<size_t>(squads) * 4 * sizeof(ShapeVertex);
-        memcpy(d, p.ImageVertices(), static_cast<size_t>(iquads) * 4 * sizeof(GlyphVertex));
-        byteBase += static_cast<size_t>(quads) * 4 * sizeof(Vertex) +
-                    static_cast<size_t>(gquads) * 4 * sizeof(GlyphVertex) +
-                    static_cast<size_t>(squads) * 4 * sizeof(ShapeVertex) +
-                    static_cast<size_t>(iquads) * 4 * sizeof(GlyphVertex);
+    uint32_t written = 0;   // 已写入字节数；各段 quad 字节数均为 16 的倍数 → 写入地址对齐
+    constexpr uint32_t kQuadBytes[4] = {4 * sizeof(Vertex), 4 * sizeof(GlyphVertex),
+                                        4 * sizeof(ShapeVertex), 4 * sizeof(GlyphVertex)};
+    constexpr float kSx[4] = {-1.f, 1.f, 1.f, -1.f};
+    constexpr float kSy[4] = {-1.f, -1.f, 1.f, 1.f};
+
+    for (uint32_t u = 0; u < unitCount; ++u) {
+        const uint32_t firstSeg = static_cast<uint32_t>(segments_.size());
+        unitFirstSeg_.push_back(firstSeg);   // scissor 是单元级 → 段不得跨单元合并
+        const Painter& p = *units[u].painter;
+        const Rect& unitClip = units[u].clipPx;
+        for (const PaintCommand& c : p.Commands()) {
+            const PaintState& st = p.States()[c.state];
+            const float opx = st.originDipX * scale, opy = st.originDipY * scale;
+            // E = Translate(originPx) · xform(px) · Translate(−originPx)：
+            // 顶点位置已是 (布局 + origin)·scale，先去 origin、施加变换、再加回来。
+            const Transform2D eff = p.StateTransform(c.state, scale);
+            // 指令级视口剔除：与单元 scissor 不相交就不发射顶点、不进段。
+            // kPad 覆盖 SDF 的 1 像素 AA 过渡带与描边外扩，避免误剔除边缘图元。
+            if (unitClip.w <= 0.f || unitClip.h <= 0.f) continue;
+            const Rect box = CommandBounds(c, st, eff, scale);
+            constexpr float kPad = 2.f;
+            if (box.Right() + kPad <= unitClip.x || box.x - kPad >= unitClip.Right() ||
+                box.Bottom() + kPad <= unitClip.y || box.y - kPad >= unitClip.Bottom()) continue;
+            const bool ident = eff.IsIdentity();
+            auto Xf = [&](float x, float y) -> Vec2 {
+                return ident ? Vec2{x, y} : eff.Apply(Vec2{x, y});
+            };
+
+            uint8_t* out = dst + written;
+            if (c.op == static_cast<uint32_t>(PaintOp::Rect)) {
+                const float x = (c.p[0] + st.originDipX) * scale;
+                const float y = (c.p[1] + st.originDipY) * scale;
+                const float w = c.p[2] * scale, h = c.p[3] * scale;
+                float radius = c.p[4] * scale;
+                if (radius < 1.f) radius = 0.f;
+                if (radius > w * 0.5f) radius = w * 0.5f;
+                if (radius > h * 0.5f) radius = h * 0.5f;
+                const float cx = x + w * 0.5f, cy = y + h * 0.5f;
+                const float hw = w * 0.5f, hh = h * 0.5f;
+                Vertex* v = reinterpret_cast<Vertex*>(out);
+                for (int i = 0; i < 4; ++i) {
+                    const Vec2 q = Xf(cx + kSx[i] * hw, cy + kSy[i] * hh);
+                    v[i] = Vertex{q.x, q.y, kSx[i] * hw, kSy[i] * hh, hw, hh, radius, c.color};
+                }
+            } else if (c.op == static_cast<uint32_t>(PaintOp::Glyph)) {
+                const float x = c.p[0] + opx, y = c.p[1] + opy;
+                const float w = c.p[2], h = c.p[3];
+                const float us[4] = {c.p[4], c.p[6], c.p[6], c.p[4]};
+                const float vs[4] = {c.p[5], c.p[5], c.p[7], c.p[7]};
+                GlyphVertex* v = reinterpret_cast<GlyphVertex*>(out);
+                for (int i = 0; i < 4; ++i) {
+                    const Vec2 q = Xf(x + (kSx[i] < 0.f ? 0.f : w), y + (kSy[i] < 0.f ? 0.f : h));
+                    v[i] = GlyphVertex{q.x, q.y, us[i], vs[i], c.color};
+                }
+            } else if (c.op == static_cast<uint32_t>(PaintOp::Image)) {
+                const float x = (c.p[0] + st.originDipX) * scale;
+                const float y = (c.p[1] + st.originDipY) * scale;
+                const float w = c.p[2] * scale, h = c.p[3] * scale;
+                GlyphVertex* v = reinterpret_cast<GlyphVertex*>(out);
+                for (int i = 0; i < 4; ++i) {
+                    const Vec2 q = Xf(x + (kSx[i] < 0.f ? 0.f : w), y + (kSy[i] < 0.f ? 0.f : h));
+                    v[i] = GlyphVertex{q.x, q.y, kSx[i] < 0.f ? 0.f : 1.f,
+                                       kSy[i] < 0.f ? 0.f : 1.f, c.color};
+                }
+            } else {   // Shape：参数已含 origin 的物理像素，局部 SDF 字段不施加变换
+                const float cx = c.p[0], cy = c.p[1], hw = c.p[2], hh = c.p[3];
+                ShapeVertex* v = reinterpret_cast<ShapeVertex*>(out);
+                for (int i = 0; i < 4; ++i) {
+                    const Vec2 q = Xf(cx + kSx[i] * hw, cy + kSy[i] * hh);
+                    v[i] = ShapeVertex{q.x, q.y, kSx[i] * hw, kSy[i] * hh,
+                                       c.p[4], c.p[5], c.p[6], c.p[7],
+                                       c.p[8], c.p[10], c.p[9], c.color};
+                }
+            }
+
+            // 段合并：同单元、同批、同资源、且单段 quad 数不超静态 IB 容量
+            if (segments_.size() > firstSeg) {
+                EmittedSegment& last = segments_.back();
+                if (last.op == c.op && last.resource == c.resource && last.quadCount < kMaxQuads) {
+                    ++last.quadCount;
+                } else {
+                    segments_.push_back(EmittedSegment{written, 1, c.op, c.resource});
+                }
+            } else {
+                segments_.push_back(EmittedSegment{written, 1, c.op, c.resource});
+            }
+            written += kQuadBytes[c.op];
+        }
     }
+    unitFirstSeg_.push_back(static_cast<uint32_t>(segments_.size()));
     ctx_->Unmap(vb_, 0);
 
-    ID3D11Buffer* vb = vb_;
-    constexpr UINT kStride = sizeof(Vertex);
-    constexpr UINT kStrideG = sizeof(GlyphVertex);
-    constexpr UINT kStrideS = sizeof(ShapeVertex);
     constexpr D3D11_VIEWPORT kVp{0.f, 0.f, 0.f, 0.f, 0.f, 1.f};
     D3D11_VIEWPORT vp = kVp;
     vp.Width = width_;
@@ -829,22 +864,21 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount) {
     ctx_->OMSetRenderTargets(1, &rtv_, nullptr);
     ctx_->OMSetBlendState(blend_, nullptr, 0xFFFFFFFFu);
 
-    // 逐单元绘制：单元顺序即 z 序；单元内再分四批。
-    // 每批把 VB 绑到"本批数据段"的字节起点；索引缓冲按"全局 quad 序号"编排
-    // （q*4 起 6 个索引），故 BaseVertexLocation 取负值把全局索引拉回本批顶点段：
-    //   effective = base + index = 本批段内局部顶点号（均 >= 0，D3D11 合法）。
-    uint32_t byteOffset = 0;  // 本单元顶点数据的字节起始
-    uint32_t quadBase = 0;    // 本单元第一个 quad 的全局 quad 序号
-    for (uint32_t i = 0; i < unitCount; ++i) {
-        const Painter& p = *units[i].painter;
-        const uint32_t quads = p.QuadCount();
-        const uint32_t gquads = p.GlyphQuadCount();
-        const uint32_t squads = p.ShapeQuadCount();
-        const uint32_t iquads = p.ImageQuadCount();
-        if (quads + gquads + squads + iquads == 0) continue;
+    // 按段提交：段顺序 = 指令顺序，故单元内严格 painter's algorithm。
+    // IB 是 0-based 局部 quad 索引，每段把 VB 绑到自身字节起点 →
+    // StartIndexLocation = 0 / BaseVertexLocation = 0，不再需要负 base。
+    ID3D11Buffer* vb = vb_;
+    constexpr UINT kStride[4] = {static_cast<UINT>(sizeof(Vertex)),
+                                 static_cast<UINT>(sizeof(GlyphVertex)),
+                                 static_cast<UINT>(sizeof(ShapeVertex)),
+                                 static_cast<UINT>(sizeof(GlyphVertex))};
+    uint32_t lastOp = 0xFFFFFFFFu, lastRes = 0xFFFFFFFFu;
+    for (uint32_t u = 0; u < unitCount; ++u) {
+        const uint32_t first = unitFirstSeg_[u], last = unitFirstSeg_[u + 1];
+        if (first == last) continue;
 
         // 裁剪（scissor）：滚动容器的内容裁到视口内；空矩形表示整单元不画
-        const Rect& c = units[i].clipPx;
+        const Rect& c = units[u].clipPx;
         D3D11_RECT sr{};
         if (c.w > 0.f && c.h > 0.f) {
             sr.left = static_cast<LONG>(c.x);
@@ -854,73 +888,51 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount) {
         }
         ctx_->RSSetScissorRects(1, &sr);
 
-        // 矩形批（SDF 圆角矩形）
-        if (quads > 0) {
-            const UINT off = byteOffset;
-            const INT base = -static_cast<INT>(quadBase * 4);
-            ctx_->IASetInputLayout(layout_);
-            ctx_->IASetVertexBuffers(0, 1, &vb, &kStride, &off);
-            ctx_->VSSetShader(vs_, nullptr, 0);
-            ctx_->PSSetShader(ps_, nullptr, 0);
-            ctx_->DrawIndexed(quads * 6, quadBase * 6, base);
-        }
-
-        // 字形批：按图集页分组，跨页才切换纹理（10-Rendering §6.1）
-        if (gquads > 0) {
-            const UINT off = byteOffset + quads * 4 * sizeof(Vertex);
-            const INT base = -static_cast<INT>((quadBase + quads) * 4);
-            ctx_->IASetInputLayout(layoutG_);
-            ctx_->IASetVertexBuffers(0, 1, &vb, &kStrideG, &off);
-            ctx_->VSSetShader(vsG_, nullptr, 0);
-            ctx_->PSSetShader(psG_, nullptr, 0);
-            ctx_->PSSetSamplers(0, 1, &sampler_);
-            for (const GlyphGroup& g : p.GlyphGroups()) {
-                ID3D11ShaderResourceView* srv = FindGlyphSrv(g.page);
-                if (srv == nullptr) continue;
-                ctx_->PSSetShaderResources(0, 1, &srv);
-                // 组内第一个 quad 的全局序号 = quadBase + quads + g.firstVertex/4
-                const uint32_t gq = quadBase + quads + g.firstVertex / 4;
-                ctx_->DrawIndexed(g.vertexCount / 4 * 6, gq * 6, base);
+        for (uint32_t s = first; s < last; ++s) {
+            const EmittedSegment& seg = segments_[s];
+            if (seg.op != lastOp) {
+                switch (seg.op) {
+                case 0:   // Rect
+                    ctx_->IASetInputLayout(layout_);
+                    ctx_->VSSetShader(vs_, nullptr, 0);
+                    ctx_->PSSetShader(ps_, nullptr, 0);
+                    break;
+                case 1:   // Glyph
+                    ctx_->IASetInputLayout(layoutG_);
+                    ctx_->VSSetShader(vsG_, nullptr, 0);
+                    ctx_->PSSetShader(psG_, nullptr, 0);
+                    ctx_->PSSetSamplers(0, 1, &sampler_);
+                    break;
+                case 2:   // Shape
+                    ctx_->IASetInputLayout(layoutS_);
+                    ctx_->VSSetShader(vsS_, nullptr, 0);
+                    ctx_->PSSetShader(psS_, nullptr, 0);
+                    break;
+                default:  // Image：顶点格式同字形批，复用 vsG_/layoutG_
+                    ctx_->IASetInputLayout(layoutG_);
+                    ctx_->VSSetShader(vsG_, nullptr, 0);
+                    ctx_->PSSetShader(psI_, nullptr, 0);
+                    ctx_->PSSetSamplers(0, 1, &samplerI_);
+                    break;
+                }
+                lastOp = seg.op;
+                lastRes = 0xFFFFFFFFu;
             }
-        }
-
-        // 形状批（SDF 图元）
-        if (squads > 0) {
-            const UINT off = byteOffset + quads * 4 * sizeof(Vertex) +
-                             gquads * 4 * sizeof(GlyphVertex);
-            const INT base = -static_cast<INT>((quadBase + quads + gquads) * 4);
-            ctx_->IASetInputLayout(layoutS_);
-            ctx_->IASetVertexBuffers(0, 1, &vb, &kStrideS, &off);
-            ctx_->VSSetShader(vsS_, nullptr, 0);
-            ctx_->PSSetShader(psS_, nullptr, 0);
-            ctx_->DrawIndexed(squads * 6, (quadBase + quads + gquads) * 6, base);
-        }
-
-        // 图像批（彩色纹理）：按纹理分组，跨纹理才切换 SRV（顶点格式同字形批）
-        if (iquads > 0) {
-            const UINT off = byteOffset + quads * 4 * sizeof(Vertex) +
-                             gquads * 4 * sizeof(GlyphVertex) +
-                             squads * 4 * sizeof(ShapeVertex);
-            const INT base = -static_cast<INT>((quadBase + quads + gquads + squads) * 4);
-            ctx_->IASetInputLayout(layoutG_);
-            ctx_->IASetVertexBuffers(0, 1, &vb, &kStrideG, &off);
-            ctx_->VSSetShader(vsG_, nullptr, 0);
-            ctx_->PSSetShader(psI_, nullptr, 0);
-            ctx_->PSSetSamplers(0, 1, &samplerI_);
-            for (const ImageGroup& g : p.ImageGroups()) {
-                ID3D11ShaderResourceView* srv = FindImageSrv(g.texture);
-                if (srv == nullptr) continue;
-                ctx_->PSSetShaderResources(0, 1, &srv);
-                const uint32_t gq = quadBase + quads + gquads + squads + g.firstVertex / 4;
-                ctx_->DrawIndexed(g.vertexCount / 4 * 6, gq * 6, base);
+            // 跨图集页 / 跨纹理才切换 SRV
+            if (seg.op == 1 || seg.op == 3) {
+                if (seg.resource != lastRes) {
+                    ID3D11ShaderResourceView* srv = seg.op == 1
+                        ? FindGlyphSrv(seg.resource) : FindImageSrv(seg.resource);
+                    if (srv == nullptr) continue;
+                    ctx_->PSSetShaderResources(0, 1, &srv);
+                    lastRes = seg.resource;
+                }
             }
+            UINT off = seg.byteStart;
+            UINT stride = kStride[seg.op];
+            ctx_->IASetVertexBuffers(0, 1, &vb, &stride, &off);
+            ctx_->DrawIndexed(seg.quadCount * 6, 0, 0);
         }
-
-        byteOffset += quads * 4 * sizeof(Vertex) +
-                      gquads * 4 * sizeof(GlyphVertex) +
-                      squads * 4 * sizeof(ShapeVertex) +
-                      iquads * 4 * sizeof(GlyphVertex);
-        quadBase += quads + gquads + squads + iquads;
     }
 }
 

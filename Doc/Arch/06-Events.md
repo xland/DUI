@@ -80,10 +80,11 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 - 命中测试进入滚动容器时把指针换算到内容坐标（`+滚动偏移`，见 [04-Layout.md](./04-Layout.md) §6.3）。
 - 窗口级 `Fixed` 层在 `HitTest` 入口**优先于普通树遍历**命中：用原始窗口坐标测，不受祖先 transform 与 Scroller `+偏移` 换算影响；仍受祖先 `Display::None` / `ContentClipRect` 约束，Scroller 视口不裁它（[04-Layout.md](./04-Layout.md) §4.3）。收集顺序与 `App/Frame.cpp` 的两趟绘制一致（流内子项先、`Absolute` 子树后，Fixed 在树序原位记录），倒序命中即"后画者在上"；普通树遍历跳过 Fixed，避免 `+off` 换算误命中窗口坐标的 `Bounds()`。布局期 Fixed 计数为 0 时绘制与命中两侧都整段短路，零额外遍历与属性解析。
 
-- `zIndex`（04-Layout §4.3）：脱离流子项的命中顺序改由 `ZOrderedOutOfFlow()` 提供
-  （按 `zIndex` 升序、同值按树序），倒序命中即"值大者后画、先命中"；与 `App/Frame.cpp`
-  两处收集、`CollectFixedLayer` 预扫共用同一有序列表。布局期 `ZIndexCount() == 0`
-  时四处都走原两趟，零额外遍历。
+- `Absolute` 与 `zIndex`（04-Layout §4.3）：脱离流项的命中顺序改由 `ZOrderedOutOfFlow()`
+  提供（归属同一 CB 的 Absolute 按 `zIndex` 升序、同值按锚点顺序），倒序命中即
+  "值大者后画、先命中"；与 `App/Frame.cpp` 两处收集、`CollectFixedLayer` 预扫共用同一
+  有序列表。跨中间容器的 Absolute 在 CB 处用 CB 的坐标上下文命中，故不受中间
+  Scroller 的 `+off` 换算影响。`UseOrderedOutOfFlow() == false` 时四处都走原两趟，零额外遍历。
 
 ### 3.2 元素级指针事件（M5.8 落地）
 

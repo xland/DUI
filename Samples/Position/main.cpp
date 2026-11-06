@@ -2,7 +2,8 @@
 //  Position/main.cpp — 定位能力演示（04-Layout §4.3）
 //
 //  覆盖能力：Position Relative / Absolute / Fixed（可挂任意层级，含 Scroller 内）、
-//  Left/Top/Right/Bottom 四边定位、zIndex（Absolute 层叠排序）。
+//  Left/Top/Right/Bottom 四边定位、最近定位祖先（Absolute 跨中间容器提升）、
+//  zIndex（同一 CB 内的 Absolute 层叠排序）。
 //
 //  构建产物（Build 布局，DUI.slnx 根目录相对）：
 //    中间产物  Build\Temp\Position\Debug|Release\
@@ -12,7 +13,7 @@
 // ============================================================================
 
 #include <windows.h>
-
+#include <format>
 #include "DUI/DUI.h"
 
 namespace {
@@ -46,7 +47,7 @@ public:
         : dui::Window(dui::WindowOptions{
               .title  = L"Position · 定位能力演示",
               .width  = 900.f,
-              .height = 720.f,
+              .height = 900.f,
           }) {}
 
 protected:
@@ -81,9 +82,10 @@ protected:
         rel->AddChild<dui::Text>(L"relative", dui::Style().Color(0xFFFFFFFF));
         NewBox(rowR, L"C", 0xFF4472C4, 120.f, 48.f);
 
-        // ---- Absolute：脱离文档流，相对父容器 padding 盒定位 ----------------
-        NewCaption(root, L"Position::Absolute：脱离流、不占位，相对父容器定位");
+        // ---- Absolute：脱离流，相对最近定位祖先（这里容器显式设 Relative）------
+        NewCaption(root, L"Position::Absolute：脱离流、不占位，相对最近定位祖先定位");
         dui::Panel* boxA = root->AddChild<dui::Panel>(dui::Style()
+            .Position(dui::Position::Relative)
             .FlexDirection(dui::FlexDirection::Row)
             .Gap(8.f).Padding(12.f).Height(110.f)
             .Background(0xFFE7E6E6).CornerRadius(4.f));
@@ -114,8 +116,8 @@ protected:
             .Background(0xFFE7E6E6)
             .CornerRadius(4.f));
         for (int i = 1; i <= 8; ++i) {
-            scr->AddChild<dui::Text>(L"滚动内容：这一行会随滚动条移动",
-                                     dui::Style().Height(24.f));
+            auto iStr = std::format(L"滚动内容：这一行会随滚动条移动_{}", i);
+            scr->AddChild<dui::Text>(iStr.data(), dui::Style().Height(24.f));
         }
         dui::Panel* fx2 = scr->AddChild<dui::Panel>(dui::Style()
             .Position(dui::Position::Fixed).Right(16.f).Top(16.f)
@@ -125,11 +127,12 @@ protected:
             .AlignItems(dui::Align::Center));
         fx2->AddChild<dui::Text>(L"fixed 在 Scroller 内", dui::Style().Color(0xFFFFFFFF));
 
-        // ---- zIndex：同一父容器内的 Absolute 按值升序绘制 ----------------------
-        NewCaption(root, L"zIndex：树序 红→绿→蓝，但 zIndex 让红盖在最上、蓝沉在最下");
+        // ---- zIndex：同一 CB 内的 Absolute 按值升序绘制 ------------------------
+        NewCaption(root, L"zIndex：同一 CB 内，树序 红→绿→蓝，但红盖最上、蓝沉最下");
         dui::Text* hit = root->AddChild<dui::Text>(L"点击色块验证命中顺序（应与视觉一致）",
             dui::Style().FontSize(12.f).Color(0xFF777777));
         dui::Panel* stack = root->AddChild<dui::Panel>(dui::Style()
+            .Position(dui::Position::Relative)
             .Height(100.f).Background(0xFFE7E6E6).CornerRadius(4.f));
         auto NewLayer = [stack, hit](const wchar_t* label, dui::Color bg,
                                      float x, float y, int32_t z) {
@@ -147,6 +150,31 @@ protected:
         NewLayer(L"红 · zIndex 10",  0xFFC00000,  20.f, 16.f,  10);
         NewLayer(L"绿 · 默认 0",     0xFF70AD47,  90.f, 30.f,   0);
         NewLayer(L"蓝 · zIndex -1",  0xFF2563EB, 160.f, 44.f,  -1);
+
+        // ---- 最近定位祖先：跨中间 Static 容器提升，zIndex 在同一 CB 内排序 ----
+        NewCaption(root, L"最近定位祖先：中间 Static 容器不改变基准，两个 Absolute 共用外层 Relative 容器为 CB");
+        dui::Text* anchorHit = root->AddChild<dui::Text>(L"点击重叠色块验证跨容器命中顺序",
+            dui::Style().FontSize(12.f).Color(0xFF777777));
+        dui::Panel* cb = root->AddChild<dui::Panel>(dui::Style()
+            .Position(dui::Position::Relative)
+            .Height(112.f).Background(0xFFE7E6E6).CornerRadius(4.f));
+        dui::Panel* mid1 = cb->AddChild<dui::Panel>(dui::Style()
+            .Height(56.f).Background(0xFFD9D9D9));
+        dui::Panel* mid2 = cb->AddChild<dui::Panel>(dui::Style()
+            .Height(56.f).Background(0xFFCFCFCF));
+        auto NewAnchored = [anchorHit](dui::Panel* mid, const wchar_t* label,
+                                       dui::Color bg, float x, float y, int32_t z) {
+            dui::Panel* p = mid->AddChild<dui::Panel>(dui::Style()
+                .Position(dui::Position::Absolute).Left(x).Top(y).ZIndex(z)
+                .Width(190.f).Height(44.f)
+                .Background(bg).CornerRadius(4.f)
+                .JustifyContent(dui::Justify::Center)
+                .AlignItems(dui::Align::Center));
+            p->AddChild<dui::Text>(label, dui::Style().Color(0xFFFFFFFF));
+            p->OnClick([anchorHit, label](dui::ClickEvent&) { anchorHit->SetText(label); });
+        };
+        NewAnchored(mid1, L"mid1 · zIndex 10",  0xFFC00000, 30.f, 24.f,  10);
+        NewAnchored(mid2, L"mid2 · zIndex -1",  0xFF2563EB, 120.f, 44.f, -1);
     }
 };
 

@@ -13,6 +13,7 @@
 #pragma once
 
 #include <cstdint>
+#include <initializer_list>
 #include <vector>
 
 #include "Core/Core.h"
@@ -50,6 +51,9 @@ enum class Prop : uint16_t {
     ScrollbarThumbBorderColor, ScrollbarThumbBorderWidth,
     // 定位（04-Layout §4.3）：追加在表尾，不重排已有属性 ID
     Position, Left, Top, Right, Bottom, ZIndex,
+    // Grid（04-Layout §4.2）：轨道列表是变长声明，实体存 Style（见 FindTracks）；
+    // 这两个 Prop 只作名义声明 / 失效标志，另四个是标量放置属性。
+    GridTemplateColumns, GridTemplateRows, GridRow, GridColumn, GridRowSpan, GridColumnSpan,
 };
 
 // 状态位（03-Style §6.2 已定全集）；disabled/selected 等写入方见文档
@@ -65,12 +69,26 @@ enum class State : uint32_t {
 };
 
 enum class Display : uint8_t { Flex, Grid, None };
+
+// Grid 轨道（04-Layout §4.2）：结构化定义，不做 CSS 字符串解析。
+// value 语义：Fixed = DIP，Flex = 份数，Percent = 百分数（0..100），Auto 忽略。
+enum class GridTrackKind : uint8_t { Fixed, Flex, Auto, Percent };
+struct GridTrack {
+    GridTrackKind kind  = GridTrackKind::Auto;
+    float         value = 0.f;
+};
+inline GridTrack Fixed(float dip)        { return {GridTrackKind::Fixed, dip}; }
+inline GridTrack Flex(float shares)      { return {GridTrackKind::Flex, shares}; }
+inline GridTrack Percent(float percent)  { return {GridTrackKind::Percent, percent}; }
+inline constexpr GridTrack Auto{GridTrackKind::Auto, 0.f};
 enum class FlexDirection : uint8_t { Row, Column };
 enum class FlexWrap : uint8_t { NoWrap, Wrap };              // 主轴放不下时换行（仅 Row；04-Layout §4.1 MVP）
 enum class Position : uint8_t { Static, Relative, Absolute, Fixed };   // 04-Layout §4.3
 enum class Justify : uint8_t { Start, Center };             // 主轴对齐（04-Layout §4.1，MVP 子集）
 enum class Align : uint8_t { Stretch, Start, Center };      // 交叉轴对齐（默认 Stretch）
 enum class FontWeight : uint8_t { Normal, Medium, SemiBold, Bold };
+// 文本在内容盒内的水平对齐（15-Properties §4.1）；继承属性，默认 Start
+enum class TextAlign : uint8_t { Start, Center, End };
 enum class Easing : uint8_t { Linear, EaseIn, EaseOut, EaseInOut };   // AnimConfig::easing（05-Animation §4）
 
 // 鼠标光标形态（语义同 CSS 的 cursor；仅系统内置形态）
@@ -91,6 +109,14 @@ struct StyleValue {
 
 inline Thickness ValueAsThickness(const StyleValue& v) noexcept {
     return {v.f, v.extra[0], v.extra[1], v.extra[2]};
+}
+
+// 四边厚度类属性：f = left，extra = top/right/bottom。运行时 Set 传标量时
+// 按四边同值展开，与 Style::Padding(float) / Margin(float) / CornerRadius(float) 一致。
+// 注：CornerRadius 当前绘制（Frame.cpp::DrawBackground）只读 .f 作统一圆角，
+// extra 三边暂未消费；四角独立半径需 Graphics 层支持，不属本次范围。
+inline bool IsThicknessProp(Prop p) noexcept {
+    return p == Prop::Padding || p == Prop::CornerRadius || p == Prop::Margin;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,13 +170,18 @@ public:
     Style& JustifyContent(dui::Justify v);       // 主轴：剩余空间分配
     Style& AlignItems(dui::Align v);             // 交叉轴：子项对齐
     Style& FlexWrap(dui::FlexWrap v);            // 主轴放不下时断行（仅 Row）
+    // Grid（04-Layout §4.2）：轨道列表是变长声明，实体存本对象内，
+    // FindTracks 沿派生链由近及远找第一个非空定义。
+    Style& GridTemplateColumns(std::initializer_list<GridTrack> tracks);
+    Style& GridTemplateRows(std::initializer_list<GridTrack> tracks);
+    const std::vector<GridTrack>* FindTracks(Prop p) const noexcept;
     // 定位（04-Layout §4.3）：Left/Top/Right/Bottom 单位 DIP，未设的一边 = Auto
     Style& Position(dui::Position v);
     Style& Left(float dip);
     Style& Top(float dip);
     Style& Right(float dip);
     Style& Bottom(float dip);
-    // zIndex：同一父容器内的 Absolute 子项按值升序绘制（同值按树序）；默认 0
+    // zIndex：同一 CB 内的 Absolute 按值升序绘制（同值按树序）；默认 0
     Style& ZIndex(int32_t v);
 
     // 视觉与文本
@@ -160,6 +191,7 @@ public:
     Style& FontWeight(dui::FontWeight v);
     Style& FontFamily(const wchar_t* name);      // 系统已安装字体族；指针需存活到样式使用期
     Style& LineHeight(float multiple);
+    Style& TextAlign(dui::TextAlign v);          // 内容盒内水平对齐（继承属性）
     Style& Opacity(float v);                     // 0..1
     // 文本编辑（TextBox/TextArea）
     Style& SelectionColor(dui::Color c);        // 选区底色（默认半透明蓝）
@@ -171,6 +203,8 @@ public:
     Style& Cursor(dui::Cursor v);
     Style& Padding(const Thickness& t);
     Style& Padding(float all);                   // 四边同值
+    Style& Margin(const Thickness& t);           // 外边距：占位但不属于元素盒（04-Layout §3）
+    Style& Margin(float all);                    // 四边同值
     Style& Gap(float dip);
     Style& CornerRadius(float dip);              // 四边同值
     Style& CornerRadius(const Thickness& t);
@@ -198,6 +232,8 @@ private:
     Style& SetF(Prop p, float f);
 
     std::vector<StyleValue>               decls_;
+    std::vector<GridTrack>                gridCols_;   // 04-Layout §4.2：变长轨道，随 Style 值拷贝
+    std::vector<GridTrack>                gridRows_;
     const Style* parent_ = nullptr;       // 派生基（生命周期由使用者保证为静态常量）
     const char*  name_ = nullptr;         // 注册表键 / 调试标识；匿名样式为 nullptr
 };
@@ -206,12 +242,17 @@ private:
 // 级联解析与失效（实现在 UI/StyleResolve.cpp；03-Style §5 / 15-Properties §5）
 // ---------------------------------------------------------------------------
 
+// Grid 轨道列表（04-Layout §4.2）：TrackList 是变长声明，不走 StyleValue；
+// 沿 Style 派生链找第一个非空定义（不可动画、无状态变体、无本地覆盖）。
+const std::vector<GridTrack>* GridTracksOf(const Element* e, Prop p);
+
 // 遍历期继承态（15-Properties §5.1）：布局/绘制自上而下遍历时随递归下传
 struct StyleContext {
     Color    color      = 0xFF000000;
     float    fontSize   = 14.f;
     float    lineHeight = 1.2f;
     uint32_t fontWeight = 0;
+    uint32_t textAlign = 0;            // 继承的 dui::TextAlign（默认 Start）
     const wchar_t* family = nullptr;   // 继承字体族；nullptr = 引擎默认（微软雅黑）
     float    scale = 1.f;   // 遍历期 DPI 缩放（图像类控件据此把像素尺寸换算为 DIP）
 
@@ -244,15 +285,25 @@ bool IsFixed(const Element* e);
 void ResetFixedCount() noexcept;
 void NoteFixed() noexcept;
 uint32_t FixedCount() noexcept;
-// zIndex（04-Layout §4.3）：只对就地绘制的 Absolute 生效，Fixed 恒为 0。
+// 最近定位祖先（04-Layout §4.3）：沿 Parent 链找第一个 position != Static 的祖先，
+// 找不到时退回根（初始包含块 = 窗口客户区）。
+const Element* ContainingBlockOf(const Element* e);
+// 布局期把每个 Absolute 登记到它的包含块名下，绘制 / 命中在包含块处统一消费。
+void ResetAbsoluteAnchors() noexcept;
+void NoteAbsoluteAnchor(const Element* cb, Element* e);
+uint32_t AbsoluteCount() noexcept;
+// zIndex（04-Layout §4.3）：只对 Absolute 生效，Fixed 恒为 0。
 int32_t ZIndexOf(const Element* e);
-// e 的脱离流子项按 zIndex 升序、同值按树序（稳定排序）返回。缓冲按递归深度
-// 分层跨帧复用，热路径零分配；depth 由遍历方逐层下传。
+// e 处应绘制的脱离流项按 zIndex 升序、同值按树序（稳定排序）返回。启用锚点后
+// 数据源为"归属 e 的 Absolute（可跨中间容器）+ e 的直接 Fixed 子项"；缓冲按递归
+// 深度分层跨帧复用，热路径零分配；depth 由遍历方逐层下传。
 const std::vector<Element*>& ZOrderedOutOfFlow(const Element* e, uint32_t depth);
 // 布局期统计是否存在非默认 zIndex 的 Absolute：为 0 时绘制/命中完全不进排序路径
 void ResetZIndexCount() noexcept;
 void NoteZIndex() noexcept;
 uint32_t ZIndexCount() noexcept;
+// 是否要走有序脱离流列表：树里有 Absolute（需按包含块提升）或用了 zIndex。
+bool UseOrderedOutOfFlow() noexcept;
 
 // 元素自身 Paint 级变换（布局绝对 DIP 空间的仿射矩阵，含级联层 1 动画值）。
 // App/Frame.cpp 收集与 UI/Event.cpp 命中测试逆变换共用；实现在 UI/StyleResolve.cpp。

@@ -4,7 +4,8 @@
 //  M3：矩形 / 圆角矩形（SDF 片元裁形，10-Rendering §6.2）。
 //  对齐已定决策：ADR-001（D3D11 + DXGI）、ADR-013（BGRA8、预乘 Alpha、VSync）、
 //  10-Rendering D2（按需全量光栅）。
-//  批合并 MVP 形态：单着色器单批；字形/图标图集（M5）引入后按 §6.1 分批。
+//  B2 有序显示列表：Painter 记录指令 + 状态槽，Device::Render 按指令顺序
+//  流式发射顶点并按段提交（10-Rendering §6.1），单元内严格 painter's algorithm。
 // ============================================================================
 #pragma once
 
@@ -34,19 +35,35 @@ struct GlyphVertex {
     uint32_t color;     // straight alpha；PS 内乘图集覆盖率后预乘
 };
 
-// 同一图集页的连续字形顶点区间（跨页才分批）
-struct GlyphGroup {
-    uint32_t page = 0;
-    uint32_t firstVertex = 0;
-    uint32_t vertexCount = 0;
+// ---- 有序绘制指令（10-Rendering §6.1）--------------------------------------
+// 收集期只记录指令 + 状态槽，顶点在 Device::Render 里按指令顺序流式发射。
+// 相邻同批/同资源的指令合并成段提交 → 单元内严格 painter's algorithm。
+enum class PaintOp : uint8_t { Rect = 0, Glyph = 1, Shape = 2, Image = 3 };
+
+struct PaintState {
+    Transform2D xform{};                 // DIP 空间组合变换（发射期 .Scaled(scale)）
+    float originDipX = 0.f, originDipY = 0.f;
 };
 
-// 同一纹理的连续图像顶点区间（跨纹理才切换 SRV）。顶点格式与字形批相同
-// （pos + uv + color），故复用 GlyphVertex。
-struct ImageGroup {
-    uint32_t texture = 0;
-    uint32_t firstVertex = 0;
-    uint32_t vertexCount = 0;
+// 定宽指令（按最坏情形 Shape 的参数定宽，64B）。p[] 布局：
+//   Rect  : dipRect.x/y/w/h, radiusDip
+//   Glyph : x/y/w/h（布局空间物理像素）, u0/v0/u1/v1
+//   Shape : cx/cy/hw/hh, p0x/p0y, p1x/p1y, extra, halfStroke, kind（物理像素）
+//   Image : dipRect.x/y/w/h
+struct PaintCommand {
+    uint32_t op = 0;
+    uint32_t state = 0;
+    uint32_t resource = 0;      // Glyph: 图集页 / Image: 纹理 id / 其余 0
+    uint32_t color = 0;         // 已打包 R8G8B8A8（含 opacity）
+    float    p[11]{};
+};
+
+// 发射期段描述符（按绘制顺序线性排布于 VB；跨帧复用，不作常驻指令）
+struct EmittedSegment {
+    uint32_t byteStart = 0;
+    uint32_t quadCount = 0;
+    uint32_t op = 0;
+    uint32_t resource = 0;
 };
 
 // 形状顶点（形状批：SDF 图元，48B）。一个图元 = 一个四边形，
@@ -69,27 +86,17 @@ struct ShapeVertex {
     uint32_t color;       // R8G8B8A8 内存序（straight alpha；预乘在 PS 完成）
 };
 
-// CPU 端指令收集 → 顶点。M3 用跨帧复用的 vector 承载（容量稳定后零分配）；
-// 换窗口 Arena 列 M6（00-Overview §3 热路径零分配）。
+// CPU 端有序指令收集：不生成顶点，坐标换算与状态应用推迟到 Device::Render。
+// 顶点格式（Vertex / GlyphVertex / ShapeVertex）仍是 GPU 侧契约，由发射器生成。
+// 跨帧复用 vector（容量稳定后零分配）。
 class Painter {
 public:
     void Reset();
-    // 原点偏移（滚动内容整体平移；DIP）。设置后本 Painter 收集的所有图元
-    // 都会加上该偏移 —— 滚动不改布局结果，只改绘制坐标。
-    void SetOrigin(float dipX, float dipY, float scale) noexcept {
-        originDipX_ = dipX;
-        originDipY_ = dipY;
-        originPxX_ = dipX * scale;
-        originPxY_ = dipY * scale;
-        Recompute();
-    }
-    // 当前绘制单元的变换（像素空间；由 App/Frame.cpp 的 Collector 逐元素下传）。
-    // 变换在发射 quad 时烘进顶点位置，故同一 Painter 可承载多个不同变换的元素。
-    void SetTransform(const Transform2D& pxXform) noexcept {
-        xform_ = pxXform;
-        Recompute();
-    }
-    const Transform2D& EffectiveTransform() const noexcept { return eff_; }
+
+    // 状态槽：变换 / 原点变化才追加新槽，指令按索引引用（10-Rendering §6.2）。
+    // scale 参数保留以兼容既有调用；缩放统一在发射期施加。
+    void SetOrigin(float dipX, float dipY, float scale);
+    void SetTransform(const Transform2D& dipXform);
 
     void FillRoundedRect(const Rect& dipRect, float radiusDip, Color color, float opacity, float scale);
     void AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
@@ -103,45 +110,32 @@ public:
     void StrokeEllipse(Vec2 center, float rxDip, float ryDip, Color color, float widthDip, float scale);
     void StrokeRoundRect(const Rect& dipRect, float radiusDip, float widthDip, Color color, float scale);
 
-    const Vertex* Vertices() const noexcept { return verts_.data(); }
-    uint32_t QuadCount() const noexcept { return static_cast<uint32_t>(verts_.size()) / 4; }
-    const GlyphVertex* GlyphVertices() const noexcept { return gverts_.data(); }
-    uint32_t GlyphQuadCount() const noexcept { return static_cast<uint32_t>(gverts_.size()) / 4; }
-    const std::vector<GlyphGroup>& GlyphGroups() const noexcept { return ggroups_; }
-    const ShapeVertex* ShapeVertices() const noexcept { return sverts_.data(); }
-    uint32_t ShapeQuadCount() const noexcept { return static_cast<uint32_t>(sverts_.size()) / 4; }
-    const GlyphVertex* ImageVertices() const noexcept { return iverts_.data(); }
-    uint32_t ImageQuadCount() const noexcept { return static_cast<uint32_t>(iverts_.size()) / 4; }
-    const std::vector<ImageGroup>& ImageGroups() const noexcept { return igroups_; }
+    const std::vector<PaintCommand>& Commands() const noexcept { return commands_; }
+    const std::vector<PaintState>& States() const noexcept { return states_; }
+
+    // 像素空间有效矩阵 E = Translate(originPx) · xform(px) · Translate(−originPx)。
+    // 发射期与 BeginClip 的裁剪 AABB 共用同一套推导，避免两处漂移。
+    Transform2D StateTransform(uint32_t stateIdx, float scale) const noexcept {
+        const PaintState& st = states_[stateIdx];
+        const float opx = st.originDipX * scale, opy = st.originDipY * scale;
+        return Transform2D::Translation(opx, opy) * st.xform.Scaled(scale)
+             * Transform2D::Translation(-opx, -opy);
+    }
+    Transform2D EffectiveTransform(float scale) const noexcept {
+        return StateTransform(curState_, scale);
+    }
 
 private:
-    // 有效矩阵 E = Translate(originPx) · xform_ · Translate(−originPx)：
-    // 顶点位置已是 (布局 DIP + origin)·scale，先去 origin、施加变换、再加回来。
-    // 这样 T_px 与 origin 无关，嵌套滚动切换 origin 时无需重算祖先变换链。
-    void Recompute() noexcept {
-        eff_ = Transform2D::Translation(originPxX_, originPxY_) * xform_
-             * Transform2D::Translation(-originPxX_, -originPxY_);
-        identityEff_ = eff_.IsIdentity();
-    }
-    Vec2 Xf(float x, float y) const noexcept {
-        return identityEff_ ? Vec2{x, y} : eff_.Apply(Vec2{x, y});
-    }
-
+    PaintCommand& NewCommand(PaintOp op, uint32_t resource, uint32_t packed);
+    void UseState(const PaintState& next);
     void PushShapeQuad(float cx, float cy, float hw, float hh,
                        float p0x, float p0y, float p1x, float p1y,
                        float extra, float halfStroke, Color color, uint32_t kind);
 
-    std::vector<Vertex> verts_;
-    std::vector<GlyphVertex> gverts_;
-    std::vector<GlyphGroup> ggroups_;
-    std::vector<ShapeVertex> sverts_;
-    std::vector<GlyphVertex> iverts_;      // 图像批（顶点格式同字形批）
-    std::vector<ImageGroup> igroups_;
-    float originDipX_ = 0.f, originDipY_ = 0.f;   // 原点偏移（DIP）
-    float originPxX_ = 0.f, originPxY_ = 0.f;     // 原点偏移（物理像素）
-    Transform2D xform_{};      // 当前单元的变换（像素空间）
-    Transform2D eff_{};        // 含 origin 共轭的有效矩阵
-    bool identityEff_ = true;  // 恒等时跳过逐顶点矩阵乘
+    std::vector<PaintCommand> commands_;
+    std::vector<PaintState> states_;
+    float originDipX_ = 0.f, originDipY_ = 0.f;   // 形状 API 记录期换算用
+    uint32_t curState_ = 0;
 };
 
 // 一个绘制单元 = 一个 Painter + 裁剪矩形（物理像素）。
@@ -164,7 +158,8 @@ public:
     void Resize(const Vec2& clientPx);
 
     Painter& GetPainter() noexcept { return painter_; }
-    void Render(const DrawUnit* units, uint32_t unitCount);      // 清屏 + 提交 Painter 顶点（矩形批 + 字形图集批）
+    // 清屏 + 按指令顺序发射顶点并提交（scale 用于 DIP → 物理像素换算）
+    void Render(const DrawUnit* units, uint32_t unitCount, float scale);
     void Present();
 
     // 字形图集页（R8）：创建或全量更新；页被 LRU 整页释放后调 Release
@@ -217,6 +212,9 @@ private:
     };
     std::vector<GlyphPageTex> pages_;
     std::vector<ImageTex> images_;
+    // 发射期缓冲：段描述符 + 单元段范围前缀（单元 i 的段为 [first[i], first[i+1])）
+    std::vector<EmittedSegment> segments_;
+    std::vector<uint32_t> unitFirstSeg_;
     uint32_t vbCapacity_ = 0;
     float    width_ = 0.f;
     float    height_ = 0.f;

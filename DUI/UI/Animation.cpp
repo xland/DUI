@@ -14,15 +14,6 @@ namespace dui {
 
 namespace {
 
-// 公共 API 形状契约：确保用户写法（含 AnimConfig 指派初始化）始终可编译，
-// 并强制实例化 Animate 模板函数体（示例工程当前没有调用点）。
-[[maybe_unused]] void AnimationApiContract(Element* card) {
-    auto h = card->Animate(dui::Opacity, 0.f,
-        { .durationMs = 200, .easing = dui::Easing::EaseOut });
-    h.OnFinished([] {});
-    h.Cancel();
-}
-
 struct RegEntry {
     Element* element;
     Lifetime lifetime;

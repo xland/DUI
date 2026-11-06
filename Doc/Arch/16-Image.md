@@ -97,6 +97,7 @@ WIC 的 import lib 在 SDK 里叫 **`windowscodecs.lib`**（没有 `wincodec.lib
 - `LoadFile` 与 `LoadAnimatedFile` 都是虚函数，且在 `Gif` 上等价（统一走多帧解码），避免经 `Image*` 调用时静默退化成静态单帧；单帧图退化为静态显示。
 - **不解析 GIF 文件内的 Netscape 循环次数**（`DecodedAnimation` 无该字段）：循环次数只由 `SetLoopCount` 控制，默认无限。
 - 明确不做：帧完成回调、seek、逐帧事件、播放速度调节。
+- 完整交互演示见 `Samples/Animation`（与命令式属性动画共用一个示例窗口）。
 
 ---
 

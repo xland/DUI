@@ -81,8 +81,7 @@ protected:
         //    Pause() / Play() / Stop() / SetLoopCount(n)（0 = 无限）可控制播放
         root->AddChild<dui::Text>(L"动画 GIF：WIC 多帧 + 帧延迟播放",
                                   dui::Style().FontSize(13.f).Color(0xFF4B5563));
-        auto* anim = root->AddChild<dui::Gif>(dui::Style()
-            .Width(320.f).Height(134.f).Background(0xFFE5E7EB));
+        auto* anim = root->AddChild<dui::Gif>(dui::Style().Width(320.f).Height(134.f).Background(0xFFE5E7EB));
         if (!anim->LoadFile(AssetPathInExeDir(L"demo.gif"))) {
             root->AddChild<dui::Text>(anim->LastError().c_str(),
                                       dui::Style().FontSize(13.f).Color(0xFFB42318));

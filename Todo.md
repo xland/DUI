@@ -306,6 +306,7 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 2. `UI/Element.h/.cpp` + `UI/StyleResolve.cpp`：动画值写入 `Element::animated_`，作为级联第 1 层，遍历内/外读路径一致；起点取当前显示值，同 (元素, 属性) 新动画替换旧动画。
 3. `UI/Image.cpp`：统一 `AnimationClock` 同时驱动 GIF 帧动画、光标闪烁与属性补间；App 层仍只启停一个定时器（20ms / 500ms / 停表）。
 4. 删除死代码 `Style::Transition()` / `TransitionSpec` / `Style::transitions_`；重写 `05-Animation`，收敛 `03-Style` / `02-Decisions` / `15-Properties` / `00-Overview` / `01-Layering` / `16-Image` 的旧声明式描述。
+5. 新增 `Samples/Animation`：按钮交互演示 `Animate`（`Opacity` / `BackgroundColor`、四种缓动、`OnFinished`、`Cancel`、同属性替换、fill forwards）、`dui::Gif` 播放控制，以及元素级 `When` 的 hover 变体；库侧冗余的 `AnimationApiContract` 随之删除。
 
 **待做**：观测面板（帧耗时分段计时 + Draw Call 计数，见 `10-Rendering §9-5`）、README 截图。
 

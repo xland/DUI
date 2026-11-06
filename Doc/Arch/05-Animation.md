@@ -139,4 +139,4 @@ struct AnimConfig {
 - `durationMs = 0` 等价于 1 ms：仍要等下一次 tick 才写终值、发回调。
 - 颜色在打包的 8 位通道上插值，不做线性光空间混合。
 - GIF 帧动画与光标闪烁不是样式动画，不读写动画槽，也不受 `Cancel()` 影响。
-- 目前没有示例工程调用 `Animate()`；`UI/Animation.cpp` 内的 `AnimationApiContract` 提供 API 形状的编译期契约（强制实例化模板函数体）。
+- 完整交互演示见 `Samples/Animation`（属性动画 + GIF 播放控制）；库侧不再保留额外的 API 形状契约函数。

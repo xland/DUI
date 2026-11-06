@@ -1,185 +1,191 @@
 // ============================================================================
-//  Event/main.cpp — 元素级事件与冒泡演示
+//  Event/main.cpp — 事件示例集
 //
-//  演示（06-Events §3 / §5）：
-//    · 冒泡顺序：三层嵌套容器逐层绑定 OnPointerDown / Up / Click，日志显示
-//      子 → 父 → 根；祖先容器能统一处理深层子元素的事件
-//    · handled 终止：父级拦截开关打开时，父处理器置 handled，根收不到 Down
-//    · 直达事件：OnPointerEnter / Leave 由悬停链差分逐元素触发，不走冒泡路由、
-//      handled 无效 —— 开拦截后三层仍全部收到，与 Down 形成对比
-//    · OnWheel 冒泡 + handled 阻止滚动容器消费；OnKeyDown 从焦点元素冒泡到根
+//  每个 DemoXxx() 都是一个独立、可单独阅读的小示例：标题 + 一两个方块 +
+//  日志，控件和回调都写在函数内部，没有成员变量、没有跨示例状态。
+//  想看哪种事件就直接读那个函数，OnCreate 只是把示例名列一遍。
 //
-//  注意：框架目前只有冒泡阶段。06-Events §5 / D2 的「捕获/隧道」阶段与
-//  §6 的指针捕获均尚未实现；本示例用「祖先统一处理」演示冒泡侧的拦截效果。
+//  日志直接读回 dui::Text 的当前内容再追加一行，不需要 vector / 环形缓冲。
+//  root 用 Row + FlexWrap(Wrap) 自动排成示例网格；FontSize / Color 由继承
+//  下传，单个示例里不重复写外观配置。
+//  框架目前只有冒泡阶段：没有捕获/隧道，也没有元素级指针捕获。
 // ============================================================================
 
 #include <windows.h>
 
-#include <functional>
 #include <string>
-#include <vector>
 
 #include "DUI/DUI.h"
 
 namespace {
 
-static const dui::Style kButton = dui::Style()
-    .FontSize(13.f).Color(0xFFFFFFFF)
-    .Background(0xFF374151)
-    .Padding(dui::Thickness(6.f, 12.f))
-    .CornerRadius(4.f)
-    .Cursor(dui::Cursor::Hand)
-    .FlexShrink(0.f);
-
-static const dui::Style kButtonHover = dui::Style().Background(0xFF1F6FE5);
-
-dui::Panel* MakeRow(dui::Panel* parent) {
-    return parent->AddChild<dui::Panel>(dui::Style()
-        .FlexDirection(dui::FlexDirection::Row)
-        .AlignItems(dui::Align::Center)
-        .Gap(8.f)
-        .FlexShrink(0.f));
+// ---- 全文件仅这两处公共外观 ------------------------------------------------
+// 一列 = 一个示例；返回的容器同时也是"根"层，可直接在上面绑冒泡处理器
+dui::Panel* Demo(dui::Panel* root, const wchar_t* title) {
+    dui::Panel* col = root->AddChild<dui::Panel>(dui::Style()
+        .Width(240.f).Height(260.f)
+        .Gap(8.f).Padding(12.f)
+        .Background(0xFFFFFFFF).CornerRadius(6.f));
+    col->AddChild<dui::Text>(title);
+    return col;
 }
 
-template <class F>
-dui::Button* AddButton(dui::Panel* parent, const wchar_t* label, F fn) {
-    dui::Button* b = parent->AddChild<dui::Button>(label, kButton);
-    b->OnClick([fn](dui::ClickEvent&) { fn(); });
-    b->When(dui::State::Hover, kButtonHover);
-    return b;
-}
-
-dui::Panel* MakeTier(dui::Panel* parent, float w, float h, dui::Color bg) {
+dui::Panel* Box(dui::Panel* parent, float w, float h, dui::Color bg) {
     return parent->AddChild<dui::Panel>(dui::Style()
         .Width(w).Height(h)
-        .Background(bg)
-        .CornerRadius(6.f)
-        .Padding(dui::Thickness(12.f))
-        .AlignItems(dui::Align::Center)
-        .JustifyContent(dui::Justify::Center)
-        .FlexShrink(0.f));
+        .Background(bg).CornerRadius(4.f)
+        .Padding(10.f));
+}
+
+// ---- 1 Click 冒泡：命中元素 → 祖先链 ---------------------------------------
+void DemoClick(dui::Panel* root) {
+    dui::Panel* col = Demo(root, L"1 Click 冒泡：子 → 父 → 根");
+    dui::Text* log = col->AddChild<dui::Text>(L"", dui::Style().Height(88.f));
+    auto say = [log](const wchar_t* s) { log->SetText(log->Text_() + s + L"\n"); };
+    dui::Panel* outer = Box(col,   190.f, 84.f, 0xFFD1D5DB);
+    dui::Panel* inner = Box(outer, 120.f, 48.f, 0xFF2563EB);
+
+    col->OnClick([say](dui::ClickEvent&)   { say(L"3 根（列）"); });
+    outer->OnClick([say](dui::ClickEvent&) { say(L"2 父（灰）"); });
+    inner->OnClick([say, log](dui::ClickEvent&) {
+        log->SetText(L"");           // 每次点击从空白开始，正好看到三行顺序
+        say(L"1 子（蓝）");
+    });
+}
+
+// ---- 2 handled：父级处理器终止冒泡 -----------------------------------------
+void DemoHandled(dui::Panel* root) {
+    dui::Panel* col = Demo(root, L"2 handled：父级终止冒泡");
+    dui::Text* log = col->AddChild<dui::Text>(L"", dui::Style().Height(88.f));
+    auto say = [log](const wchar_t* s) { log->SetText(log->Text_() + s + L"\n"); };
+    dui::Panel* outer = Box(col,   190.f, 84.f, 0xFFD1D5DB);
+    dui::Panel* inner = Box(outer, 120.f, 48.f, 0xFF2563EB);
+
+    col->OnClick([say](dui::ClickEvent&) { say(L"根（被拦截，不该出现）"); });
+    outer->OnClick([say](dui::ClickEvent& e) {
+        say(L"父：handled = true");
+        e.handled = true;
+    });
+    inner->OnClick([say, log](dui::ClickEvent&) {
+        log->SetText(L"");
+        say(L"子");
+    });
+}
+
+// ---- 3 直达事件：Enter / Leave 不冒泡 --------------------------------------
+void DemoEnterLeave(dui::Panel* root) {
+    dui::Panel* col = Demo(root, L"3 Enter / Leave：直达事件");
+    dui::Text* log = col->AddChild<dui::Text>(L"", dui::Style().Height(88.f));
+    auto say = [log](const wchar_t* s) { log->SetText(log->Text_() + s + L"\n"); };
+    dui::Panel* outer = Box(col,   190.f, 84.f, 0xFFD1D5DB);
+    dui::Panel* inner = Box(outer, 120.f, 48.f, 0xFF2563EB);
+
+    // 移到子元素上不算离开父元素，故 outer 不会再触发 Leave / Enter
+    outer->OnPointerEnter([say, log](dui::PointerEvent&) {
+        log->SetText(L"");
+        say(L"进入父（直达，不冒泡）");
+    });
+    outer->OnPointerLeave([say](dui::PointerEvent&) { say(L"离开父"); });
+    inner->OnPointerEnter([say](dui::PointerEvent&)  { say(L"进入子：父不 Leave"); });
+    inner->OnPointerLeave([say](dui::PointerEvent&)  { say(L"离开子：父不 Enter"); });
+}
+
+// ---- 4 按下 / 弹起：冒泡 ---------------------------------------------------
+void DemoDownUp(dui::Panel* root) {
+    dui::Panel* col = Demo(root, L"4 Down / Up：冒泡");
+    dui::Text* log = col->AddChild<dui::Text>(L"", dui::Style().Height(88.f));
+    auto say = [log](const wchar_t* s) { log->SetText(log->Text_() + s + L"\n"); };
+    dui::Panel* outer = Box(col,   190.f, 84.f, 0xFFD1D5DB);
+    dui::Panel* inner = Box(outer, 120.f, 48.f, 0xFF2563EB);
+
+    col->OnPointerDown([say](dui::PointerEvent&)   { say(L"Down@根"); });
+    outer->OnPointerDown([say](dui::PointerEvent&) { say(L"Down@父"); });
+    inner->OnPointerDown([say, log](dui::PointerEvent&) {
+        log->SetText(L"");
+        say(L"Down@子");
+    });
+    inner->OnPointerUp([say](dui::PointerEvent&) { say(L"Up@子"); });
+    col->OnPointerUp([say](dui::PointerEvent&)   { say(L"Up@根（冒泡）"); });
+}
+
+// ---- 5 移动：读客户区绝对坐标 ----------------------------------------------
+void DemoMove(dui::Panel* root) {
+    dui::Panel* col = Demo(root, L"5 Move：读指针坐标");
+    dui::Text* pos = col->AddChild<dui::Text>(L"把指针移到灰块上");
+    dui::Panel* box = Box(col, 190.f, 70.f, 0xFFD1D5DB);
+    box->OnPointerMove([pos](dui::PointerEvent& e) {
+        pos->SetText(L"x=" + std::to_wstring(static_cast<int>(e.pos.x)) +
+                     L"  y=" + std::to_wstring(static_cast<int>(e.pos.y)));
+    });
+}
+
+// ---- 6 滚轮：置 handled 阻止祖先消费 ---------------------------------------
+void DemoWheel(dui::Panel* root) {
+    dui::Panel* col = Demo(root, L"6 Wheel：handled");
+    dui::Text* log = col->AddChild<dui::Text>(L"在灰块上滚动滚轮");
+    dui::Panel* box = Box(col, 190.f, 70.f, 0xFFD1D5DB);
+    box->OnWheel([log](dui::WheelEvent& e) {
+        log->SetText(e.horizontal ? L"横向 → handled = true"
+                                  : L"纵向 → handled = true");
+        e.handled = true;   // 无人 handled 时滚动容器才会消费滚轮
+    });
+}
+
+// ---- 7 键盘：焦点元素 → 祖先链 ---------------------------------------------
+void DemoKeyboard(dui::Panel* root) {
+    dui::Panel* col = Demo(root, L"7 KeyDown：焦点 → 根");
+    dui::Text* log = col->AddChild<dui::Text>(L"", dui::Style().Height(88.f));
+    auto say = [log](const wchar_t* s) { log->SetText(log->Text_() + s + L"\n"); };
+    dui::Panel* focus = Box(col, 190.f, 56.f, 0xFFDBEAFE);
+    focus->SetFocusable(true);
+    // 聚焦态换色：既让可点区域看得见，也让"当前有没有焦点"一目了然
+    focus->When(dui::State::Focused, dui::Style().Background(0xFF93C5FD));
+
+    focus->OnKeyDown([say, log](dui::KeyEvent&) {
+        log->SetText(L"");
+        say(L"1 焦点元素");
+    });
+    col->OnKeyDown([say](dui::KeyEvent&) { say(L"2 根（冒泡）"); });
+    col->AddChild<dui::Text>(L"点击浅蓝区域（变深即已聚焦）后按任意键");
+}
+
+// ---- 8 状态变体：hover 立即换色，不带过渡 ----------------------------------
+void DemoWhen(dui::Panel* root) {
+    dui::Panel* col = Demo(root, L"8 When：hover 状态变体");
+    dui::Panel* box = Box(col, 190.f, 60.f, 0xFF2563EB);
+    box->When(dui::State::Hover, dui::Style().Background(0xFFF59E0B));
+    col->AddChild<dui::Text>(L"移到方块上立即换色（无过渡）");
 }
 
 class EventWindow final : public dui::Window {
 public:
     EventWindow()
         : dui::Window(dui::WindowOptions{
-              .title  = L"DUI Event 示例",
-              .width  = 760.f,
-              .height = 720.f,
+              .title  = L"DUI 事件示例集",
+              .width  = 1200.f,
+              .height = 620.f,
           }) {}
 
 protected:
     void OnCreate() override {
         dui::Panel* root = Root();
         root->SetStyle(dui::Style()
-            .FlexDirection(dui::FlexDirection::Column)
+            .FlexDirection(dui::FlexDirection::Row)
+            .FlexWrap(dui::FlexWrap::Wrap)
             .AlignItems(dui::Align::Start)
-            .Gap(10.f)
-            .Padding(18.f)
+            .Gap(14.f).Padding(16.f)
+            .FontSize(13.f).Color(0xFF1F2933)
             .Background(0xFFF3F4F6));
 
-        root->AddChild<dui::Text>(L"DUI 事件：冒泡 / 直达 / 祖先处理",
-            dui::Style().FontSize(20.f).Color(0xFF1F2933).FlexShrink(0.f));
-        root->AddChild<dui::Text>(
-            L"点击嵌套方块看 子→父→根 的冒泡顺序；打开「父级拦截」后对比 Down 与 Enter 的差别",
-            dui::Style().FontSize(13.f).Color(0xFF4B5563).FlexShrink(0.f));
-
-        dui::Panel* row = MakeRow(root);
-        interceptBtn_ = AddButton(row, L"父级拦截：关", [this] {
-            intercept_ = !intercept_;
-            interceptBtn_->SetText(intercept_ ? L"父级拦截：开" : L"父级拦截：关");
-            Append(intercept_ ? L"开关：父级 Down 置 handled，冒泡到父为止"
-                              : L"开关：关闭拦截，Down 完整冒泡到根");
-        });
-        AddButton(row, L"清空日志", [this] {
-            entries_.clear();
-            log_->SetText(L"（日志已清空）");
-        });
-
-        log_ = root->AddChild<dui::Text>(L"（等待事件…）", dui::Style()
-            .Width(560.f).Height(130.f)
-            .Padding(dui::Thickness(8.f, 10.f))
-            .FontSize(13.f).Color(0xFF0F766E)
-            .Background(0xFFFFFFFF)
-            .CornerRadius(4.f)
-            .FlexShrink(0.f));
-
-        dui::Panel* outer  = MakeTier(root,   560.f, 200.f, 0xFFD1D5DB);
-        dui::Panel* middle = MakeTier(outer,  360.f, 130.f, 0xFF2563EB);
-        dui::Panel* inner  = MakeTier(middle, 180.f,  70.f, 0xFFF59E0B);
-
-        BindTier(outer,  L"根", false);
-        BindTier(middle, L"父", true);
-        BindTier(inner,  L"子", false);
-
-        inner->OnWheel([this](dui::WheelEvent& e) {
-            Append(e.horizontal ? L"Wheel(横向)@子 → handled" : L"Wheel(纵向)@子 → handled");
-            e.handled = true;
-        });
-
-        root->AddChild<dui::Text>(
-            L"直达事件（Enter/Leave）三层各自触发、不受 handled 影响；Down/Up/Click 走冒泡路由",
-            dui::Style().FontSize(13.f).Color(0xFF4B5563).FlexShrink(0.f));
-
-        dui::Panel* focus = root->AddChild<dui::Panel>(dui::Style()
-            .Width(240.f).Height(34.f)
-            .Background(0xFFFFFFFF)
-            .CornerRadius(4.f)
-            .Padding(dui::Thickness(6.f, 10.f))
-            .FlexShrink(0.f));
-        focus->SetFocusable(true);
-        focus->OnKeyDown([this](dui::KeyEvent&) {
-            Append(L"KeyDown@输入框（焦点元素）");
-        });
-        root->OnKeyDown([this](dui::KeyEvent&) {
-            Append(L"KeyDown@窗口根（冒泡）");
-        });
-        root->AddChild<dui::Text>(
-            L"点击上方白色区域取得焦点后按键：观察焦点元素 → 祖先链的键盘冒泡",
-            dui::Style().FontSize(13.f).Color(0xFF4B5563).FlexShrink(0.f));
+        DemoClick(root);
+        DemoHandled(root);
+        DemoEnterLeave(root);
+        DemoDownUp(root);
+        DemoMove(root);
+        DemoWheel(root);
+        DemoKeyboard(root);
+        DemoWhen(root);
     }
-
-private:
-    void BindTier(dui::Panel* p, const wchar_t* name, bool isParent) {
-        const dui::String tag(name);
-        p->OnPointerDown([this, tag, isParent](dui::PointerEvent& e) {
-            Append((tag + L"·Down").c_str());
-            if (isParent && intercept_) {
-                e.handled = true;
-                Append(L"  父置 handled → 根收不到本次 Down");
-            }
-        });
-        p->OnPointerUp([this, tag](dui::PointerEvent&) {
-            Append((tag + L"·Up").c_str());
-        });
-        p->OnClick([this, tag](dui::ClickEvent&) {
-            Append((tag + L"·Click").c_str());
-        });
-        p->OnPointerEnter([this, tag](dui::PointerEvent&) {
-            Append((tag + L"·Enter（直达）").c_str());
-        });
-        p->OnPointerLeave([this, tag](dui::PointerEvent&) {
-            Append((tag + L"·Leave（直达）").c_str());
-        });
-    }
-
-    // 追加一行事件日志（最多保留 6 条）
-    void Append(const wchar_t* what) {
-        entries_.push_back(dui::String(what));
-        if (entries_.size() > 6) entries_.erase(entries_.begin());
-        dui::String text;
-        for (size_t i = 0; i < entries_.size(); ++i) {
-            if (i != 0) text += L"\n";
-            text += entries_[i];
-        }
-        log_->SetText(text);
-    }
-
-    dui::Text*   log_ = nullptr;
-    dui::Button* interceptBtn_ = nullptr;
-    std::vector<dui::String> entries_;
-    bool intercept_ = false;
 };
 
 }  // namespace

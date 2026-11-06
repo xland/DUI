@@ -155,4 +155,4 @@ struct AnimConfig {
 - GIF 帧动画与光标闪烁不是样式动画，不读写动画槽，也不受 `Cancel()` 影响。
 - transform 动画只改绘制顶点：`Bounds()` / 布局结果 / `Scroller` 可滚动范围不变；`PointerEvent::pos` 仍是客户区绝对 DIP，旋转的交互文本框光标定位列为后续项（[10-Rendering.md](./10-Rendering.md) §6.4）。
 - 等比 `Scale` 动画下字形是被线性拉伸的图集位图（ADR-006 按离散尺度光栅化），放大略糊；SDF 圆角的 1px AA 过渡带会按比例变宽。
-- 命令式属性动画的完整交互演示见 `Samples/Animation`；GIF 帧动画与播放控制见 `Samples/Image`。库侧不再保留额外的 API 形状契约函数。
+- 命令式属性动画的完整交互演示见 `Samples/Animation`（按功能拆成多个自包含的极简示例函数，可单独阅读）；GIF 帧动画与播放控制见 `Samples/Image`。库侧不再保留额外的 API 形状契约函数。

@@ -12,6 +12,9 @@
 
 #include "UI/UI.h"
 
+#include <algorithm>
+#include <memory>
+
 namespace dui {
 
 namespace {
@@ -162,6 +165,53 @@ Color Style::Resolve(const Element* element, Prop p) {
     return ResolveProperty(element, p).u;
 }
 
+// ---- 定位（04-Layout §4.3）------------------------------------------------
+// 脱离文档流：Absolute / Fixed 不参与父的 flex 测量与排列，单独按四边定位。
+bool IsOutOfFlow(const Element* e) {
+    const uint32_t p = ResolveProperty(e, Prop::Position).u;
+    return p == static_cast<uint32_t>(Position::Absolute) ||
+           p == static_cast<uint32_t>(Position::Fixed);
+}
+
+bool IsFixed(const Element* e) {
+    return ResolveProperty(e, Prop::Position).u == static_cast<uint32_t>(Position::Fixed);
+}
+
+static uint32_t g_fixedCount = 0;
+void ResetFixedCount() noexcept { g_fixedCount = 0; }
+void NoteFixed() noexcept { ++g_fixedCount; }
+uint32_t FixedCount() noexcept { return g_fixedCount; }
+
+// ---- zIndex（04-Layout §4.3）------------------------------------------------
+static uint32_t g_zIndexCount = 0;
+void ResetZIndexCount() noexcept { g_zIndexCount = 0; }
+void NoteZIndex() noexcept { ++g_zIndexCount; }
+uint32_t ZIndexCount() noexcept { return g_zIndexCount; }
+
+int32_t ZIndexOf(const Element* e) {
+    if (IsFixed(e)) return 0;   // Fixed 走窗口级层，不参与容器内排序
+    return static_cast<int32_t>(ResolveProperty(e, Prop::ZIndex).u);
+}
+
+// 按递归深度分层的跨帧复用缓冲（同 Layout.cpp ItemsAt：内层用 unique_ptr 固定
+// 地址，避免外层 resize 搬动 vector 对象导致上层引用悬空）。
+const std::vector<Element*>& ZOrderedOutOfFlow(const Element* e, uint32_t depth) {
+    static std::vector<std::unique_ptr<std::vector<Element*>>> pool;
+    if (pool.size() <= depth) pool.resize(depth + 1);
+    if (!pool[depth]) pool[depth] = std::make_unique<std::vector<Element*>>();
+    std::vector<Element*>& out = *pool[depth];
+    out.clear();
+    for (Element* c : e->Children()) if (IsOutOfFlow(c)) out.push_back(c);
+    bool varied = false;
+    for (const Element* c : out) if (ZIndexOf(c) != 0) { varied = true; break; }
+    if (varied) {
+        std::stable_sort(out.begin(), out.end(), [](const Element* a, const Element* b) {
+            return ZIndexOf(a) < ZIndexOf(b);
+        });
+    }
+    return out;
+}
+
 // ---- 失效标志（15-Properties §3；M3 将 Text 并入 Layout）-------------------
 
 uint32_t PropFlagsOf(Prop p) {
@@ -213,6 +263,14 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::JustifyContent:
     case Prop::AlignItems:
     case Prop::FlexWrap:
+    // 定位：改布局盒，需重新 Measure/Arrange
+    case Prop::Position:
+    case Prop::Left:
+    case Prop::Top:
+    case Prop::Right:
+    case Prop::Bottom:
+    // zIndex 不改几何，但要靠重排刷新布局期的使用计数（绘制/命中据此短路）
+    case Prop::ZIndex:
         return kFlagLayout;
     case Prop::Cursor:
         return kFlagNone;   // 光标形态不影响布局也不影响绘制

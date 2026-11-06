@@ -173,7 +173,22 @@ float alpha = 1.0f - smoothstep(-w, w, d);
   - 滚动容器的内容单独成单元：`Painter::SetOrigin(-offsetX, -offsetY, scale)`
     只平移绘制坐标（布局结果不变），裁剪 = 视口 ∩ 外层裁剪；
   - 滚动条画在内容之上的父级单元（不随内容滚动）；
-  - 单元顺序即 Z 序（`Painter` 池跨帧复用，稳态零分配）。
+  - 单元顺序即 Z 序（`Painter` 池跨帧复用，稳态零分配）。收集子项分两趟：
+    流内子项按树序先画，脱离文档流的 `Absolute` 后画；`UI/Event.cpp` 的命中测试
+    按同样两趟倒序，保证后画者先命中。
+  - **窗口级 `Fixed` 层**（04-Layout §4.3）：`Fixed` 不进当前单元，遍历时按树序原位
+    记录 `FixedItem{元素, 祖先裁剪快照, 继承态}`，主树全部 `Commit()` 后在 `Finish()`
+    里统一绘制 —— 每项一个单元，原点 = 窗口、变换 = 恒等、裁剪 = 祖先裁剪快照。
+    因此 Fixed 可挂任意层级（含 Scroller 内部），不受祖先 transform / 滚动原点 /
+    视口 scissor 影响，且盖过所有普通内容（含滚动条）。`HitTest` 在普通树遍历之前
+    按同一顺序倒序命中该层；布局期 `FixedCount() == 0` 时绘制与命中两侧都整段
+    短路，未使用 Fixed 的应用零额外遍历与属性解析。
+  - **`zIndex`（04-Layout §4.3）**：第二趟的脱离流子项改由 `ZOrderedOutOfFlow()`
+    提供（按 `zIndex` 升序、同值按树序的稳定排序），`Frame.cpp` 两处收集与
+    `UI/Event.cpp` 的 `HitTestInner` / `CollectFixedLayer` 共用同一有序列表，四处顺序
+    一致；命中倒序即"值大者后画、先命中"。缓冲按递归深度分层跨帧复用（遍历逐层
+    下传 `depth`），热路径零分配；布局期 `ZIndexCount() == 0` 时四处都走原两趟，
+    未使用 zIndex 的应用零额外遍历与解析。
 
 ### 6.4 发射期顶点变换（Paint 级 transform，已落地）
 

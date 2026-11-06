@@ -92,7 +92,8 @@ DUI/                     库工程（DUI.vcxproj，静态库）
   Text/                  DWrite 排版 + GlyphAtlas 灰度图集（M5）
 Samples/                 示例工程（每个示例一个子目录 = 一个工程）
   HelloWorld/            最小示例：窗口正中一行“你好，World”
-  LayoutFlex/            Flex 布局能力演示（grow/shrink/对齐/gap/嵌套）
+  Layout/               布局能力演示（FlexGrow / 定宽+弹性 / FlexShrink / JustifyContent+AlignItems / Gap / 嵌套）
+  Position/             定位能力演示（Relative / Absolute / Fixed 含 Scroller 内 / zIndex 层叠排序）
   Canvas/                2D 绘图控件演示（直线/折线/多边形/矩形/圆角矩形/圆/椭圆/圆弧）
   Scroller/              滚动容器演示（纵向列表 / 双向滚动 / 嵌套滚动）
   CustomFont/            自定义字体演示（加载未安装的 iconfont.ttf 渲染字体图标）

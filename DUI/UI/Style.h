@@ -48,6 +48,8 @@ enum class Prop : uint16_t {
     ScrollbarThumbWidth, ScrollbarThumbHeight,
     ScrollbarThumbBackgroundColor, ScrollbarThumbCornerRadius,
     ScrollbarThumbBorderColor, ScrollbarThumbBorderWidth,
+    // 定位（04-Layout §4.3）：追加在表尾，不重排已有属性 ID
+    Position, Left, Top, Right, Bottom, ZIndex,
 };
 
 // 状态位（03-Style §6.2 已定全集）；disabled/selected 等写入方见文档
@@ -65,6 +67,7 @@ enum class State : uint32_t {
 enum class Display : uint8_t { Flex, Grid, None };
 enum class FlexDirection : uint8_t { Row, Column };
 enum class FlexWrap : uint8_t { NoWrap, Wrap };              // 主轴放不下时换行（仅 Row；04-Layout §4.1 MVP）
+enum class Position : uint8_t { Static, Relative, Absolute, Fixed };   // 04-Layout §4.3
 enum class Justify : uint8_t { Start, Center };             // 主轴对齐（04-Layout §4.1，MVP 子集）
 enum class Align : uint8_t { Stretch, Start, Center };      // 交叉轴对齐（默认 Stretch）
 enum class FontWeight : uint8_t { Normal, Medium, SemiBold, Bold };
@@ -141,6 +144,14 @@ public:
     Style& JustifyContent(dui::Justify v);       // 主轴：剩余空间分配
     Style& AlignItems(dui::Align v);             // 交叉轴：子项对齐
     Style& FlexWrap(dui::FlexWrap v);            // 主轴放不下时断行（仅 Row）
+    // 定位（04-Layout §4.3）：Left/Top/Right/Bottom 单位 DIP，未设的一边 = Auto
+    Style& Position(dui::Position v);
+    Style& Left(float dip);
+    Style& Top(float dip);
+    Style& Right(float dip);
+    Style& Bottom(float dip);
+    // zIndex：同一父容器内的 Absolute 子项按值升序绘制（同值按树序）；默认 0
+    Style& ZIndex(int32_t v);
 
     // 视觉与文本
     Style& Background(dui::Color c);
@@ -226,6 +237,22 @@ StyleValue ResolveProperty(const Element* e, Prop p, const StyleContext& ctx);
 StyleValue ResolveProperty(const Element* e, Prop p);
 StyleValue BuiltinDefault(Prop p);
 uint32_t PropFlagsOf(Prop p);
+// 脱离文档流（04-Layout §4.3）：布局 / 绘制 / 命中三处共用同一判断
+bool IsOutOfFlow(const Element* e);
+bool IsFixed(const Element* e);
+// 布局期统计的 Fixed 元素数：命中测试据此短路窗口级 Fixed 预扫（零额外遍历）
+void ResetFixedCount() noexcept;
+void NoteFixed() noexcept;
+uint32_t FixedCount() noexcept;
+// zIndex（04-Layout §4.3）：只对就地绘制的 Absolute 生效，Fixed 恒为 0。
+int32_t ZIndexOf(const Element* e);
+// e 的脱离流子项按 zIndex 升序、同值按树序（稳定排序）返回。缓冲按递归深度
+// 分层跨帧复用，热路径零分配；depth 由遍历方逐层下传。
+const std::vector<Element*>& ZOrderedOutOfFlow(const Element* e, uint32_t depth);
+// 布局期统计是否存在非默认 zIndex 的 Absolute：为 0 时绘制/命中完全不进排序路径
+void ResetZIndexCount() noexcept;
+void NoteZIndex() noexcept;
+uint32_t ZIndexCount() noexcept;
 
 // 元素自身 Paint 级变换（布局绝对 DIP 空间的仿射矩阵，含级联层 1 动画值）。
 // App/Frame.cpp 收集与 UI/Event.cpp 命中测试逆变换共用；实现在 UI/StyleResolve.cpp。

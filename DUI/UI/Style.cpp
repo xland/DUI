@@ -59,6 +59,14 @@ Style& Style::FlexShrink(float v)                  { return SetF(Prop::FlexShrin
 Style& Style::JustifyContent(dui::Justify v)       { return SetU(Prop::JustifyContent, static_cast<uint32_t>(v)); }
 Style& Style::AlignItems(dui::Align v)             { return SetU(Prop::AlignItems, static_cast<uint32_t>(v)); }
 Style& Style::FlexWrap(dui::FlexWrap v)            { return SetU(Prop::FlexWrap, static_cast<uint32_t>(v)); }
+// 定位（04-Layout §4.3）：Left/Top/Right/Bottom 只对定位元素生效，Static 下忽略
+Style& Style::Position(dui::Position v)            { return SetU(Prop::Position, static_cast<uint32_t>(v)); }
+Style& Style::Left(float dip)                      { return SetF(Prop::Left, dip); }
+Style& Style::Top(float dip)                       { return SetF(Prop::Top, dip); }
+Style& Style::Right(float dip)                     { return SetF(Prop::Right, dip); }
+Style& Style::Bottom(float dip)                    { return SetF(Prop::Bottom, dip); }
+// zIndex（04-Layout §4.3）：仅 Absolute 生效；负值可用，u 槽按 int32 位型存取
+Style& Style::ZIndex(int32_t v)                    { return SetU(Prop::ZIndex, static_cast<uint32_t>(v)); }
 Style& Style::Background(dui::Color c)             { return SetU(Prop::BackgroundColor, c); }
 Style& Style::Color(dui::Color c)                  { return SetU(Prop::Color, c); }
 Style& Style::FontSize(float dip)                  { return SetF(Prop::FontSize, dip); }

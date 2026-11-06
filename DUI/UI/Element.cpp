@@ -122,6 +122,7 @@ Vec2 Element::MeasureContent(const StyleContext& ctx, const Vec2& avail) const {
         for (Element* c : children_) {
             if (ResolveProperty(c, Prop::Display, ctx).u == static_cast<uint32_t>(Display::None)) continue;
             const Vec2 cs = MeasureElement(c, avail, ctx);
+            if (IsOutOfFlow(c)) continue;   // 脱离流：只测量，不计入父的自然尺寸
             const float add = cs.x + (first ? 0.f : gap);
             if (!first && lineW + add > avail.x) {   // 放不下 → 断行
                 if (lineW > total.x) total.x = lineW;
@@ -144,6 +145,7 @@ Vec2 Element::MeasureContent(const StyleContext& ctx, const Vec2& avail) const {
     for (Element* c : children_) {
         if (ResolveProperty(c, Prop::Display, ctx).u == static_cast<uint32_t>(Display::None)) continue;
         const Vec2 cs = MeasureElement(c, avail, ctx);
+        if (IsOutOfFlow(c)) continue;   // 脱离流：只测量，不计入父的自然尺寸
         if (row) {
             total.x += cs.x + (first ? 0.f : gap);
             if (cs.y > total.y) total.y = cs.y;

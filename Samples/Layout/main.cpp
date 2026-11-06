@@ -1,13 +1,14 @@
 ﻿// ============================================================================
-//  LayoutFlex/main.cpp — Flex 布局能力演示
+//  Layout/main.cpp — 布局能力演示
 //
 //  覆盖能力（04-Layout）：FlexDirection Row/Column、Gap、Padding、
 //  FlexGrow（剩余空间分配）、FlexShrink + MinWidth（收缩）、
 //  JustifyContent / AlignItems（主轴/交叉轴对齐）、嵌套容器。
+//  定位相关示例（Relative/Absolute/Fixed/zIndex）见 Samples/Position。
 //
 //  构建产物（Build 布局，DUI.slnx 根目录相对）：
-//    中间产物  Build\Temp\LayoutFlex\Debug|Release\
-//    最终产物  Build\LayoutFlex\Debug|Release\LayoutFlex.exe
+//    中间产物  Build\Temp\Layout\Debug|Release\
+//    最终产物  Build\Layout\Debug|Release\Layout.exe
 //
 //  注意：框架公共头不含 windows.h，wWinMain 入口类型由本文件自带。
 // ============================================================================
@@ -51,7 +52,7 @@ class LayoutWindow final : public dui::Window {
 public:
     LayoutWindow()
         : dui::Window(dui::WindowOptions{
-              .title  = L"LayoutFlex · 布局能力演示",
+              .title  = L"Layout · 布局能力演示",
               .width  = 900.f,
               .height = 640.f,
           }) {}

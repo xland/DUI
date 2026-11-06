@@ -124,9 +124,9 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `flexShrink` | Float | ✗ | Layout | ✓ | 1 | |
 | `flexBasis` | Length | ✗ | Layout | ✓ | Auto | |
 | `gap` / `rowGap` / `columnGap` | Length | ✗ | Layout | ✓ | 0 | |
-| `position` | Enum | ✗ | Layout | ✗ | Static | Static / Absolute |
-| `left` / `top` / `right` / `bottom` | Length | ✗ | Layout | ✓ | Auto | 仅 Absolute 生效 |
-| `zIndex` | Int | ✗ | Paint（Z 序） | ✗ | 0 | MVP 仅对 Absolute 生效 |
+| `position` | Enum | ✗ | Layout | ✗ | Static | Static / Relative / Absolute / Fixed（运行时已实现，见 04-Layout §4.3） |
+| `left` / `top` / `right` / `bottom` | Float（DIP） | ✗ | Layout | ✓（`left`/`top`） | 未设 = Auto | 仅 Relative / Absolute / Fixed 生效；Static 忽略；Relative 只认 left/top |
+| `zIndex` | Int | ✗ | Layout | ✗ | 0 | 仅同一父容器内的 `Absolute` 生效；按值升序绘制、同值按树序；Fixed / 流内忽略（04-Layout §4.3） |
 | `overflow` | Enum | ✗ | Layout·Paint | ✗ | Visible | Visible / Hidden / Scroll |
 | `gridTemplateColumns` / `gridTemplateRows` | TrackList | ✗ | Layout | ✗ | 空 | |
 | `gridRow` / `gridColumn` | Int | ✗ | Layout | ✗ | Auto | 显式放置 |
@@ -151,7 +151,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 
 ### 4.7 动画相关属性
 
-**没有动画元属性**。`transition` / `animation` 从未进入运行时属性表（`Prop` 枚举），早期草案的这两项已作废。命令式动画直接对普通属性补间；当前开放的是 `opacity` / `backgroundColor` / `color` / `selectionColor` / `caretColor`、§4.5 的四个 transform 标量，以及 `width` / `height`（布局尺寸对照），标签、插值与语义见 [05-Animation.md](./05-Animation.md) §2–§3。
+**没有动画元属性**。`transition` / `animation` 从未进入运行时属性表（`Prop` 枚举），早期草案的这两项已作废。命令式动画直接对普通属性补间；当前开放的是 `opacity` / `backgroundColor` / `color` / `selectionColor` / `caretColor`、§4.5 的四个 transform 标量，以及 `width` / `height` / `left` / `top`（布局尺寸与定位偏移对照，每帧重排），标签、插值与语义见 [05-Animation.md](./05-Animation.md) §2–§3。
 
 ### 4.8 暂不做
 
@@ -205,6 +205,6 @@ StyleValue opacity = ResolveProperty(element, Prop::Opacity);
 ## 7. 待确认
 
 1. `shadow` / `textDecoration` 是否进 MVP（当前列在表内但排期靠后）。
-2. `zIndex` 是否扩展到普通流（当前仅 Absolute）。
+2. `zIndex` 是否扩展到普通流（当前仅同一父容器内的 Absolute，已落地，见 04-Layout §4.3）。
 3. `alignItems: Baseline` 是否纳入（文本混排场景常用）。
 4. 是否需要 `letterSpacing` 之外的 `wordSpacing`。

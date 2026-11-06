@@ -36,6 +36,41 @@ std::vector<Element*>& ItemsAt(unsigned depth) {
     return *itemsByDepth[depth];
 }
 
+// ---- 定位（04-Layout §4.3）------------------------------------------------
+uint32_t PositionOf(const Element* e, const StyleContext& ctx) {
+    return ResolveProperty(e, Prop::Position, ctx).u;
+}
+
+// 相对定位：只认 Left/Top，Static 下为 0；Right/Bottom 对 relative 忽略
+Vec2 RelativeOffset(const Element* e, const StyleContext& ctx) {
+    if (PositionOf(e, ctx) != static_cast<uint32_t>(Position::Relative)) return {};
+    return {ResolveProperty(e, Prop::Left, ctx).f, ResolveProperty(e, Prop::Top, ctx).f};
+}
+
+// 窗口客户区：沿 Parent 链到根，根 Bounds 即 {0,0,sizeDip}（fixed 的基准）
+Rect WindowRectOf(const Element* e) {
+    const Element* r = e;
+    while (r->Parent() != nullptr) r = r->Parent();
+    return r->Bounds();
+}
+
+// 四边定位：未设的一边 = Auto（用自然尺寸），同设两边 = 拉伸
+Rect OutOfFlowSlot(const Element* e, const StyleContext& ctx, const Rect& base, Vec2 nat) {
+    StyleValue l, r, t, b;
+    const bool hasL = TryResolve(e, Prop::Left, ctx, l);
+    const bool hasR = TryResolve(e, Prop::Right, ctx, r);
+    const bool hasT = TryResolve(e, Prop::Top, ctx, t);
+    const bool hasB = TryResolve(e, Prop::Bottom, ctx, b);
+    float x = base.x, y = base.y, w = nat.x, h = nat.y;
+    if (hasL && hasR) { x = base.x + l.f; w = base.w - l.f - r.f; }
+    else if (hasR)    { x = base.x + base.w - r.f - w; }
+    else if (hasL)    { x = base.x + l.f; }
+    if (hasT && hasB) { y = base.y + t.f; h = base.h - t.f - b.f; }
+    else if (hasB)    { y = base.y + base.h - b.f - h; }
+    else if (hasT)    { y = base.y + t.f; }
+    return {x, y, w, h};
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -101,6 +136,7 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
     items.clear();
     for (Element* c : e->children_) {
         if (ResolveProperty(c, Prop::Display, ctx).u == static_cast<uint32_t>(Display::None)) continue;
+        if (IsOutOfFlow(c)) continue;   // 脱离流子项不参与 flex 统计与排列
         items.push_back(c);
     }
 
@@ -175,7 +211,8 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
                 } else {
                     cross = lineH;             // Stretch（默认）：拉到行高
                 }
-                ArrangeElement(cc, Rect{x, y + crossPos, cc->measured_.x, cross},
+                const Vec2 off = RelativeOffset(cc, ctx);   // 相对定位：布局盒偏移
+                ArrangeElement(cc, Rect{x + off.x, y + crossPos + off.y, cc->measured_.x, cross},
                                ctx, depth + 1);
                 x += cc->measured_.x + gap;
                 extent.x = std::max(extent.x, cc->bounds_.Right() - content.x);
@@ -227,14 +264,28 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
         } else {
             cross = crossLen;             // Stretch（默认）
         }
-        const Rect childSlot = row ? Rect{pos, content.y + crossPos, main, cross}
-                                   : Rect{content.x + crossPos, pos, cross, main};
+        const Vec2 off = RelativeOffset(c, ctx);   // 相对定位：布局盒偏移
+        const Rect childSlot = row ? Rect{pos + off.x, content.y + crossPos + off.y, main, cross}
+                                   : Rect{content.x + crossPos + off.x, pos + off.y, cross, main};
         ArrangeElement(c, childSlot, ctx, depth + 1);
         pos += main + gap;
         extent.x = std::max(extent.x, c->bounds_.Right() - content.x);
         extent.y = std::max(extent.y, c->bounds_.Bottom() - content.y);
     }
     }   // else：单行布局
+
+    // 脱离文档流的子项：不参与 flex 统计与 extent，单独按四边定位（04-Layout §4.3）
+    for (Element* c : e->children_) {
+        if (ResolveProperty(c, Prop::Display, ctx).u == static_cast<uint32_t>(Display::None)) continue;
+        const uint32_t p = PositionOf(c, ctx);
+        const bool fixed = p == static_cast<uint32_t>(Position::Fixed);
+        if (!fixed && p != static_cast<uint32_t>(Position::Absolute)) continue;
+        if (fixed) NoteFixed();   // 布局期顺手统计，命中侧据此短路预扫
+        if (!fixed && ResolveProperty(c, Prop::ZIndex, ctx).u != 0) NoteZIndex();
+        const Rect base = fixed ? WindowRectOf(c) : slot;
+        const Vec2 nat{c->measured_.x, c->measured_.y};
+        ArrangeElement(c, OutOfFlowSlot(c, ctx, base, nat), ctx, depth + 1);
+    }
     if (e->GetKind() == Kind::Scroller) {
         static_cast<Scroller*>(e)->SetContentExtent(extent);
     }
@@ -242,6 +293,8 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
 
 void RunLayout(Element* root, const Vec2& sizeDip, float scale) {
     if (root == nullptr) return;
+    ResetFixedCount();
+    ResetZIndexCount();
     StyleContext ctx;
     ctx.scale = scale > 0.f ? scale : 1.f;   // 图像类控件据此把像素尺寸换算为 DIP
     MeasureElement(root, sizeDip, ctx);

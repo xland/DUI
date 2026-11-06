@@ -40,7 +40,7 @@ h.Cancel();   // 幂等；元素销毁后自动失效
 
 ### 2.1 `AnimProp<T>`：强类型属性标签
 
-`template <class T> struct AnimProp { Prop prop; };` —— 标签携带属性 ID，**模板参数 `T` 决定目标值类型**，编译期拒绝不可动画的属性（`static_assert`，不用 RTTI）。目前只开放 Paint 类标量：
+`template <class T> struct AnimProp { Prop prop; };` —— 标签携带属性 ID，**模板参数 `T` 决定目标值类型**，编译期拒绝不可动画的属性（`static_assert`，不用 RTTI）。目前开放 Paint 类标量，以及布局尺寸 / 定位偏移对照标签：
 
 | 标签 | 值类型 | 属性 | 插值 |
 | --- | --- | --- | --- |
@@ -55,10 +55,12 @@ h.Cancel();   // 幂等；元素销毁后自动失效
 | `dui::Scale` | `float` | `Prop::Scale` | 线性标量（等比，1 = 原始大小） |
 | `dui::Width` | `float` | `Prop::Width` | 线性标量（`kFlagLayout`，每帧重排） |
 | `dui::Height` | `float` | `Prop::Height` | 同上 |
+| `dui::Left` | `float` | `Prop::Left` | 同上（仅定位元素生效，见 04-Layout §4.3） |
+| `dui::Top` | `float` | `Prop::Top` | 同上 |
 
 - `Color` 约定 `0xAARRGGBB`（[Core/Core.h](../DUI/Core/Core.h)），逐通道在 sRGB/gamma 空间插值，与 ADR-013 的混合空间一致。
 - 前四个 transform 标签与 `Opacity` 一样是 `kFlagPaint`：动画每帧只重收集顶点，不重排；`Bounds()` 与布局结果不变（[10-Rendering.md](./10-Rendering.md) §6.4）。
-- `Width` / `Height` 是布局尺寸对照：级联层 1 的值会被 `Layout.cpp` 读到，但每帧 `kFlagLayout` 全量重排、兄弟元素跟着回流，不宜用于高频动画。
+- `Width` / `Height` 是布局尺寸对照，`Left` / `Top` 是定位偏移对照（仅 `Relative` / `Absolute` / `Fixed` 生效，`Static` 忽略，见 04-Layout §4.3）：级联层 1 的值会被 `Layout.cpp` 读到，但每帧 `kFlagLayout` 全量重排、兄弟元素跟着回流，不宜用于高频动画；轻量位移动画用 `dui::TranslationX`（`kFlagPaint`）。
 - 文本、Thickness（四边）、枚举、字体族类属性**不开放**：它们每帧重排版，或没有自然的插值定义。
 - 第二参数是 `std::type_identity_t<T>`，只从标签推导 `T`，目标值允许隐式转换（如整数字面量传给 `Color` 标签）。
 
@@ -89,7 +91,7 @@ struct AnimConfig {
 1. **起点 = 当前显示值**：启动时调 `ResolveProperty(element, prop)`（遍历外路径），它已经包含级联第 1 层，因此中断旧动画时从旧动画的当前值继续，快速反向不跳变。
 2. **同 `(元素, 属性)` 唯一**：新动画替换旧动画 —— 包括已完成但仍保留终值的那条。旧句柄整体作废、不触发其 `OnFinished`。
 3. **动画值不污染本地覆盖**：补间结果写入 `Element::animated_`（稀疏数组），作为级联**第 1 层（最高优先级）**；`TryResolveElement()` 最先查它。遍历内 `StyleContext` 与遍历外 `Style::Resolve` 都经过 `TryResolveElement`，同帧结果一致。`Element::Set()` 的 `overrides_`（第 3 层）不被改写。
-4. **标脏按属性标志**：每次写入调 `MarkDirty(PropFlagsOf(prop))`。Paint 标量 / transform 标签为 `kFlagPaint` → 每帧仅重绘、不重排；`Width` / `Height` 为 `kFlagLayout` → 每帧全量重排，兄弟元素跟着回流。
+4. **标脏按属性标志**：每次写入调 `MarkDirty(PropFlagsOf(prop))`。Paint 标量 / transform 标签为 `kFlagPaint` → 每帧仅重绘、不重排；`Width` / `Height` / `Left` / `Top` 为 `kFlagLayout` → 每帧全量重排，兄弟元素跟着回流。
 5. **完成 = fill forwards**：终值留在动画槽，不再 tick，直到被新动画替换、`Cancel()` 或元素销毁。回调只触发一次。
 6. **取消 / 销毁**：`Cancel()` 移除该属性的动画槽并回落基值；元素析构时 `Lifetime::Kill()` + 从 ticker 注销，`AnimState` 里的生命周期令牌让所有残留句柄自动失效，回调不会被派发到已销毁元素。
 

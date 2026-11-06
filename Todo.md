@@ -768,6 +768,65 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 
 ---
 
+## M5.13 — Layout 示例改名 + Position 定位 ✅（2026-11-06 完成）
+
+- `Samples/LayoutFlex` → `Samples/Layout`（目录 + 3 个工程文件 + `DUI.slnx` / RootNamespace / README / 00-Overview）。
+- 框架补齐 `position`（`Static/Relative/Absolute/Fixed`）与 `Left/Top/Right/Bottom`（DIP，未设 = Auto）：
+  `Relative` 改 `Bounds()` 真偏移（占位与兄弟不变，撑大 extent）；`Absolute` 脱离流、基准父 padding 盒；
+  `Fixed` 基准窗口客户区（首版限挂 Root 下，M5.14 放开）。`Static` 忽略四边属性 —— 与 Paint 级 `TranslationX/Y` 分属两层，不重叠。
+- 脱离流子项：测量但不参与 measure 聚合 / grow·shrink / Wrap / extent；`Frame.cpp` 两趟绘制 +
+  `Event.cpp` 两趟倒序命中，后画者先命中；MVP 不做 `zIndex`。
+- 动画标签新增 `dui::Left` / `dui::Top`（`kFlagLayout`，每帧重排）。
+- `Samples/Layout` 新增 3 个定位示例；文档同步 `04-Layout §4.3/§8/§10`、`15-Properties §4.4/§4.7`、`00-Overview §6`。
+
+---
+
+## M5.14 — Fixed 任意层级通用（窗口级 Fixed 层） ✅（2026-11-06 完成）
+
+- 放开首版"Fixed 须挂 Root 下"的限制：Fixed 可挂任意层级（含 `Scroller` 内部）。
+  语义按确认结论：祖先 `TranslationX/Y/Rotation/Scale` **不跟随**（Fixed 自身 transform 仍生效）；
+  祖先 `Display::None` / `ContentClipRect` **仍约束**；Scroller 视口 scissor **不裁** Fixed；
+  `Opacity` 按当前逐元素、非继承语义处理。带 transform 的祖先不成为 containing block（与 CSS 不同）。
+- 绘制（`App/Frame.cpp`）：`Collector` 遍历到 Fixed 时按树序原位记录
+  `FixedItem{元素, 祖先裁剪快照, 继承态}`，整棵子树延后；`Finish()` 在主树全部 `Commit()`
+  后统一绘制窗口级 Fixed 层 —— 原点 = 窗口、变换 = 恒等，每项一个绘制单元。
+  `CollectScroller` 的 Fixed 子项记录视口求交**之前**的裁剪，从而绕过视口 scissor。
+- 命中（`UI/Event.cpp`）：`HitTest` 在普通树遍历前按同一顺序倒序命中 Fixed 层，
+  用原始窗口坐标、只对 Fixed 自身 transform 做逆变换，并沿祖先链检查 `ContentClipRect`；
+  普通树遍历跳过 Fixed（否则 Scroller 的 `+off` 换算会误命中窗口坐标的 `Bounds()`）。
+  绘制与命中的 Fixed 遍历顺序同为"流内子项先、`Absolute` 子树后，同组按树序"，
+  保证后画者先命中；Fixed 子树内嵌套的 Fixed 不二次提升、就地绘制与命中。
+- **不使用不付费**：布局期 `RunLayout()` 用 `ResetFixedCount()/NoteFixed()` 统计，
+  `FixedCount() == 0` 时 `HitTest` 跳过预扫、`Collector` 连 `IsFixed` 都不解析；
+  FixedLayer 与命中预扫缓冲均跨帧复用（单线程 UI），稳态零分配。
+- `Samples/Layout` 补"Fixed 放在 Scroller 内"示例（窗口高度 1100）；文档同步
+  `04-Layout §4.3/§8`、`06-Events §3.1`、`10-Rendering §6.3`、`15-Properties §4.4`、`00-Overview §6`。
+- Debug + Release 全量重建零警告。
+
+---
+
+## M5.15 — Absolute 的 `zIndex` 层叠排序 ✅（2026-11-06 完成）
+
+- 新增 `Prop::ZIndex`（Int，默认 0，可为负）与 `Style::ZIndex(int32_t)`；属性表尾追加，不重排已有 ID。标 `kFlagLayout`（不改几何，只为刷新布局期统计），不加动画标签。
+- 语义：`zIndex` **只对同一父容器内的 `Absolute` 子项生效**，按值升序绘制、同值保持树序（稳定排序）；命中按同一有序列表倒序。`Fixed` 走窗口级层恒视为 0，流内 `Static`/`Relative` 忽略；不跨容器排序、不建 CSS stacking context，负 zIndex 也不沉到流内内容之下。
+- **顺序一致性**（本次主要难点）：`Frame.cpp` 的 `Collect` / `CollectScroller`、`Event.cpp` 的 `HitTestInner` / `CollectFixedLayer` 四处统一消费 `ZOrderedOutOfFlow()`，否则会出现"后画者先命中"错位、以及 Absolute 子树里的 Fixed 收集顺序漂移。
+- **不使用不付费 + 零分配**：布局期 `ResetZIndexCount()/NoteZIndex()` 统计是否存在非默认 zIndex；计数为 0 时四处都走原两趟，零额外遍历与解析。使用 zIndex 时，有序列表缓冲按递归深度分层跨帧复用（`unique_ptr` 固定内层地址，沿用 `Layout.cpp ItemsAt` 的结论），绘制/命中遍历逐层下传 `depth`。
+- `Samples/Layout` 新增三层重叠 Absolute 的 zIndex 示例（红 10 / 绿 0 / 蓝 -1 反转树序），点击色块可验证命中顺序与视觉一致；窗口高度 1240。
+- 文档同步 `04-Layout §4.3/§7/§8`、`10-Rendering §6.3`、`06-Events §3.1`、`15-Properties §4.4/§7`、`00-Overview §6`。
+- Debug + Release 全量重建零警告。
+
+---
+
+## M5.16 — 新建 Position 示例，拆分定位演示 ✅（2026-11-06 完成）
+
+- 新建 `Samples/Position`（目录 + 3 个工程文件 + `DUI.slnx` / RootNamespace），按 HelloWorld 模板挂入解决方案；产物 `Build\Position\Debug|Release\Position.exe`。
+- 把 `Samples/Layout` 中的 5 段定位示例整体迁入：`Relative` / `Absolute` / `Fixed` / `Fixed 放在 Scroller 内` / `zIndex`；示例视觉与交互行为保持一致（辅助函数 `NewBox` 去掉定位示例未用的 grow/shrink 参数）。
+- `Samples/Layout` 只留 Flex 布局演示（FlexGrow / 定宽+弹性 / FlexShrink / 对齐 / Gap），窗口高度 1240 → 640；`Position` 窗口高度 720。
+- 文档同步 `README.md`、`00-Overview §6`、两个示例的文件头。
+- Debug + Release 全量重建零警告。
+
+---
+
 ## 备忘（换电脑提醒）
 
 - 构建命令见 §0；**别改根目录 `DUI.props` 的编译开关**，除非文档有对应 ADR。

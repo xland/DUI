@@ -44,6 +44,9 @@ inline constexpr AnimProp<float> Scale{Prop::Scale};
 // 布局尺寸（每帧 kFlagLayout → 整棵树重新 Measure/Arrange）
 inline constexpr AnimProp<float> Width{Prop::Width};
 inline constexpr AnimProp<float> Height{Prop::Height};
+// 定位偏移（04-Layout §4.3）：仅 Relative/Absolute/Fixed 生效，同样每帧重排
+inline constexpr AnimProp<float> Left{Prop::Left};
+inline constexpr AnimProp<float> Top{Prop::Top};
 
 // 聚合：支持 C++20 指派初始化 { .durationMs = 200, .easing = dui::Easing::EaseOut }
 struct AnimConfig {

@@ -72,6 +72,13 @@ Rect IntersectRect(const Rect& a, const Rect& b) {
 // 收集器：遍历可见树 → 绘制单元。
 // 普通元素进当前单元；滚动容器把内容切到独立单元（原点 = -滚动偏移，
 // 裁剪 = 视口 ∩ 当前裁剪），滚动条画在内容之上的父级单元。
+// 窗口级 Fixed 层的一项：元素 + 记录时的祖先裁剪快照 + 继承态
+struct FixedItem {
+    Element* e;
+    Rect clipPx;
+    StyleContext ctx;
+};
+
 class Collector {
 public:
     Collector(DrawList& list, float scale, const Rect& windowPx)
@@ -81,8 +88,19 @@ public:
         painter_ = AcquirePainter(origin_);
     }
 
-    void Collect(Element* e, const StyleContext& parentCtx) {
+    void Collect(Element* e, const StyleContext& parentCtx) { Collect(e, parentCtx, clipPx_, 0); }
+
+    void Collect(Element* e, const StyleContext& parentCtx, const Rect& clipForFixed,
+                 uint32_t depth) {
         if (ResolveProperty(e, Prop::Display, parentCtx).u == static_cast<uint32_t>(Display::None)) return;
+        // 布局期计数为 0 时整段短路：未使用 Fixed 的应用连 IsFixed 都不解析。
+        const bool lift = !inFixedLayer_ && FixedCount() != 0;
+        // Fixed 整棵子树延后到窗口级 Fixed 层：不受祖先 transform / 滚动原点影响，
+        // 但仍沿用记录时的祖先裁剪快照（04-Layout §4.3）。
+        if (lift && IsFixed(e)) {
+            FixedLayer().push_back(FixedItem{e, clipForFixed, parentCtx});
+            return;
+        }
 
         const StyleContext ctx = parentCtx.Child(e);
 
@@ -98,7 +116,7 @@ public:
         TransformScope scope{*this, saved, transformed};
 
         if (e->GetKind() == Kind::Scroller) {
-            CollectScroller(static_cast<Scroller*>(e), ctx);
+            CollectScroller(static_cast<Scroller*>(e), ctx, depth);
             return;
         }
 
@@ -127,15 +145,49 @@ public:
         if (e->GetKind() == Kind::Text) DrawTextContent(e, ctx, *painter_, scale_);
         e->OnPaint(*painter_, ctx, scale_);   // 自定义绘制钩子（背景之后、子元素之前）
 
-        for (Element* c : e->Children()) Collect(c, ctx);
+        // 定位层叠（04-Layout §4.3）：流内子项先画，脱离流的 Absolute 后画（盖在上面）。
+        // Fixed 在树序原位记录到窗口级 Fixed 层（不进当前单元），顺序与
+        // Event.cpp::CollectFixedLayer 的两趟遍历一致 → 倒序命中即"后画者先命中"。
+        for (Element* c : e->Children())
+            if (!IsOutOfFlow(c) || (lift && IsFixed(c))) Collect(c, ctx, clipPx_, depth + 1);
+        // Absolute 按 zIndex 升序绘制（同值按树序）；未使用 zIndex 时保持原两趟，零额外遍历。
+        if (ZIndexCount() != 0) {
+            for (Element* c : ZOrderedOutOfFlow(e, depth))
+                if (!(lift && IsFixed(c))) Collect(c, ctx, clipPx_, depth + 1);
+        } else {
+            for (Element* c : e->Children())
+                if (IsOutOfFlow(c) && !(lift && IsFixed(c))) Collect(c, ctx, clipPx_, depth + 1);
+        }
 
         if (clipped) EndClip(st);
     }
 
-    // 收尾：提交最后一个单元（否则末尾元素与滚动条会丢失）
-    void Finish() { Commit(); }
+    // 收尾：提交主树最后一个单元，再统一画窗口级 Fixed 层（盖过所有普通内容，
+    // 含滚动条）。每项一个单元：原点 = 窗口、变换 = 恒等、裁剪 = 记录时的
+    // 祖先裁剪快照（Scroller 视口不在此列，见 CollectScroller）。
+    void Finish() {
+        Commit();
+        if (FixedLayer().empty()) return;
+        inFixedLayer_ = true;
+        for (const FixedItem& f : FixedLayer()) {
+            origin_ = {0.f, 0.f};
+            clipPx_ = f.clipPx;
+            xform_ = {};
+            painter_ = AcquirePainter(origin_);
+            Collect(f.e, f.ctx, f.clipPx, 0);
+            Commit();
+        }
+        inFixedLayer_ = false;
+        FixedLayer().clear();
+    }
 
 private:
+    // 窗口级 Fixed 层：跨帧复用（单线程 UI，ADR-012），稳态零分配
+    static std::vector<FixedItem>& FixedLayer() {
+        static std::vector<FixedItem> v;
+        return v;
+    }
+
     void Commit() { list_.Commit(painter_, clipPx_); }
 
     // 每取一个新 Painter 都要带上当前组合变换（变换烘进顶点，按单元独立）
@@ -208,7 +260,7 @@ private:
         painter_->FillRoundedRect(e->Bounds(), radius, bg.u, opacity, scale_);
     }
 
-    void CollectScroller(Scroller* sc, const StyleContext& ctx) {
+    void CollectScroller(Scroller* sc, const StyleContext& ctx, uint32_t depth) {
         // 容器自身背景（不随内容滚动）
         DrawBackground(sc, ctx);
 
@@ -235,7 +287,17 @@ private:
                            vp.w * scale_, vp.h * scale_};
         clipPx_ = IntersectRect(vpWinPx, savedClip);
 
-        for (Element* c : sc->Children()) Collect(c, ctx);
+        // 与 Collect() 同规则；Fixed 记录 savedClip（视口求交之前），绕过本层视口 scissor。
+        const bool lift = !inFixedLayer_ && FixedCount() != 0;
+        for (Element* c : sc->Children())
+            if (!IsOutOfFlow(c) || (lift && IsFixed(c))) Collect(c, ctx, savedClip, depth + 1);
+        if (ZIndexCount() != 0) {
+            for (Element* c : ZOrderedOutOfFlow(sc, depth))
+                if (!(lift && IsFixed(c))) Collect(c, ctx, savedClip, depth + 1);
+        } else {
+            for (Element* c : sc->Children())
+                if (IsOutOfFlow(c) && !(lift && IsFixed(c))) Collect(c, ctx, savedClip, depth + 1);
+        }
 
         Commit();   // 封存内容单元
 
@@ -254,6 +316,7 @@ private:
     Vec2 origin_{};
     Rect clipPx_{};
     Transform2D xform_{};   // 当前组合变换（布局 DIP 空间；下传时按 scale 共轭）
+    bool inFixedLayer_ = false;   // 绘制 Fixed 层时不再二次收集
 };
 
 }  // namespace

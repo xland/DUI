@@ -34,30 +34,78 @@ bool InRect(const Rect& r, const Vec2& p) {
 // 命中测试：ptAbs 是"未变换布局空间"的客户区绝对 DIP（与 Bounds() 同空间）。
 // 子元素带 transform 时，先把指针逆变换到该元素的局部空间再判断；逐层施加
 // 逆矩阵等价于整体 T⁻¹，嵌套自动成立（10-Rendering §6.3）。
-Element* HitTestInner(Element* e, const Vec2& ptAbs) {
+// inFixedLayer：当前在窗口级 Fixed 子树内。普通树遍历跳过 Fixed（已由 HitTest
+// 用窗口坐标优先命中；Scroller 的 +off 换算会误命中窗口坐标的 Fixed Bounds）。
+Element* HitTestInner(Element* e, const Vec2& ptAbs, bool inFixedLayer = false,
+                      uint32_t depth = 0) {
     const std::vector<Element*>& cs = e->Children();
-    for (auto it = cs.rbegin(); it != cs.rend(); ++it) {   // 后绘制者在上：倒序命中
-        Element* c = *it;
+    auto TryHit = [&](Element* c) -> Element* {
+        if (!inFixedLayer && FixedCount() != 0 && IsFixed(c)) return nullptr;
         const Transform2D t = ElementTransform(c);
-        if (!t.IsInvertible()) continue;   // Scale → 0：元素缩没，不可命中
+        if (!t.IsInvertible()) return nullptr;   // Scale → 0：元素缩没，不可命中
         const Vec2 qc = t.Inverse().Apply(ptAbs);
         const Rect& b = c->Bounds();
-        if (b.w > 0.f && b.h > 0.f && InRect(b, qc)) {
-            if (c->GetKind() == Kind::Scroller) {
-                auto* sc = static_cast<Scroller*>(c);
-                bool vertical = false;
-                // 滚动条区域优先命中滚动容器本身（否则会穿透到被裁剪的内容）
-                if (sc->HitScrollBar(qc, vertical)) return c;
-                // 视口外（padding 区）同样归容器；视口内换算到内容坐标再命中子元素
-                const Rect vp = sc->Viewport();
-                if (!InRect(vp, qc)) return c;
-                const Vec2 off = sc->ScrollOffset();
-                return HitTestInner(c, Vec2{qc.x + off.x, qc.y + off.y});
-            }
-            return HitTestInner(c, qc);
+        if (b.w <= 0.f || b.h <= 0.f || !InRect(b, qc)) return nullptr;
+        if (c->GetKind() == Kind::Scroller) {
+            auto* sc = static_cast<Scroller*>(c);
+            bool vertical = false;
+            // 滚动条区域优先命中滚动容器本身（否则会穿透到被裁剪的内容）
+            if (sc->HitScrollBar(qc, vertical)) return c;
+            // 视口外（padding 区）同样归容器；视口内换算到内容坐标再命中子元素
+            const Rect vp = sc->Viewport();
+            if (!InRect(vp, qc)) return c;
+            const Vec2 off = sc->ScrollOffset();
+            return HitTestInner(c, Vec2{qc.x + off.x, qc.y + off.y}, inFixedLayer, depth + 1);
+        }
+        return HitTestInner(c, qc, inFixedLayer, depth + 1);
+    };
+    // 与 Frame.cpp 两趟绘制对应：Absolute 后画 → 先命中（各自内部仍倒序）。
+    // 启用 zIndex 时按绘制侧同一有序列表倒序：值大者后画、先命中。
+    if (ZIndexCount() != 0) {
+        const std::vector<Element*>& ordered = ZOrderedOutOfFlow(e, depth);
+        for (auto it = ordered.rbegin(); it != ordered.rend(); ++it) {
+            if (Element* hit = TryHit(*it)) return hit;
+        }
+    } else {
+        for (auto it = cs.rbegin(); it != cs.rend(); ++it) {
+            if (!IsOutOfFlow(*it)) continue;
+            if (Element* hit = TryHit(*it)) return hit;
         }
     }
+    for (auto it = cs.rbegin(); it != cs.rend(); ++it) {
+        if (IsOutOfFlow(*it)) continue;
+        if (Element* hit = TryHit(*it)) return hit;
+    }
     return e;
+}
+
+// 窗口级 Fixed 层：遍历顺序与 Frame.cpp 的 Collect 两趟一致（流内子项先、
+// Absolute 子树后；Fixed 在树序原位记录且不再深入），保证绘制 Z 序与倒序命中一致。
+// Display::None 子树不进入；遇到 Fixed 收集整棵子树（子树内的 Fixed 不再单独提升）。
+void CollectFixedLayer(Element* e, std::vector<Element*>& out, uint32_t depth) {
+    if (ResolveProperty(e, Prop::Display).u == static_cast<uint32_t>(Display::None)) return;
+    if (IsFixed(e)) { out.push_back(e); return; }
+    const std::vector<Element*>& cs = e->Children();
+    for (Element* c : cs)
+        if (!IsOutOfFlow(c) || IsFixed(c)) CollectFixedLayer(c, out, depth + 1);
+    // 与 Frame.cpp 的第二趟同序：否则 Absolute 子树里的 Fixed 收集顺序会漂移。
+    if (ZIndexCount() != 0) {
+        for (Element* c : ZOrderedOutOfFlow(e, depth))
+            if (!IsFixed(c)) CollectFixedLayer(c, out, depth + 1);
+    } else {
+        for (Element* c : cs)
+            if (IsOutOfFlow(c) && !IsFixed(c)) CollectFixedLayer(c, out, depth + 1);
+    }
+}
+
+// 祖先内容裁剪（ContentClipRect）仍约束 Fixed；Scroller 视口不在此列 ——
+// 视口 scissor 是 Collector 专属机制，通用版 Fixed 要绕过它。
+bool WithinAncestorClips(Element* e, const Vec2& pt) {
+    for (Element* a = e->Parent(); a != nullptr; a = a->Parent()) {
+        Rect r{};
+        if (a->ContentClipRect(r) && !InRect(r, pt)) return false;
+    }
+    return true;
 }
 
 }  // namespace
@@ -73,6 +121,23 @@ Element* HitTest(Element* root, const Vec2& pt) {
     if (!t.IsInvertible()) return nullptr;
     const Vec2 q = t.Inverse().Apply(pt);
     if (!InRect(root->Bounds(), q)) return nullptr;
+
+    // 窗口级 Fixed 层先命中（后画者在上）。布局期计数为 0 时整段跳过：
+    // 不使用 Fixed 的应用与原来完全一样，零额外遍历。
+    if (FixedCount() != 0) {
+        static std::vector<Element*> fixed;   // 跨调用复用，稳态零分配
+        fixed.clear();
+        CollectFixedLayer(root, fixed, 0);
+        for (auto it = fixed.rbegin(); it != fixed.rend(); ++it) {
+            Element* f = *it;
+            const Transform2D ft = ElementTransform(f);   // 自身 transform 仍生效
+            if (!ft.IsInvertible()) continue;
+            const Vec2 fq = ft.Inverse().Apply(pt);
+            if (!InRect(f->Bounds(), fq)) continue;
+            if (!WithinAncestorClips(f, pt)) continue;
+            return HitTestInner(f, fq, true, 0);
+        }
+    }
     return HitTestInner(root, q);
 }
 

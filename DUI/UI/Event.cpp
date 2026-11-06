@@ -26,25 +26,30 @@ bool InRect(const Rect& r, const Vec2& p) {
     return p.x >= r.x && p.x <= r.Right() && p.y >= r.y && p.y <= r.Bottom();
 }
 
-// 命中测试：全程用客户区绝对坐标（Bounds() 是绝对坐标，勿混用相对坐标）
+// 命中测试：ptAbs 是"未变换布局空间"的客户区绝对 DIP（与 Bounds() 同空间）。
+// 子元素带 transform 时，先把指针逆变换到该元素的局部空间再判断；逐层施加
+// 逆矩阵等价于整体 T⁻¹，嵌套自动成立（10-Rendering §6.3）。
 Element* HitTestInner(Element* e, const Vec2& ptAbs) {
     const std::vector<Element*>& cs = e->Children();
     for (auto it = cs.rbegin(); it != cs.rend(); ++it) {   // 后绘制者在上：倒序命中
         Element* c = *it;
+        const Transform2D t = ElementTransform(c);
+        if (!t.IsInvertible()) continue;   // Scale → 0：元素缩没，不可命中
+        const Vec2 qc = t.Inverse().Apply(ptAbs);
         const Rect& b = c->Bounds();
-        if (b.w > 0.f && b.h > 0.f && InRect(b, ptAbs)) {
+        if (b.w > 0.f && b.h > 0.f && InRect(b, qc)) {
             if (c->GetKind() == Kind::Scroller) {
                 auto* sc = static_cast<Scroller*>(c);
                 bool vertical = false;
                 // 滚动条区域优先命中滚动容器本身（否则会穿透到被裁剪的内容）
-                if (sc->HitScrollBar(ptAbs, vertical)) return c;
+                if (sc->HitScrollBar(qc, vertical)) return c;
                 // 视口外（padding 区）同样归容器；视口内换算到内容坐标再命中子元素
                 const Rect vp = sc->Viewport();
-                if (!InRect(vp, ptAbs)) return c;
+                if (!InRect(vp, qc)) return c;
                 const Vec2 off = sc->ScrollOffset();
-                return HitTestInner(c, Vec2{ptAbs.x + off.x, ptAbs.y + off.y});
+                return HitTestInner(c, Vec2{qc.x + off.x, qc.y + off.y});
             }
-            return HitTestInner(c, ptAbs);
+            return HitTestInner(c, qc);
         }
     }
     return e;
@@ -54,8 +59,11 @@ Element* HitTestInner(Element* e, const Vec2& ptAbs) {
 
 Element* HitTest(Element* root, const Vec2& pt) {
     if (root == nullptr) return nullptr;
-    if (!InRect(root->Bounds(), pt)) return nullptr;
-    return HitTestInner(root, pt);
+    const Transform2D t = ElementTransform(root);
+    if (!t.IsInvertible()) return nullptr;
+    const Vec2 q = t.Inverse().Apply(pt);
+    if (!InRect(root->Bounds(), q)) return nullptr;
+    return HitTestInner(root, q);
 }
 
 // 沿祖先链找最近的滚动容器（滚轮事件的路由目标）

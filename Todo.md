@@ -306,7 +306,8 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 2. `UI/Element.h/.cpp` + `UI/StyleResolve.cpp`：动画值写入 `Element::animated_`，作为级联第 1 层，遍历内/外读路径一致；起点取当前显示值，同 (元素, 属性) 新动画替换旧动画。
 3. `UI/Image.cpp`：统一 `AnimationClock` 同时驱动 GIF 帧动画、光标闪烁与属性补间；App 层仍只启停一个定时器（20ms / 500ms / 停表）。
 4. 删除死代码 `Style::Transition()` / `TransitionSpec` / `Style::transitions_`；重写 `05-Animation`，收敛 `03-Style` / `02-Decisions` / `15-Properties` / `00-Overview` / `01-Layering` / `16-Image` 的旧声明式描述。
-5. 新增 `Samples/Animation`：按钮交互演示 `Animate`（`Opacity` / `BackgroundColor`、四种缓动、`OnFinished`、`Cancel`、同属性替换、fill forwards）、`dui::Gif` 播放控制，以及元素级 `When` 的 hover 变体；库侧冗余的 `AnimationApiContract` 随之删除。
+5. 新增 `Samples/Animation` 演示命令式属性动画（`Opacity` / `BackgroundColor`、四种缓动、`OnFinished`、`Cancel`、同属性替换、fill forwards）与元素级 `When` 的 hover 变体；`dui::Gif` 播放控制的演示放在 `Samples/Image`。库侧冗余的 `AnimationApiContract` 随之删除。
+6. **Paint 级 2D transform（框架侧，示例后续补）**：`Prop::TranslationX/Y/Rotation/Scale` + `Style` 链方法 + `AnimProp<float>` 标签；`Core::Transform2D`（仿射矩阵 / 求逆 / DPI 共轭）；`Painter` 发射期把变换烘进四批 quad 的角点；`App/Frame.cpp` 的 `Collector` 逐元素压栈并按变换后 AABB 求 scissor；`UI/Event.cpp` 的 `HitTest` 逐层逆变换。四个属性标脏 `kFlagPaint`，`Bounds()` 与布局结果不变。
 
 **待做**：观测面板（帧耗时分段计时 + Draw Call 计数，见 `10-Rendering §9-5`）、README 截图。
 
@@ -480,8 +481,8 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
   - 滚轮顺序改为：先派发元素级 `Wheel`，无人 `handled` 才由滚动容器按"最近可滚祖先"消费；
   - 滚动条上的按压走滑块拖拽，**不派发**元素级按下/弹起（与 Click 合成口径一致）；
   - 指针离开窗口 → 悬停链上全部元素触发移出。
-- **配套示例** `Samples/PointerEvents`（6 类事件日志演示；已实测
-  Enter / Leave / Move / Wheel / Down / Up 全部触发）。
+- **配套示例** `Samples/Event`（原 `PointerEvents` 更名）：三层嵌套容器演示冒泡顺序、
+  `handled` 终止、祖先统一处理、直达事件对比、键盘冒泡与 Wheel 拦截。
 - **已知限制**（后续项）：
   - 无指针捕获（拖出元素后 Move/Up 仍按当前命中位置派发）；
   - `PointerEvent` 无按键掩码/修饰键字段；

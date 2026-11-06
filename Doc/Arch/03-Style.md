@@ -90,7 +90,7 @@ DUI_PROPERTY(FontSize,        Length,  Inherit | Layout | Text)
 
 - 标志位含义见 §3.1；属性全集、类型、默认值、缓存键影响见主表。
 - **布局子系统**消费：`display` / `flex*` / `gap` / `position` / `left-top-right-bottom` / `zIndex` / `overflow` / `grid*` / 盒模型与尺寸类。
-- **动画子系统**消费：仅 [05-Animation.md](./05-Animation.md) §2 标签白名单列出的 Paint 类标量；样式里没有 `transition` / `animation` 元属性。
+- **动画子系统**消费：仅 [05-Animation.md](./05-Animation.md) §2 标签白名单列出的属性（Paint 标量、Paint 级 transform、布局尺寸对照）；样式里没有 `transition` / `animation` 元属性。
 - **文本子系统**消费：`font*` / `text*` / `lineHeight` / `letterSpacing` / `direction`。
 
 ### 3.3 单位
@@ -289,7 +289,7 @@ Color c = Style::Resolve(element, Prop::Color);   // 非继承属性 O(1–3)
 | 同上，仅带 `Paint` | 自身矩形加入脏区 | 不触发布局 |
 | `SetStyle(s)` | 按两Style差异集的属性标志取并集 | 简单实现可先按 `Layout|Paint` 最坏情况处理 |
 | 状态切换 | 按该状态变体（元素持有）中各属性的标志 | 状态变体通常只有 `Paint` 属性 |
-| 动画每帧 | 按被动画属性的标志 | 目前开放的标签全是 `Paint`（见 [05-Animation.md](./05-Animation.md) §3） |
+| 动画每帧 | 按被动画属性的标志 | Paint 标量 / transform 标签为 `Paint`（只重绘）；`Width` / `Height` 标签为 `Layout`（每帧重排，见 [05-Animation.md](./05-Animation.md) §3） |
 | 换主题 | 整树全量标脏 | 低频大动作，走"全失效"路径 |
 
 **`Style` 不可变**是关键约束：不允许原地改一个被 N 个元素共享的 `Style`。需要变更时构造新 `Style` 并 `StyleRegistry::Replace(id, newStyle)`，MVP 直接触发全树失效；精确做法（维护 `Style → 元素` 反向侵入链表，只失效引用者）列为后续优化。

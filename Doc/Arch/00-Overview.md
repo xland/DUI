@@ -96,7 +96,7 @@ Samples/                 示例工程（每个示例一个子目录 = 一个工�
   Canvas/                2D 绘图控件演示（直线/折线/多边形/矩形/圆角矩形/圆/椭圆/圆弧）
   Scroller/              滚动容器演示（纵向列表 / 双向滚动 / 嵌套滚动）
   CustomFont/            自定义字体演示（加载未安装的 iconfont.ttf 渲染字体图标）
-  PointerEvents/         元素级指针事件演示（移入/移出/移动/按下/弹起/滚轮）
+  Event/                 元素级事件演示（冒泡顺序 / handled 终止 / 直达事件 / 键盘冒泡 / 滚轮拦截）
   TextInput/             文本输入演示（单行 TextBox / 密码框 / 多行 TextArea + 焦点与 Tab 链）
   Image/                 图像控件演示（dui::Image：WIC 解码 / 自然尺寸 / 拉伸 / 透明度）
   CustomFrame/           自定义窗口边框与标题栏演示（Chrome::Borderless + DWM 阴影 + 拖动移动 + 拖边框缩放）

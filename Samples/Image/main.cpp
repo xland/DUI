@@ -7,12 +7,14 @@
 //                              PNG / JPEG / BMP / GIF / TIFF / ICO …）
 //
 //  演示：大图（896×896）用样式限定盒子尺寸 → Image 按 contain 等比缩放并居中，
-//        图像始终不变形；Prop::Opacity；以及 GIF 动画按帧延迟播放。
+//        图像始终不变形；Prop::Opacity；以及 dui::Gif 的帧动画与播放控制
+//        （Pause / Play / Stop / SetLoopCount）。
 // ============================================================================
 
 #include <windows.h>
 #include <shellapi.h>
 
+#include <functional>
 #include <string>
 #include <utility>
 
@@ -28,6 +30,31 @@ std::wstring AssetPathInExeDir(const wchar_t* name) {
     const auto slash = path.find_last_of(L'\\');
     if (slash != std::wstring::npos) path.resize(slash + 1);
     return path + name;
+}
+
+static const dui::Style kButton = dui::Style()
+    .FontSize(13.f).Color(0xFFFFFFFF)
+    .Background(0xFF374151)
+    .Padding(dui::Thickness(6.f, 12.f))
+    .CornerRadius(4.f)
+    .Cursor(dui::Cursor::Hand)
+    .FlexShrink(0.f);
+
+static const dui::Style kButtonHover = dui::Style().Background(0xFF1F6FE5);
+
+dui::Panel* MakeRow(dui::Panel* parent) {
+    return parent->AddChild<dui::Panel>(dui::Style()
+        .FlexDirection(dui::FlexDirection::Row)
+        .AlignItems(dui::Align::Center)
+        .Gap(8.f)
+        .FlexShrink(0.f));
+}
+
+template <class F>
+void AddButton(dui::Panel* parent, const wchar_t* label, F fn) {
+    dui::Button* b = parent->AddChild<dui::Button>(label, kButton);
+    b->OnClick([fn](dui::ClickEvent&) { fn(); });
+    b->When(dui::State::Hover, kButtonHover);
 }
 
 class ImageWindow final : public dui::Window {
@@ -77,15 +104,46 @@ protected:
             .Width(140.f).Height(140.f).Opacity(0.5f));
         faded->LoadFile(path_);
 
-        // 4) 动画 GIF：dui::Gif 统一走多帧解码 + disposal 合成，按帧延迟换帧播放；
-        //    Pause() / Play() / Stop() / SetLoopCount(n)（0 = 无限）可控制播放
-        root->AddChild<dui::Text>(L"动画 GIF：WIC 多帧 + 帧延迟播放",
+        // 4) 动画 GIF 播放控制：dui::Gif 统一走多帧解码 + disposal 合成，按帧延迟换帧
+        root->AddChild<dui::Text>(L"动画 GIF：WIC 多帧 + 帧延迟播放 / 播放控制",
                                   dui::Style().FontSize(13.f).Color(0xFF4B5563));
-        auto* anim = root->AddChild<dui::Gif>(dui::Style().Width(320.f).Height(134.f).Background(0xFFE5E7EB));
+        dui::Gif* anim = root->AddChild<dui::Gif>(dui::Style()
+            .Width(320.f).Height(134.f).Background(0xFFE5E7EB));
         if (!anim->LoadFile(AssetPathInExeDir(L"demo.gif"))) {
             root->AddChild<dui::Text>(anim->LastError().c_str(),
                                       dui::Style().FontSize(13.f).Color(0xFFB42318));
         }
+
+        // row 先挂到 root，status 后挂 → 布局顺序仍是 按钮行 在 状态文本 之前
+        dui::Panel* row = MakeRow(root);
+        dui::Text* status = root->AddChild<dui::Text>(
+            L"就绪：GIF 加载后自动播放（默认无限循环）",
+            dui::Style().FontSize(13.f).Color(0xFF0F766E).FlexShrink(0.f));
+
+        AddButton(row, L"暂停", [anim, status] {
+            anim->Pause();
+            status->SetText(L"Pause()：停当前帧、保留游标，从 ticker 注销");
+        });
+        AddButton(row, L"播放", [anim, status] {
+            anim->Play();
+            status->SetText(L"Play()：从暂停处继续，跳过暂停时长");
+        });
+        AddButton(row, L"停止", [anim, status] {
+            anim->Stop();
+            status->SetText(L"Stop()：回首帧并保留帧序列，Play() 从头重播");
+        });
+        AddButton(row, L"循环 3 次", [anim, status] {
+            anim->SetLoopCount(3);
+            anim->Stop();
+            anim->Play();
+            status->SetText(L"SetLoopCount(3)：播完 3 轮停在最后一帧并停表");
+        });
+        AddButton(row, L"无限循环", [anim, status] {
+            anim->SetLoopCount(0);
+            anim->Stop();
+            anim->Play();
+            status->SetText(L"SetLoopCount(0)：无限循环（默认）");
+        });
     }
 
 private:

@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -51,6 +52,57 @@ struct Thickness {
         : left(horizontal), right(horizontal), top(vertical), bottom(vertical) {}
     Thickness(float l, float t, float r, float b) noexcept
         : left(l), top(t), right(r), bottom(b) {}
+};
+
+// ---- 2D 仿射变换（Paint 级 transform；10-Rendering §6.3）------------------
+//  Apply(x,y) = (a*x + c*y + tx, b*x + d*y + ty)；(a,b) / (c,d) 为 x / y 基向量像。
+//  A * B 表示"先 B 后 A"，与函数复合 A(B(p)) 一致。默认构造 = 恒等变换。
+//  只描述线性部分 + 平移（无透视）；DPI 与滚动原点的换算由 Graphics.Painter 处理。
+struct Transform2D {
+    float a = 1.f, b = 0.f;
+    float c = 0.f, d = 1.f;
+    float tx = 0.f, ty = 0.f;
+
+    Vec2 Apply(Vec2 p) const noexcept {
+        return {a * p.x + c * p.y + tx, b * p.x + d * p.y + ty};
+    }
+
+    Transform2D operator*(const Transform2D& r) const noexcept {
+        return {a * r.a + c * r.b, b * r.a + d * r.b,
+                a * r.c + c * r.d, b * r.c + d * r.d,
+                a * r.tx + c * r.ty + tx, b * r.tx + d * r.ty + ty};
+    }
+
+    float Determinant() const noexcept { return a * d - b * c; }
+    bool IsIdentity() const noexcept {
+        return a == 1.f && b == 0.f && c == 0.f && d == 1.f && tx == 0.f && ty == 0.f;
+    }
+    bool IsInvertible() const noexcept { return std::abs(Determinant()) > 1e-6f; }
+
+    Transform2D Inverse() const noexcept {
+        const float det = Determinant();
+        if (std::abs(det) <= 1e-6f) return {};   // 调用方须先查 IsInvertible
+        Transform2D r{d / det, -b / det, -c / det, a / det, 0.f, 0.f};
+        r.tx = -(r.a * tx + r.c * ty);
+        r.ty = -(r.b * tx + r.d * ty);
+        return r;
+    }
+
+    // 把 DIP 空间的矩阵共轭到像素空间：S_s · T · S_(1/s)。等比缩放与线性部分
+    // 可交换，故只有平移需要乘 s（10-Rendering §6.3）。
+    Transform2D Scaled(float s) const noexcept { return {a, b, c, d, tx * s, ty * s}; }
+
+    static Transform2D Translation(float x, float y) noexcept {
+        return {1.f, 0.f, 0.f, 1.f, x, y};
+    }
+    static Transform2D Scaling(float s) noexcept { return {s, 0.f, 0.f, s, 0.f, 0.f}; }
+    // y 轴向下的屏幕坐标系：正角度 = 视觉顺时针
+    static Transform2D Rotation(float deg) noexcept {
+        constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
+        const float rad = deg * kDegToRad;
+        const float cs = std::cos(rad), sn = std::sin(rad);
+        return {cs, sn, -sn, cs, 0.f, 0.f};
+    }
 };
 
 // ---- 无异常错误传递（ADR-007）：默认构造 = 失败/空 ----

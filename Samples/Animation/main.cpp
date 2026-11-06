@@ -1,19 +1,16 @@
 // ============================================================================
 //  Animation/main.cpp — DUI 动画能力示例
 //
-//  两类动画共用同一个 AnimationClock（App 层只有一个窗口定时器；全部结束即停表）：
-//    1) 命令式属性动画：Element::Animate / AnimConfig / AnimationHandle
-//       float 插值（Opacity）、颜色插值（BackgroundColor）、四种缓动、
-//       OnFinished、幂等 Cancel、同属性替换（起点取当前显示值）、fill forwards。
-//    2) GIF 帧动画播放控制：dui::Gif 的 Pause / Play / Stop / SetLoopCount。
-//
-//  构建时把 demo.gif 拷到 exe 目录（见 vcxproj PostBuildEvent）。
+//  命令式属性动画：Element::Animate / AnimConfig / AnimationHandle。
+//  float 插值（Opacity）、颜色插值（BackgroundColor）、四种缓动、
+//  OnFinished、幂等 Cancel、同属性替换（起点取当前显示值）、fill forwards。
+//  属性动画、GIF 帧动画与光标闪烁共用同一个 AnimationClock（App 层只有一个
+//  窗口定时器；全部结束即停表）；GIF 播放控制的演示见 Samples/Image。
 // ============================================================================
 
 #include <windows.h>
 
 #include <functional>
-#include <string>
 
 #include "DUI/DUI.h"
 
@@ -32,15 +29,6 @@ static const dui::Style kButton = dui::Style()
 
 // 元素级状态变体（Element::When）：hover 时立即换背景，不带过渡
 static const dui::Style kButtonHover = dui::Style().Background(0xFF1F6FE5);
-
-std::wstring AssetPath(const wchar_t* name) {
-    wchar_t buf[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, buf, MAX_PATH);
-    std::wstring path(buf);
-    const auto slash = path.find_last_of(L'\\');
-    if (slash != std::wstring::npos) path.resize(slash + 1);
-    return path + name;
-}
 
 dui::Panel* MakeRow(dui::Panel* parent) {
     return parent->AddChild<dui::Panel>(dui::Style()
@@ -63,7 +51,7 @@ public:
         : dui::Window(dui::WindowOptions{
               .title  = L"DUI 动画示例",
               .width  = 900.f,
-              .height = 760.f,
+              .height = 560.f,
           }) {}
 
 protected:
@@ -79,11 +67,11 @@ protected:
         root->AddChild<dui::Text>(L"DUI 动画能力",
             dui::Style().FontSize(22.f).Color(0xFF1F2933).FlexShrink(0.f));
         root->AddChild<dui::Text>(
-            L"属性动画与 GIF 帧动画共用一个 AnimationClock：App 层只启停一个定时器，全部结束即停表",
+            L"属性动画 / GIF 帧动画 / 光标闪烁共用一个 AnimationClock：App 层只启停一个定时器，全部结束即停表",
             dui::Style().FontSize(13.f).Color(0xFF4B5563).FlexShrink(0.f));
 
-        // ---- 1) 命令式属性动画 ----
-        root->AddChild<dui::Text>(L"1) 命令式属性动画：Animate / OnFinished / Cancel / 缓动",
+        // ---- 命令式属性动画 ----
+        root->AddChild<dui::Text>(L"命令式属性动画：Animate / OnFinished / Cancel / 缓动",
             dui::Style().FontSize(15.f).Color(0xFF1F2933).FlexShrink(0.f));
 
         card_ = root->AddChild<dui::Panel>(dui::Style()
@@ -108,47 +96,6 @@ protected:
         propStatus_ = root->AddChild<dui::Text>(L"就绪：点击上面的按钮启动补间",
             dui::Style().FontSize(13.f).Color(0xFF0F766E).FlexShrink(0.f));
 
-        // ---- 2) GIF 帧动画播放控制 ----
-        root->AddChild<dui::Text>(L"2) GIF 帧动画：Pause / Play / Stop / SetLoopCount",
-            dui::Style().FontSize(15.f).Color(0xFF1F2933).FlexShrink(0.f));
-
-        gif_ = root->AddChild<dui::Gif>(dui::Style()
-            .Width(320.f).Height(134.f)
-            .Background(0xFFE5E7EB)
-            .FlexShrink(0.f));
-        if (!gif_->LoadFile(AssetPath(L"demo.gif"))) {
-            root->AddChild<dui::Text>(gif_->LastError().c_str(),
-                dui::Style().FontSize(13.f).Color(0xFFB42318));
-        }
-
-        dui::Panel* row3 = MakeRow(root);
-        AddButton(row3, L"暂停", [this] {
-            gif_->Pause();
-            SetGifStatus(L"Pause()：停当前帧、保留游标，从 ticker 注销");
-        });
-        AddButton(row3, L"播放", [this] {
-            gif_->Play();
-            SetGifStatus(L"Play()：从暂停处继续，跳过暂停时长");
-        });
-        AddButton(row3, L"停止", [this] {
-            gif_->Stop();
-            SetGifStatus(L"Stop()：回首帧并保留帧序列，Play() 从头重播");
-        });
-        AddButton(row3, L"循环 3 次", [this] {
-            gif_->SetLoopCount(3);
-            gif_->Stop();
-            gif_->Play();
-            SetGifStatus(L"SetLoopCount(3)：播完 3 轮停在最后一帧并停表");
-        });
-        AddButton(row3, L"无限循环", [this] {
-            gif_->SetLoopCount(0);
-            gif_->Stop();
-            gif_->Play();
-            SetGifStatus(L"SetLoopCount(0)：无限循环（默认）");
-        });
-
-        gifStatus_ = root->AddChild<dui::Text>(L"就绪：GIF 加载后自动播放（默认无限循环）",
-            dui::Style().FontSize(13.f).Color(0xFF0F766E).FlexShrink(0.f));
     }
 
 private:
@@ -178,12 +125,9 @@ private:
     }
 
     void SetPropStatus(const wchar_t* s) { propStatus_->SetText(s); }
-    void SetGifStatus(const wchar_t* s)  { gifStatus_->SetText(s); }
 
     dui::Panel* card_ = nullptr;
     dui::Text*  propStatus_ = nullptr;
-    dui::Gif*   gif_ = nullptr;
-    dui::Text*  gifStatus_ = nullptr;
     dui::AnimationHandle handle_;
     bool colorToggle_ = false;
 };

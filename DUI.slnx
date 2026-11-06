@@ -8,7 +8,7 @@
   <Project Path="Samples/Canvas/Canvas.vcxproj" Id="7c1d4e29-8b53-4f6a-9d02-3e5a71c4b8f6" />
   <Project Path="Samples/Scroller/Scroller.vcxproj" Id="4a8f2c13-6d5e-4b7a-9c31-2f6e8d0a5b47" />
   <Project Path="Samples/CustomFont/CustomFont.vcxproj" Id="6e4b8d52-3a91-4c07-b5f8-9d2e1a6c0f43" />
-  <Project Path="Samples/PointerEvents/PointerEvents.vcxproj" Id="b2f45d7c-8a13-4e62-9f05-7c3d8e1a4b26" />
+  <Project Path="Samples/Event/Event.vcxproj" Id="b2f45d7c-8a13-4e62-9f05-7c3d8e1a4b26" />
   <Project Path="Samples/TextInput/TextInput.vcxproj" Id="c7e1d5a4-3b62-4f18-9a05-6d2e8b4c1f37" />
   <Project Path="Samples/Image/Image.vcxproj" Id="7c1d5b30-4a92-4f61-9d3e-2b8f6a1c04e7" />
   <Project Path="Samples/CustomFrame/CustomFrame.vcxproj" Id="2f8c6a13-5d47-4e90-b8a2-7c3f9e1d5b48" />

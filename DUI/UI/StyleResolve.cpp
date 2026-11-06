@@ -110,6 +110,8 @@ StyleValue BuiltinDefault(Prop p) {
     case Prop::FontSize:     return MakeF(p, 14.f);
     case Prop::LineHeight:   return MakeF(p, 1.2f);
     case Prop::Opacity:      return MakeF(p, 1.f);
+    case Prop::Scale:        return MakeF(p, 1.f);   // transform：1 = 原始大小（不能走 default 的 0）
+    // TranslationX / TranslationY / Rotation 默认 0，由 default 分支给出
     // 文本编辑：选区默认半透明蓝；光标色默认取文本色（控件内特判）
     case Prop::SelectionColor: return MakeU(p, 0x803399FF);
     case Prop::FlexShrink:   return MakeF(p, 1.f);   // 15-Properties §4.4
@@ -169,6 +171,11 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::BackgroundColor:
     case Prop::CornerRadius:
     case Prop::Opacity:
+    // Paint 级 transform：只重收集顶点，不触发 Measure/Arrange
+    case Prop::TranslationX:
+    case Prop::TranslationY:
+    case Prop::Rotation:
+    case Prop::Scale:
     case Prop::TextAlign:
     // 文本编辑外观
     case Prop::SelectionColor:
@@ -212,6 +219,24 @@ uint32_t PropFlagsOf(Prop p) {
     default:
         return kFlagLayout;   // 未知属性按最坏情况处理
     }
+}
+
+// ---- Paint 级变换（10-Rendering §6.3）------------------------------------
+// T(p) = c + t + M(p − c)：c = 元素盒中心（布局 DIP），t = 平移 DIP，
+// M = R(θ) · Scale(s)。变换定义在布局空间、与滚动原点无关；像素空间版本
+// 经 Transform2D::Scaled(scale) 得到。ResolveProperty 的遍历外路径含级联
+// 层 1 动画值，故绘制与命中测试读到的是同一帧的变换。
+Transform2D ElementTransform(const Element* e) noexcept {
+    const Rect b = e->Bounds();
+    const Vec2 c{b.x + b.w * 0.5f, b.y + b.h * 0.5f};
+    const StyleValue tx = ResolveProperty(e, Prop::TranslationX);
+    const StyleValue ty = ResolveProperty(e, Prop::TranslationY);
+    const StyleValue rot = ResolveProperty(e, Prop::Rotation);
+    const StyleValue sc = ResolveProperty(e, Prop::Scale);
+    return Transform2D::Translation(c.x + tx.f, c.y + ty.f)
+         * Transform2D::Rotation(rot.f)
+         * Transform2D::Scaling(sc.f)
+         * Transform2D::Translation(-c.x, -c.y);
 }
 
 void ClearDirtyTree(Element* root) {

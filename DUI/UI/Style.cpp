@@ -48,6 +48,10 @@ Style& Style::Display(dui::Display v)              { return SetU(Prop::Display, 
 Style& Style::FlexDirection(dui::FlexDirection v)  { return SetU(Prop::FlexDirection, static_cast<uint32_t>(v)); }
 Style& Style::Width(float dip)                     { return SetF(Prop::Width, dip); }
 Style& Style::Height(float dip)                    { return SetF(Prop::Height, dip); }
+Style& Style::TranslationX(float dip)              { return SetF(Prop::TranslationX, dip); }
+Style& Style::TranslationY(float dip)              { return SetF(Prop::TranslationY, dip); }
+Style& Style::Rotation(float deg)                  { return SetF(Prop::Rotation, deg); }
+Style& Style::Scale(float v)                       { return SetF(Prop::Scale, v); }
 Style& Style::MinWidth(float dip)                  { return SetF(Prop::MinWidth, dip); }
 Style& Style::MaxWidth(float dip)                  { return SetF(Prop::MaxWidth, dip); }
 Style& Style::FlexGrow(float v)                    { return SetF(Prop::FlexGrow, v); }

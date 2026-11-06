@@ -76,15 +76,26 @@ class Collector {
 public:
     Collector(DrawList& list, float scale, const Rect& windowPx)
         : list_(list), scale_(scale) {
-        painter_ = list_.Acquire();
         origin_ = {0.f, 0.f};
         clipPx_ = windowPx;
+        painter_ = AcquirePainter(origin_);
     }
 
     void Collect(Element* e, const StyleContext& parentCtx) {
         if (ResolveProperty(e, Prop::Display, parentCtx).u == static_cast<uint32_t>(Display::None)) return;
 
         const StyleContext ctx = parentCtx.Child(e);
+
+        // 元素自身变换压栈：影响本元素的绘制与整棵子树（先子后父组合）。
+        // 恒等变换不压栈 → 未使用 transform 的元素每帧零额外开销。
+        const Transform2D saved = xform_;
+        const Transform2D local = ElementTransform(e);
+        const bool transformed = !local.IsIdentity();
+        if (transformed) {
+            xform_ = saved * local;
+            painter_->SetTransform(xform_.Scaled(scale_));
+        }
+        TransformScope scope{*this, saved, transformed};
 
         if (e->GetKind() == Kind::Scroller) {
             CollectScroller(static_cast<Scroller*>(e), ctx);
@@ -97,12 +108,10 @@ public:
         if (e->GetKind() == Kind::Image) {
             DrawBackground(e, ctx);      // 背景留在父级单元
             Commit();
-            painter_ = list_.Acquire();
-            painter_->SetOrigin(origin_.x, origin_.y, scale_);
+            painter_ = AcquirePainter(origin_);
             e->OnPaint(*painter_, ctx, scale_);
             Commit();
-            painter_ = list_.Acquire();
-            painter_->SetOrigin(origin_.x, origin_.y, scale_);
+            painter_ = AcquirePainter(origin_);
             return;                      // 图像元素无子元素
         }
 
@@ -129,6 +138,27 @@ public:
 private:
     void Commit() { list_.Commit(painter_, clipPx_); }
 
+    // 每取一个新 Painter 都要带上当前组合变换（变换烘进顶点，按单元独立）
+    graphics::Painter* AcquirePainter(const Vec2& origin) {
+        graphics::Painter* p = list_.Acquire();
+        p->SetOrigin(origin.x, origin.y, scale_);
+        p->SetTransform(xform_.Scaled(scale_));
+        return p;
+    }
+
+    // Collect() 有 Scroller / Image 等提前 return，用作用域守卫统一弹栈。
+    // 弹栈时只改当前 Painter 的状态，已发射的顶点不受影响。
+    struct TransformScope {
+        Collector& c;
+        Transform2D saved;
+        bool active;
+        ~TransformScope() {
+            if (!active) return;
+            c.xform_ = saved;
+            c.painter_->SetTransform(c.xform_.Scaled(c.scale_));
+        }
+    };
+
     // 内容裁剪：切到新绘制单元（原点不变，裁剪 = 内容矩形 ∩ 当前裁剪）。
     // 内容矩形是布局空间绝对 DIP，须叠加父级原点平移到窗口空间（与
     // CollectScroller 的视口同理），否则嵌套时裁剪带留在原位。
@@ -140,19 +170,30 @@ private:
     ClipState BeginClip(const Rect& dipRect) {
         ClipState st{origin_, clipPx_};
         Commit();
-        painter_ = list_.Acquire();
-        painter_->SetOrigin(st.origin.x, st.origin.y, scale_);
-        const Rect winPx{(dipRect.x + st.origin.x) * scale_,
-                         (dipRect.y + st.origin.y) * scale_,
-                         dipRect.w * scale_, dipRect.h * scale_};
+        painter_ = AcquirePainter(st.origin);
+        // scissor 只能轴对齐，故取变换后四个角点的 AABB：旋转的裁剪盒不会
+        // 留在原位。恒等变换时结果与原矩形完全一致（零回归）。
+        const Transform2D eff = painter_->EffectiveTransform();
+        const float x0 = (dipRect.x + st.origin.x) * scale_;
+        const float y0 = (dipRect.y + st.origin.y) * scale_;
+        const float x1 = (dipRect.Right() + st.origin.x) * scale_;
+        const float y1 = (dipRect.Bottom() + st.origin.y) * scale_;
+        const Vec2 p0 = eff.Apply({x0, y0});
+        const Vec2 p1 = eff.Apply({x1, y0});
+        const Vec2 p2 = eff.Apply({x1, y1});
+        const Vec2 p3 = eff.Apply({x0, y1});
+        const float l = std::min(std::min(p0.x, p1.x), std::min(p2.x, p3.x));
+        const float t = std::min(std::min(p0.y, p1.y), std::min(p2.y, p3.y));
+        const float r = std::max(std::max(p0.x, p1.x), std::max(p2.x, p3.x));
+        const float b = std::max(std::max(p0.y, p1.y), std::max(p2.y, p3.y));
+        const Rect winPx{l, t, r - l, b - t};
         clipPx_ = IntersectRect(winPx, st.clip);
         return st;
     }
 
     void EndClip(const ClipState& st) {
         Commit();
-        painter_ = list_.Acquire();
-        painter_->SetOrigin(st.origin.x, st.origin.y, scale_);
+        painter_ = AcquirePainter(st.origin);
         origin_ = st.origin;
         clipPx_ = st.clip;
     }
@@ -185,9 +226,11 @@ private:
         // 窗口空间，嵌套时随外层滚动一起移动）∩ 当前裁剪。
         // SetOrigin 与 scissor 都是"绝对"量：嵌套时必须叠加父级偏移，
         // 否则外层滚动对内层内容无效、内层裁剪带留在原位（背景被裁没）。
-        painter_ = list_.Acquire();
-        painter_->SetOrigin(savedOrigin.x - off.x, savedOrigin.y - off.y, scale_);
-        origin_ = {savedOrigin.x - off.x, savedOrigin.y - off.y};
+        const Vec2 contentOrigin{savedOrigin.x - off.x, savedOrigin.y - off.y};
+        painter_ = AcquirePainter(contentOrigin);
+        origin_ = contentOrigin;
+        // 视口是窗口空间的轴对齐 scissor：不随容器 transform 旋转，也不随
+        // 内容滚动（用父级 savedOrigin 平移，见上方"绝对量"说明）。
         const Rect vpWinPx{(vp.x + savedOrigin.x) * scale_, (vp.y + savedOrigin.y) * scale_,
                            vp.w * scale_, vp.h * scale_};
         clipPx_ = IntersectRect(vpWinPx, savedClip);
@@ -197,8 +240,7 @@ private:
         Commit();   // 封存内容单元
 
         // 回到父级上下文：父级后续兄弟继续画在新单元里
-        painter_ = list_.Acquire();
-        painter_->SetOrigin(savedOrigin.x, savedOrigin.y, scale_);
+        painter_ = AcquirePainter(savedOrigin);
         origin_ = savedOrigin;
         clipPx_ = savedClip;
 
@@ -211,6 +253,7 @@ private:
     graphics::Painter* painter_ = nullptr;
     Vec2 origin_{};
     Rect clipPx_{};
+    Transform2D xform_{};   // 当前组合变换（布局 DIP 空间；下传时按 scale 共轭）
 };
 
 }  // namespace

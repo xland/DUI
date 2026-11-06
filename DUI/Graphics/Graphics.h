@@ -81,7 +81,16 @@ public:
         originDipY_ = dipY;
         originPxX_ = dipX * scale;
         originPxY_ = dipY * scale;
+        Recompute();
     }
+    // 当前绘制单元的变换（像素空间；由 App/Frame.cpp 的 Collector 逐元素下传）。
+    // 变换在发射 quad 时烘进顶点位置，故同一 Painter 可承载多个不同变换的元素。
+    void SetTransform(const Transform2D& pxXform) noexcept {
+        xform_ = pxXform;
+        Recompute();
+    }
+    const Transform2D& EffectiveTransform() const noexcept { return eff_; }
+
     void FillRoundedRect(const Rect& dipRect, float radiusDip, Color color, float opacity, float scale);
     void AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
                       float u0, float v0, float u1, float v1, Color color);
@@ -106,6 +115,18 @@ public:
     const std::vector<ImageGroup>& ImageGroups() const noexcept { return igroups_; }
 
 private:
+    // 有效矩阵 E = Translate(originPx) · xform_ · Translate(−originPx)：
+    // 顶点位置已是 (布局 DIP + origin)·scale，先去 origin、施加变换、再加回来。
+    // 这样 T_px 与 origin 无关，嵌套滚动切换 origin 时无需重算祖先变换链。
+    void Recompute() noexcept {
+        eff_ = Transform2D::Translation(originPxX_, originPxY_) * xform_
+             * Transform2D::Translation(-originPxX_, -originPxY_);
+        identityEff_ = eff_.IsIdentity();
+    }
+    Vec2 Xf(float x, float y) const noexcept {
+        return identityEff_ ? Vec2{x, y} : eff_.Apply(Vec2{x, y});
+    }
+
     void PushShapeQuad(float cx, float cy, float hw, float hh,
                        float p0x, float p0y, float p1x, float p1y,
                        float extra, float halfStroke, Color color, uint32_t kind);
@@ -118,6 +139,9 @@ private:
     std::vector<ImageGroup> igroups_;
     float originDipX_ = 0.f, originDipY_ = 0.f;   // 原点偏移（DIP）
     float originPxX_ = 0.f, originPxY_ = 0.f;     // 原点偏移（物理像素）
+    Transform2D xform_{};      // 当前单元的变换（像素空间）
+    Transform2D eff_{};        // 含 origin 共轭的有效矩阵
+    bool identityEff_ = true;  // 恒等时跳过逐顶点矩阵乘
 };
 
 // 一个绘制单元 = 一个 Painter + 裁剪矩形（物理像素）。

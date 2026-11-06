@@ -37,7 +37,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `Paint` | 仅需重绘 | 标 `PaintDirty` |
 | ~~`Animatable`~~ | 已取消：不由属性表标志表达 | 命令式 `Animate()` 用 `AnimProp<T>` 标签在编译期限定可用属性 |
 
-> §4 各表保留的"可动画"列是草案期标志残留，**不是运行时约束**；实际可动画的只有 [05-Animation.md](./05-Animation.md) §2 列出的 5 个 Paint 类标量标签。
+> §4 各表保留的"可动画"列是草案期标志残留，**不是运行时约束**；实际可动画的只有 [05-Animation.md](./05-Animation.md) §2 标签白名单列出的属性（Paint 标量、Paint 级 transform、布局尺寸对照）。
 
 ---
 
@@ -132,13 +132,15 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `gridRow` / `gridColumn` | Int | ✗ | Layout | ✗ | Auto | 显式放置 |
 | `gridRowSpan` / `gridColumnSpan` | Int | ✗ | Layout | ✗ | 1 | 跨格 |
 
-### 4.5 变换（绘制级）
+### 4.5 变换（Paint 级；运行时已接入）
 
 | 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `translation` | Vec2 | ✗ | Paint | ✓ | (0,0) | 影响命中测试与裁剪 |
-| `scale` | Vec2 | ✗ | Paint | ✓ | (1,1) | 同上 |
-| `rotation` | Float（弧度） | ✗ | Paint | ✓ | 0 | 同上 |
+| `TranslationX` / `TranslationY` | Float（DIP） | ✗ | Paint | ✓ | 0 | 链式方法同名；平移不改 `Bounds()` |
+| `Rotation` | Float（**度**） | ✗ | Paint | ✓ | 0 | 支点 = 元素盒中心；正角度 = 视觉顺时针 |
+| `Scale` | Float（等比倍率） | ✗ | Paint | ✓ | **1** | 不做非等比 / `TransformOrigin`（非等比会破坏 SDF 的 1px AA 过渡带） |
+
+四个属性由 `ElementTransform()`（`UI/StyleResolve.cpp`）合成仿射矩阵：绘制期烘进顶点，命中测试逐层逆变换。实现与限制见 [10-Rendering.md](./10-Rendering.md) §6.4、ADR-020 补充。滚动容器的视口 scissor 仍是窗口空间轴对齐矩形，不随容器 transform 旋转；`PointerEvent::pos` 仍是客户区绝对 DIP，旋转的交互文本框光标定位列为后续项。
 
 ### 4.6 交互与可见性
 
@@ -149,11 +151,11 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 
 ### 4.7 动画相关属性
 
-**没有动画元属性**。`transition` / `animation` 从未进入运行时属性表（`Prop` 枚举），早期草案的这两项已作废。命令式动画直接对普通属性补间，不新增属性 ID；当前开放的是 `opacity` / `backgroundColor` / `color` / `selectionColor` / `caretColor`，标签、插值与语义见 [05-Animation.md](./05-Animation.md) §2–§3。
+**没有动画元属性**。`transition` / `animation` 从未进入运行时属性表（`Prop` 枚举），早期草案的这两项已作废。命令式动画直接对普通属性补间；当前开放的是 `opacity` / `backgroundColor` / `color` / `selectionColor` / `caretColor`、§4.5 的四个 transform 标量，以及 `width` / `height`（布局尺寸对照），标签、插值与语义见 [05-Animation.md](./05-Animation.md) §2–§3。
 
 ### 4.8 暂不做
 
-渐变/图片背景（需 Brush 与资源引用）、`transform` 的矩阵/原点形态（用三件套替代）、多 Style 引用（class 列表，见 03-Style D3）、`will-change` 类提示。
+渐变/图片背景（需 Brush 与资源引用）、非等比缩放 / `TransformOrigin` / 矩阵形态 transform、多 Style 引用（class 列表，见 03-Style D3）、`will-change` 类提示。
 
 ---
 
@@ -184,7 +186,7 @@ StyleValue opacity = ResolveProperty(element, Prop::Opacity);
 
 - **非继承属性**：只查元素自身链，O(1–3)。
 - **继承属性**：自元素向上找最近设置了该属性的祖先，O(树深)；调用频率低（事件类路径），不做缓存。
-- 两条路径都先查级联第 1 层动画值槽；`transform` 三件套不在实现范围内。
+- 两条路径都先查级联第 1 层动画值槽；transform 属性的遍历外读取由 `ElementTransform()` 完成，含该动画值槽（[10-Rendering.md](./10-Rendering.md) §6.4）。
 
 ### 5.3 动画值槽（级联第 1 层）
 

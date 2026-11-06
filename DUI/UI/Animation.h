@@ -23,7 +23,8 @@ class Element;
 
 // ---------------------------------------------------------------------------
 // 强类型属性标签：目标值类型由标签决定，编译期拒绝不可动画的属性。
-// 目前只开放 Paint 类标量（float / Color）；布局、文本类属性每帧重排代价高。
+// 开放 Paint 类标量（float / Color）与 Paint 级 transform 标量；布局尺寸标签
+// （Width / Height）每帧重排，仅作对照用（05-Animation §2.1 / §3）。
 // ---------------------------------------------------------------------------
 template <class T>
 struct AnimProp {
@@ -35,6 +36,14 @@ inline constexpr AnimProp<Color> BackgroundColor{Prop::BackgroundColor};
 inline constexpr AnimProp<Color> TextColor{Prop::Color};
 inline constexpr AnimProp<Color> SelectionColor{Prop::SelectionColor};
 inline constexpr AnimProp<Color> CaretColor{Prop::CaretColor};
+// Paint 级 transform：平移 DIP / 旋转度 / 等比倍率（级联层 1 生效，标脏 kFlagPaint）
+inline constexpr AnimProp<float> TranslationX{Prop::TranslationX};
+inline constexpr AnimProp<float> TranslationY{Prop::TranslationY};
+inline constexpr AnimProp<float> Rotation{Prop::Rotation};
+inline constexpr AnimProp<float> Scale{Prop::Scale};
+// 布局尺寸（每帧 kFlagLayout → 整棵树重新 Measure/Arrange）
+inline constexpr AnimProp<float> Width{Prop::Width};
+inline constexpr AnimProp<float> Height{Prop::Height};
 
 // 聚合：支持 C++20 指派初始化 { .durationMs = 200, .easing = dui::Easing::EaseOut }
 struct AnimConfig {

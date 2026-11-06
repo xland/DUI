@@ -249,6 +249,8 @@ void Painter::Reset() {
     originDipY_ = 0.f;
     originPxX_ = 0.f;
     originPxY_ = 0.f;
+    xform_ = {};
+    Recompute();
 }
 
 void Painter::AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
@@ -266,11 +268,16 @@ void Painter::AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
                             ((color & 0xFF0000u) >> 16) | ((color >> 24) << 24);
     x += originPxX_;   // 滚动内容整体平移（像素空间）
     y += originPxY_;
+    // 只变换 4 个角点的位置；uv / color 与局部 SDF 字段保持原值
+    const Vec2 p0 = Xf(x, y);
+    const Vec2 p1 = Xf(x + w, y);
+    const Vec2 p2 = Xf(x + w, y + h);
+    const Vec2 p3 = Xf(x, y + h);
     const GlyphVertex quad[4] = {
-        {x,     y,     u0, v0, packed},
-        {x + w, y,     u1, v0, packed},
-        {x + w, y + h, u1, v1, packed},
-        {x,     y + h, u0, v1, packed},
+        {p0.x, p0.y, u0, v0, packed},
+        {p1.x, p1.y, u1, v0, packed},
+        {p2.x, p2.y, u1, v1, packed},
+        {p3.x, p3.y, u0, v1, packed},
     };
     for (const GlyphVertex& v : quad) gverts_.push_back(v);
     ggroups_.back().vertexCount += 4;
@@ -293,11 +300,15 @@ void Painter::AddImageQuad(uint32_t texture, const Rect& dipRect, Color color, f
                             ((color & 0xFF0000u) >> 16) | ((color >> 24) << 24);
     const float x = (dipRect.x + originDipX_) * scale;
     const float y = (dipRect.y + originDipY_) * scale;
+    const Vec2 p0 = Xf(x, y);
+    const Vec2 p1 = Xf(x + w, y);
+    const Vec2 p2 = Xf(x + w, y + h);
+    const Vec2 p3 = Xf(x, y + h);
     const GlyphVertex quad[4] = {
-        {x,     y,     0.f, 0.f, packed},
-        {x + w, y,     1.f, 0.f, packed},
-        {x + w, y + h, 1.f, 1.f, packed},
-        {x,     y + h, 0.f, 1.f, packed},
+        {p0.x, p0.y, 0.f, 0.f, packed},
+        {p1.x, p1.y, 1.f, 0.f, packed},
+        {p2.x, p2.y, 1.f, 1.f, packed},
+        {p3.x, p3.y, 0.f, 1.f, packed},
     };
     for (const GlyphVertex& v : quad) iverts_.push_back(v);
     igroups_.back().vertexCount += 4;
@@ -316,8 +327,11 @@ void Painter::PushShapeQuad(float cx, float cy, float hw, float hh,
     const float sy[4] = {-1.f, -1.f, 1.f, 1.f};
     for (int i = 0; i < 4; ++i) {
         ShapeVertex v;
-        v.x = cx + sx[i] * hw;
-        v.y = cy + sy[i] * hh;
+        const Vec2 p = Xf(cx + sx[i] * hw, cy + sy[i] * hh);
+        v.x = p.x;
+        v.y = p.y;
+        // lx/ly 与形状参数保持在未变换的局部空间：SDF 由片元在局部坐标求值，
+        // 旋转是等距变换，梯度模长仍为 1 → 圆角/描边/AA 过渡带都不失真。
         v.lx = sx[i] * hw;
         v.ly = sy[i] * hh;
         v.p0x = p0x;
@@ -422,8 +436,10 @@ void Painter::FillRoundedRect(const Rect& dipRect, float radiusDip, Color color,
     const float sy[4] = {-1.f, -1.f, 1.f, 1.f};
     for (int i = 0; i < 4; ++i) {
         Vertex v;
-        v.x = cx + sx[i] * hw;
-        v.y = cy + sy[i] * hh;
+        const Vec2 p = Xf(cx + sx[i] * hw, cy + sy[i] * hh);
+        v.x = p.x;
+        v.y = p.y;
+        // 局部坐标 / 半宽 / 半径不改：SDF 仍在原局部像素空间求值
         v.lx = sx[i] * hw;
         v.ly = sy[i] * hh;
         v.hw = hw;

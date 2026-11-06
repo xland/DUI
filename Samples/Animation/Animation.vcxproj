@@ -63,17 +63,9 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
-    <!-- demo.gif 随构建拷到 exe 目录，运行时按 exe 所在目录加载 -->
-    <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)demo.gif" "$(OutDir)demo.gif"</Command>
-      <Message>拷贝 demo.gif 到输出目录</Message>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="demo.gif" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\DUI\DUI.vcxproj">

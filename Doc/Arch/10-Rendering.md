@@ -175,6 +175,19 @@ float alpha = 1.0f - smoothstep(-w, w, d);
   - 滚动条画在内容之上的父级单元（不随内容滚动）；
   - 单元顺序即 Z 序（`Painter` 池跨帧复用，稳态零分配）。
 
+### 6.4 发射期顶点变换（Paint 级 transform，已落地）
+
+`TranslationX/Y`（DIP）、`Rotation`（度，支点 = 元素盒中心）、`Scale`（等比）是四个普通 Paint 类属性，**不改 `Bounds()`、不重排**，标脏 `kFlagPaint`。它们由 `ElementTransform()`（`UI/StyleResolve.cpp`）合成为布局 DIP 空间的仿射矩阵 \(T(p)=c+t+M(p-c)\)，`Core::Transform2D` 提供组合 / 求逆 / DPI 共轭（`Scaled(s)`）。
+
+- **收集**：`App/Frame.cpp` 的 `Collector` 逐元素压栈 \(T_{\text{parent}}\cdot T_{\text{child}}\)，按 `scale` 共轭后下传给 `Painter::SetTransform()`；恒等变换不压栈，未使用 transform 的元素零额外开销。
+- **发射**：`Painter` 维护有效矩阵 \(E=\text{Translate}(o_{px})\cdot T_{px}\cdot\text{Translate}(-o_{px})\)，其中 \(T_{px}\) 与滚动原点无关，只有 `E` 依赖原点 —— 嵌套 `Scroller` 切换原点时无需重算祖先变换链。`FillRoundedRect` / `AddGlyphQuad` / `AddImageQuad` / `PushShapeQuad` 四个发射点把 quad 的 4 个角点过 `E`；变换烘进顶点，故同一 `Painter` 可承载多个不同变换的元素，无需拆分绘制单元。
+- **SDF 不变**：`Vertex.lx/ly`、`ShapeVertex` 的局部坐标与形状参数、字形 `uv` 全部保持原值。旋转是等距变换，片元在局部空间求出的距离场梯度模长仍为 1 → 圆角 / 描边 / 1px AA 过渡带都不失真；等比缩放只让过渡带变成 `s` px（略糊），这是不做非等比缩放的硬理由。**着色器、顶点格式、输入布局、VB/IB 编排全部未改**。
+- **命中测试**：`UI/Event.cpp` 沿祖先链逐层施加 `T_e⁻¹`，等价于整体 \(T^{-1}\)；`Scroller` 的滚动条 / 视口 / `+off` 换算都用逆变换后的局部坐标。`Scale → 0` 时矩阵不可逆，该元素视为不可命中。
+- **裁剪**：scissor 天然轴对齐。`BeginClip` 取变换后内容矩形四个角点的 AABB 再与外层裁剪求交；滚动容器视口保持窗口空间矩形、不随容器 transform 旋转。
+- **边界**：字形按 ADR-006 在离散尺度光栅化，连续 `Scale` 动画下是被线性拉伸的图集位图（放大略糊）；`PointerEvent::pos` 仍是客户区绝对 DIP，旋转的交互文本框光标/选区定位列为后续项；平移不会扩展 `Scroller` 的可滚动范围。**带 transform 的 `Scroller` 且滚动偏移非零时**，内容命中测试仍沿用原有的 `+off` 平移换算（未把滚动纳入变换链），视口 scissor 也保持窗口空间轴对齐，属已知限制。
+
+> 本文 §3 的 `PushLayer/PopLayer`（`opacity<1` / 带 transform 的子树走离屏层）、§6.2 的 `fwidth()` AA 结论、§8 P0 的 `opacity/transform 离屏层` 均为**未落地的早期草案**：当前实现是按需全量光栅 + SDF 固定 1 像素过渡带（见 [Graphics.cpp](../DUI/Graphics/Graphics.cpp) 的着色器注释），transform 走本节的顶点变换、不使用离屏层。
+
 ---
 
 ## 7. 资源

@@ -295,16 +295,27 @@ Doc/Arch/                文档
 | --- | --- | --- |
 | 形态 | **只做命令式**：`element->Animate(AnimProp<T>, target, AnimConfig)` → `AnimationHandle` | 样式里不做 `Transition` / `Keyframes` / `animation` 属性；声明式草案的死代码（`Style::Transition` / `TransitionSpec` / `transitions_`）已删除 |
 | 接入方式 | 动画值写入样式级联第 1 层 `Element::animated_`，不写本地覆盖 | 复用 `TryResolveElement` 使遍历内/外两条读路径一致，且不污染 `Set()` |
-| 属性范围 | 强类型标签白名单，仅 Paint 类标量（float / Color） | 编译期拒绝不可插值属性；布局/文本类每帧重排代价高 |
+| 属性范围 | 强类型标签白名单：Paint 类标量（float / Color）+ Paint 级 transform 标量；`Width` / `Height` 作为布局尺寸对照开放 | 编译期拒绝不可插值属性；布局/文本类每帧重排代价高 |
 | 配置 | 聚合 `AnimConfig{ .durationMs, .easing }`（C++20 指派初始化） | 比链式 Builder 更短，默认值够用，无堆分配、无注册表 |
 | 中断语义 | 新动画从**当前显示值**起播，同 (元素, 属性) 唯一 | 快速反向不跳变；旧句柄作废且不触发回调 |
 | 完成语义 | fill forwards：终值留在动画槽；`OnFinished` 一次 | 避免淡出后跳回基值；`Cancel()` 用于回落 |
 | 生命周期 | `Cancel()` 幂等；元素销毁经 `Lifetime` 令牌使句柄自动失效 | 回调不会派发到已销毁元素 |
 | 驱动 | 复用统一 `AnimationClock`（GIF 帧动画 / 光标闪烁 / 属性动画），App 层一个定时器 | 有帧动画或属性动画 20ms、只有闪烁 500ms、空闲停表，不牺牲 ADR-013 |
 | 缓动 | 四个枚举预设，二次多项式近似 | 零分配、够用；不做贝塞尔 LUT / Spring |
-| transform / DComp / 可裁剪宏 | **不做** | 无位移动画需求；不引入合成树；不做 `DUI_ENABLE_ANIMATION` |
+| transform | **已定：做 Paint 级 2D transform**（`TranslationX` / `TranslationY` / `Rotation` / `Scale`） | 见下方补充；不改布局盒、不重排，直接由 `Animate` 驱动 |
+| DComp / 元素级合成树 / 可裁剪宏 | **不做** | 不引入合成树；不做 `DUI_ENABLE_ANIMATION` |
 
-**已定：按上表。** 契约见 [05-Animation.md](./05-Animation.md)；早期草案的 D1–D4（transform 三件套、Fill 模式、合成器边界、Spring）随声明式方案一并作废。
+**已定：按上表。** 契约见 [05-Animation.md](./05-Animation.md)；早期草案的 D1–D4（声明式 transform 三件套、Fill 模式、合成器边界、Spring）随声明式方案一并作废。
+
+### 补充（2026-11）：Paint 级 transform 落地
+
+推翻上表原"transform 三件套不做"的结论——这里做的不是声明式 CSS transform，也不是合成树，而是**四个普通 Paint 类属性**：
+
+- 变换在 `Graphics.Painter` 发射 quad 时烘进 4 个角点的 `x,y`；局部 SDF 字段（`lx,ly` / 形状参数）保持原值，故着色器、顶点格式、VB/IB 编排全部不动（[10-Rendering.md](./10-Rendering.md) §6.4）。
+- 属性标脏为 `kFlagPaint` → 动画每帧只重收集顶点，`Measure/Arrange` 完全跳过；`Bounds()` 与布局结果不变。
+- `ElementTransform()` 由绘制与命中测试共用；`HitTest` 沿祖先链逐层逆变换，保证视觉位置与命中一致。
+- 旋转单位 = 度，支点 = 元素盒中心，缩放为等比（不做 `ScaleX/ScaleY` / `TransformOrigin`），以避免非等比缩放破坏 SDF 的 1px AA 过渡带。
+- 仍不做：DirectComposition 动画、离屏层 / 元素级合成树、窗口级动画、指针事件局部坐标（旋转的交互文本框光标定位列为后续项）。
 
 ---
 

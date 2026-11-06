@@ -35,6 +35,8 @@ enum class Prop : uint16_t {
     Padding, Margin, CornerRadius, Opacity, BackgroundColor,
     // 尺寸
     Width, Height, MinWidth, MaxWidth,
+    // Paint 级变换（不改布局盒；10-Rendering §6.3）：平移 DIP / 旋转度 / 等比倍率
+    TranslationX, TranslationY, Rotation, Scale,
     // 布局
     Display, FlexDirection, FlexShrink, FlexGrow, Gap, JustifyContent, AlignItems,
     // 布局（续）
@@ -127,6 +129,11 @@ public:
     Style& FlexDirection(dui::FlexDirection v);
     Style& Width(float dip);
     Style& Height(float dip);
+    // Paint 级变换（不改布局盒；度 / 倍率 / DIP）
+    Style& TranslationX(float dip);
+    Style& TranslationY(float dip);
+    Style& Rotation(float deg);
+    Style& Scale(float v);
     Style& MinWidth(float dip);
     Style& MaxWidth(float dip);
     Style& FlexGrow(float v);
@@ -219,5 +226,9 @@ StyleValue ResolveProperty(const Element* e, Prop p, const StyleContext& ctx);
 StyleValue ResolveProperty(const Element* e, Prop p);
 StyleValue BuiltinDefault(Prop p);
 uint32_t PropFlagsOf(Prop p);
+
+// 元素自身 Paint 级变换（布局绝对 DIP 空间的仿射矩阵，含级联层 1 动画值）。
+// App/Frame.cpp 收集与 UI/Event.cpp 命中测试逆变换共用；实现在 UI/StyleResolve.cpp。
+Transform2D ElementTransform(const Element* e) noexcept;
 
 }  // namespace dui

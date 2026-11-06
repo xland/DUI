@@ -2,7 +2,7 @@
 
 > 状态：草案 v0.1 — 待讨论确认。
 > 需求来源：开发者能**方便地为界面元素绑定事件处理程序**（点击、键盘、悬停……），并支持精确的底层事件控制。
-> 相关：[01-Layering.md](./01-Layering.md)（Platform.Input → UI.Event）、[03-Style.md](./03-Style.md)（状态变体由事件维护）、[05-Animation.md](./05-Animation.md)（transform 需作用于命中测试）、ADR-018（纯 C++、链式 API 倾向）。
+> 相关：[01-Layering.md](./01-Layering.md)（Platform.Input → UI.Event）、[03-Style.md](./03-Style.md)（状态位由事件维护、状态变体由 `Element::When` 设置）、[05-Animation.md](./05-Animation.md)（transform 需作用于命中测试）、ADR-018（纯 C++、链式 API 倾向）。
 
 ## 1. 需求
 
@@ -106,7 +106,7 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 
 - 平台层：`WM_KEYDOWN/WM_KEYUP/WM_CHAR/WM_SYSCHAR/WM_IME_CHAR` → `NativeWindowHost::OnKeyDown/OnKeyUp/OnChar`；`WM_IME_CHAR` 被吃掉（否则 `DefWindowProc` 会再生成一个 `WM_CHAR`，同一字符插入两次）。
 - 控件内部行为与外部绑定**并存**：`Element::HandleKeyDown/HandleKeyUp/HandleChar` 等受保护虚函数是控件自身行为（TextBox 的编辑逻辑走这里）；派发时钩子先执行，钩子消费（返回 true）则不再向上冒泡，但同一元素上的外部绑定仍会收到该事件（可见 `ev.handled` 已被置位）。
-- 焦点唯一，挂在元素上（`UI/Focus.h`）：`FocusedElement()` / `IsFocused()` / `SetFocus()`；`Element::Focus()/Blur()/HasFocus()`。换焦点时旧元素清 `State::Focused`、新元素置位 → 样式状态变体自动生效（03-Style §6.2）。
+- 焦点唯一，挂在元素上（`UI/Focus.h`）：`FocusedElement()` / `IsFocused()` / `SetFocus()`；`Element::Focus()/Blur()/HasFocus()`。换焦点时旧元素清 `State::Focused`、新元素置位 → 元素状态变体自动生效（03-Style §6.2）。
 - Tab 链：树序（深度优先）收集可聚焦元素（`SetFocusable(true)`），按 `tabIndex` 排序 —— `>0` 组（数值升序）→ `0` 组（文档序）→ `<0` 组（数值升序）；`Shift+Tab` 反向，到头循环。Tab 键在焦点元素未消费时由框架默认处理（移动焦点）。
 - 点击取得焦点：指针按下命中可聚焦元素（或其可聚焦祖先）时 `SetFocus`。
 
@@ -251,7 +251,7 @@ list->AddHandler(Event::PointerDown, h, Phase::Tunnel);
 - 焦点唯一，挂在元素上；`Focus()` / `Blur()`（M5.9 落地，见 §3.3；`ClearFocus()` 未单列，`Blur()` 即清焦点）。
 - **窗口失活即失焦**（切到别的应用 → 焦点离开窗口，见 §3.3）；最小化除外（保留焦点）。
 - **Tab 链**：按树序（深度优先）+ 元素可设 `focusable`（`SetFocusable(true)`）/ `tabIndex`（`SetTabIndex`）排序；`Shift+Tab` 反向。
-- 焦点变化 → 更新元素 `State::Focused` → 样式状态变体自动生效（[03-Style.md](./03-Style.md) §6.2），无需开发者干预。
+- 焦点变化 → 更新元素 `State::Focused` → 元素状态变体自动生效（[03-Style.md](./03-Style.md) §6.2），无需开发者干预。
 - 方向键导航（列表/网格内移动焦点）由具体控件实现，事件系统只提供路由与焦点服务。
 - 加速键/快捷键：`KeyDown` 冒泡到根，由根上注册的加速键表匹配（P1）。
 

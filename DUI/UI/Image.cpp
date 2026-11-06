@@ -35,6 +35,9 @@ struct Animation {
     std::vector<graphics::AnimationFrame> frames;
     size_t   index = 0;
     uint64_t nextTickMs = 0;
+    uint32_t loopCount = 0;    // 0 = 无限循环
+    uint32_t loopsDone = 0;    // 已完成轮数（index 回绕时递增）
+    bool     playing = false;  // 是否已注册到 ticker（暂停/停止/播完为 false）
 };
 
 AnimationClock& AnimationClock::Instance() {
@@ -43,6 +46,9 @@ AnimationClock& AnimationClock::Instance() {
 }
 
 void AnimationClock::Add(Image* img) {
+    for (Image* p : images_) {
+        if (p == img) return;   // 注册唯一：Play() 重复调用不会让帧速翻倍
+    }
     images_.push_back(img);
 }
 
@@ -73,7 +79,12 @@ void AnimationClock::Reset() noexcept {
 }
 
 void AnimationClock::Tick(uint64_t nowMs) {
-    for (Image* img : images_) img->AdvanceAnimation(nowMs);
+    // 快照：AdvanceAnimation 达到循环上限时返回 false 并被 Remove，
+    // 不能在遍历 images_ 的同时修改它（与属性动画的快照同理）
+    const std::vector<Image*> snapshot = images_;
+    for (Image* img : snapshot) {
+        if (!img->AdvanceAnimation(nowMs)) Remove(img);
+    }
 
     // 光标闪烁：首拍即切换一次（沿用原 500ms 定时器的相位），之后按绝对时刻
     if (NeedsBlinkTick()) {
@@ -93,7 +104,7 @@ void AnimationClock::Tick(uint64_t nowMs) {
 
 Image::Image() = default;
 
-Image::~Image() { StopAnimation(); }
+Image::~Image() { DisposeAnimation(); }
 
 bool Image::LoadFile(const wchar_t* path) {
     graphics::DecodedImage img;
@@ -102,7 +113,7 @@ bool Image::LoadFile(const wchar_t* path) {
         lastError_ = err;
         return false;
     }
-    StopAnimation();
+    DisposeAnimation();
     tex_ = graphics::TextureStore::Instance().Register(img.width, img.height,
                                                        std::move(img.pixels));
     lastError_.clear();
@@ -117,7 +128,7 @@ bool Image::LoadAnimatedFile(const wchar_t* path) {
         lastError_ = err;
         return false;
     }
-    StopAnimation();
+    DisposeAnimation();
 
     auto anim = std::make_unique<Animation>();
     anim->frames = std::move(a.frames);
@@ -125,7 +136,10 @@ bool Image::LoadAnimatedFile(const wchar_t* path) {
     tex_ = graphics::TextureStore::Instance().Register(
         a.width, a.height, std::vector<uint8_t>(anim->frames[0].pixels));
     anim_ = std::move(anim);
-    if (anim_->frames.size() > 1) AnimationClock::Instance().Add(this);
+    if (anim_->frames.size() > 1) {
+        anim_->playing = true;
+        AnimationClock::Instance().Add(this);
+    }
     lastError_.clear();
     MarkDirty(kFlagLayout | kFlagPaint);
     return true;
@@ -138,7 +152,7 @@ bool Image::LoadMemory(const void* data, uint32_t size) {
         lastError_ = err;
         return false;
     }
-    StopAnimation();
+    DisposeAnimation();
     tex_ = graphics::TextureStore::Instance().Register(img.width, img.height,
                                                        std::move(img.pixels));
     lastError_.clear();
@@ -147,30 +161,83 @@ bool Image::LoadMemory(const void* data, uint32_t size) {
 }
 
 void Image::Clear() {
-    StopAnimation();
+    DisposeAnimation();
     tex_.reset();
     MarkDirty(kFlagLayout | kFlagPaint);
 }
 
-void Image::StopAnimation() {
+void Image::DisposeAnimation() {
     if (anim_) AnimationClock::Instance().Remove(this);
     anim_.reset();
 }
 
-void Image::AdvanceAnimation(uint64_t nowMs) {
+void Image::ApplyFrame(size_t index) {
     if (anim_ == nullptr || tex_ == nullptr) return;
-    Animation& a = *anim_;
-    if (a.nextTickMs == 0) {
-        a.nextTickMs = nowMs + a.frames[a.index].delayMs;   // 首帧先按自己的延迟显示
-        return;
-    }
-    if (nowMs < a.nextTickMs) return;
-    a.index = (a.index + 1) % a.frames.size();
     auto* t = static_cast<graphics::ImageTexture*>(tex_.get());
-    t->pixels = a.frames[a.index].pixels;   // 全画布 BGRA8，尺寸恒定
+    t->pixels = anim_->frames[index].pixels;   // 全画布 BGRA8，尺寸恒定
     t->dirty = true;
     MarkDirty(kFlagPaint);
+}
+
+// ---------------------------------------------------------------------------
+// 播放控制原语（dui::Gif 的公共 API 转发到这里）
+// ---------------------------------------------------------------------------
+
+void Image::PauseAnimation() {
+    if (anim_ == nullptr || !anim_->playing) return;
+    anim_->playing = false;
+    AnimationClock::Instance().Remove(this);   // 停表，暂停期间不空转
+}
+
+void Image::PlayAnimation() {
+    if (anim_ == nullptr || anim_->playing || anim_->frames.size() <= 1) return;
+    if (anim_->loopCount != 0 && anim_->loopsDone >= anim_->loopCount) {
+        anim_->loopsDone = 0;      // 已播完设定轮数：Play 从头重播
+        anim_->index = 0;
+        ApplyFrame(0);
+    }
+    anim_->playing = true;
+    anim_->nextTickMs = 0;         // 恢复时重新起算，跳过暂停时长
+    AnimationClock::Instance().Add(this);
+}
+
+void Image::StopAnimation() {
+    if (anim_ == nullptr) return;
+    if (anim_->playing) {
+        anim_->playing = false;
+        AnimationClock::Instance().Remove(this);
+    }
+    anim_->index = 0;
+    anim_->loopsDone = 0;
+    anim_->nextTickMs = 0;
+    ApplyFrame(0);                 // 回首帧；帧序列保留，Play() 可重播
+}
+
+void Image::SetAnimationLoopCount(uint32_t count) {
+    if (anim_ != nullptr) anim_->loopCount = count;
+}
+
+bool Image::AdvanceAnimation(uint64_t nowMs) {
+    if (anim_ == nullptr || tex_ == nullptr || !anim_->playing) return false;
+    Animation& a = *anim_;
+    if (a.nextTickMs == 0) {
+        a.nextTickMs = nowMs + a.frames[a.index].delayMs;   // 首拍先按当前帧延迟显示
+        return true;
+    }
+    if (nowMs < a.nextTickMs) return true;
+
+    const size_t next = a.index + 1;
+    if (next >= a.frames.size()) {
+        ++a.loopsDone;
+        if (a.loopCount != 0 && a.loopsDone >= a.loopCount) {
+            a.playing = false;     // 播完停在最后一帧；返回 false 让 ticker 注销
+            return false;
+        }
+    }
+    a.index = next % a.frames.size();
+    ApplyFrame(a.index);
     a.nextTickMs = nowMs + a.frames[a.index].delayMs;
+    return true;
 }
 
 uint32_t Image::PixelWidth() const noexcept {

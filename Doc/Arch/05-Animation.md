@@ -7,14 +7,14 @@
 
 **不在样式里支持声明式动画。** 先前的 CSS 风格草案（v0.1：`Style::Transition()` / `KeyframesBuilder` / `animation` 样式属性 / `transition` 元属性 / 分期 P0–P2 / 待确认 D1–D4）全部作废。与之配套的只存不读代码 `Style::Transition()`、`TransitionSpec`、`Style::transitions_` 已删除。
 
-- `Style::When(State, ...)` **保留**：它是立即生效的状态变体，不带任何过渡；需要过渡时由业务代码显式调用 `Animate()`。
+- `Element::When(State, ...)`（[03-Style.md](./03-Style.md) §6.2）与动画无关：状态变体是立即生效的差异集查表，不带任何过渡；需要补间时由业务代码显式调用 `Animate()`。
 - 属性表不再有 `Animatable` 标志，也没有"过渡旧值槽"；某个属性能否动画由 §2 的强类型标签白名单决定。
 - 框架里有三类随时间变化的效果，只有第一类是"样式值补间"：
 
 | 类型 | 载体 | 是否走样式系统 | 文档 |
 | --- | --- | --- | --- |
 | 命令式属性动画 | `Element::Animate()` | 是，写入级联第 1 层 | 本文 |
-| GIF 帧动画 | `Image::LoadAnimatedFile()` | 否，换同一张纹理的像素 | [16-Image.md](./16-Image.md) §4.2 |
+| GIF 帧动画 | `Gif::LoadFile()` / `Image::LoadAnimatedFile()`（播放控制由 `dui::Gif` 提供） | 否，换同一张纹理的像素 | [16-Image.md](./16-Image.md) §4.2 / §4.3 |
 | 编辑控件光标闪烁 | `Element::OnBlink()` | 否，切换自身可见性 | [06-Events.md](./06-Events.md) |
 
 三者共用一个时间源，但**只统一时间，不统一值**。

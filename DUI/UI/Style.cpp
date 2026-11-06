@@ -20,13 +20,6 @@ const StyleValue* Style::Find(Prop p) const {
     return nullptr;
 }
 
-const Style* Style::StateVariant(State s) const {
-    for (const auto& [state, style] : states_) {
-        if (state == s) return &style;
-    }
-    return nullptr;
-}
-
 // ---------------------------------------------------------------------------
 // 链式构造
 // ---------------------------------------------------------------------------
@@ -111,14 +104,6 @@ Style& Style::CornerRadius(const Thickness& t) {
     v.extra[0] = t.top;
     v.extra[1] = t.right;
     v.extra[2] = t.bottom;
-    return *this;
-}
-
-Style& Style::When(State s, const Style& variant) {
-    for (auto& [state, style] : states_) {
-        if (state == s) { style = variant; return *this; }   // 同状态只留一份
-    }
-    states_.emplace_back(s, variant);
     return *this;
 }
 

@@ -4,7 +4,7 @@
 //  演示：
 //    · 单行 TextBox、密码 TextBox（• 掩码）、多行 TextArea（自动换行 + 滚动）
 //    · 焦点与 Tab 链：Tab / Shift+Tab 在可聚焦控件间移动；焦点态由
-//      When(State::Focused, ...) 驱动样式（背景变色）
+//      元素级 When(State::Focused, ...) 驱动样式（背景变色）
 //    · 键盘事件：元素级 OnKeyDown / OnChar（冒泡；控件内部行为与外部绑定并存）
 //    · 语义事件：OnTextChanged / OnSubmit
 //
@@ -17,15 +17,16 @@
 
 namespace {
 
-// 输入框统一样式（焦点态变体：底色变化）
+// 输入框静态外观；焦点态差异集单独由各元素 When 绑定
 dui::Style InputStyle(float width, float height) {
     return dui::Style()
         .Width(width)
         .Height(height)
         .Padding(6.f)
-        .Background(0xFFFFFFFF)
-        .When(dui::State::Focused, dui::Style().Background(0xFFDCEEFF));
+        .Background(0xFFFFFFFF);
 }
+
+static const dui::Style kFocusVariant = dui::Style().Background(0xFFDCEEFF);
 
 class TextInputWindow final : public dui::Window {
 public:
@@ -51,6 +52,7 @@ protected:
         root->AddChild<dui::Text>(L"单行输入框（回车 → OnSubmit；Ctrl+A/C/X/V/Z 生效）",
                                   dui::Style().FontSize(12.f).Color(0xFF6B7280));
         name_ = root->AddChild<dui::TextBox>(InputStyle(360.f, 32.f));
+        name_->When(dui::State::Focused, kFocusVariant);
         name_->SetText(L"你好，DUI");
         name_->OnTextChanged([this](const dui::String&) { UpdateStatus(); });
         name_->OnSubmit([this]() {
@@ -76,6 +78,7 @@ protected:
         root->AddChild<dui::Text>(L"密码框（• 掩码；真实文本不变）",
                                   dui::Style().FontSize(12.f).Color(0xFF6B7280));
         password_ = root->AddChild<dui::TextBox>(InputStyle(360.f, 32.f));
+        password_->When(dui::State::Focused, kFocusVariant);
         password_->SetPassword(true);
         password_->OnTextChanged([this](const dui::String&) { UpdateStatus(); });
 
@@ -83,6 +86,7 @@ protected:
         root->AddChild<dui::Text>(L"多行输入框（自动换行；回车换行；上下方向键移动光标）",
                                   dui::Style().FontSize(12.f).Color(0xFF6B7280));
         area_ = root->AddChild<dui::TextArea>(InputStyle(360.f, 130.f));
+        area_->When(dui::State::Focused, kFocusVariant);
         area_->SetText(L"第一行\n第二行\n第三行");
         area_->OnTextChanged([this](const dui::String&) { UpdateStatus(); });
 

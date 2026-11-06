@@ -3,7 +3,7 @@
 //
 //  级联顺序（首次命中即返回）：
 //    1 动画值（命令式 Element::Animate 写入 Element::animated_）
-//    2 状态变体（固定优先级 disabled > pressed > selected > focused > hover）
+//    2 状态变体（元素持有；固定优先级 disabled > pressed > selected > focused > hover）
 //    3 元素本地覆盖（Set）
 //    4 元素引用的 Style 派生链（由近及远）
 //    5 父计算值（仅继承属性，经 StyleContext 遍历期下传）
@@ -60,16 +60,15 @@ bool TryResolveElement(const Element* e, Prop p, StyleValue& out) {
     for (const StyleValue& v : e->animated_) {
         if (v.prop == p) { out = v; return true; }
     }
-    // 层 2：状态变体。逐属性独立仲裁：按优先级从高到低，首个设置该属性者胜。
-    for (const Style* s = e->StylePtr(); s != nullptr; s = s->Parent()) {
-        for (State st : kStatePriority) {
-            if (!e->HasState(st)) continue;
-            const Style* variant = s->StateVariant(st);
-            if (variant == nullptr) continue;
-            if (const StyleValue* found = variant->Find(p)) {
-                out = *found;
-                return true;
-            }
+    // 层 2：状态变体（Element::When 挂在元素上）。逐属性独立仲裁：
+    // 按优先级从高到低，首个设置该属性者胜；变体自身仍可派生（Find 沿其 parent_ 回溯）。
+    for (State st : kStatePriority) {
+        if (!e->HasState(st)) continue;
+        const Style* variant = e->StateVariant(st);
+        if (variant == nullptr) continue;
+        if (const StyleValue* found = variant->Find(p)) {
+            out = *found;
+            return true;
         }
     }
     // 层 3：本地覆盖

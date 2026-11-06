@@ -1,6 +1,6 @@
 # 图像
 
-> 状态：v0.2 — `dui::Image` 控件已落地（WIC 解码 + 图像批 + 纹理仓库）；GIF 动画已支持。
+> 状态：v0.3 — `dui::Image` 控件已落地（WIC 解码 + 图像批 + 纹理仓库）；GIF 动画与 `dui::Gif` 播放控制已支持。
 > 相关：[10-Rendering.md](./10-Rendering.md)（批与呈现）、[11-Text.md](./11-Text.md)（字形图集，同构的"CPU 侧数据在 UI、GPU 侧资源在 Graphics"分层）、[04-Layout.md](./04-Layout.md)（自然尺寸与布局）、[12-Windowing.md](./12-Windowing.md)（DPI）。
 
 ---
@@ -10,7 +10,7 @@
 | 项 | 现状 |
 | --- | --- |
 | 支持格式 | **Windows 默认能解码的**：`PNG / JPEG / BMP / DIB / GIF（含动画）/ TIFF / ICO` 等（取决于系统安装的 WIC 解码器） |
-| 动画 | `LoadAnimatedFile` 支持 GIF 多帧（disposal 合成 + 帧延迟 + 无限循环）；静态接口仍只取第 0 帧 |
+| 动画 | `Image::LoadAnimatedFile` / `Gif::LoadFile` 支持 GIF 多帧（disposal 合成 + 帧延迟）；`dui::Gif` 提供 `Pause/Play/Stop/SetLoopCount`，默认无限循环；`Image` 的静态接口仍只取第 0 帧 |
 | 不支持 | Windows 解不了的格式（WebP / AVIF 等）；SVG（矢量）；TIFF 多帧 / APNG 等其它动画格式 |
 | 缩放 | 默认**自然尺寸**显示；显式给 `Width`/`Height` 时按 **contain**（等比缩放 + 居中）适配，图像永不变形 |
 | 圆角 / 遮罩 | 不支持（图像按矩形贴图，无 SDF 裁形） |
@@ -21,7 +21,7 @@
 ## 2. 分层与数据流
 
 ```
-dui::Image (UI 层)
+dui::Image / dui::Gif (UI 层)
    │  LoadFile / LoadMemory / LoadAnimatedFile
    ▼
 graphics::DecodeImageFile / DecodeAnimatedImageFile (Graphics 层, WIC)  →  BGRA8 像素（straight alpha）
@@ -80,8 +80,23 @@ WIC 的 import lib 在 SDK 里叫 **`windowscodecs.lib`**（没有 `wincodec.lib
 
 - **解码**：`Graphics/ImageCodec.cpp` 用 WIC `GetFrameCount` / `GetFrame(i)` 取帧，`IWICMetadataQueryReader` 读 `/logscrdesc/Width,Height`（逻辑屏幕）、`/imgdesc/Left,Top`（局部帧偏移）、`/grctlext/Delay`（单位 10ms）、`/grctlext/Disposal`。**LZW / 调色板 / 容器解析由 WIC 负责**，框架只实现动画语义。
 - **合成**：disposal 0/1 保留画布、2 把该帧区域清成透明背景、3 恢复叠加前的画布快照；局部帧按偏移叠加，透明像素（`alpha=0`）保留历史内容。每帧输出逻辑屏幕全尺寸 BGRA8，因此所有帧尺寸一致，contain 与纹理更新都不需要特殊处理。
-- **播放**：UI 层统一 ticker（`AnimationClock`）同时驱动帧动画、光标闪烁与命令式属性动画（[05-Animation.md](./05-Animation.md) §5），App 层只启停**一个**窗口定时器：有帧动画或属性动画时 20ms 节拍、只有闪烁时 500ms，最小化 / 空闲停表。各 `Image` 用绝对时刻判断自己是否到点，多个不同延迟的 GIF 互不影响。`Delay` 为 0/1 时按浏览器惯例兜到 100ms。
+- **播放**：UI 层统一 ticker（`AnimationClock`）同时驱动帧动画、光标闪烁与命令式属性动画（[05-Animation.md](./05-Animation.md) §5），App 层只启停**一个**窗口定时器：有帧动画或属性动画时 20ms 节拍、只有闪烁时 500ms，最小化 / 空闲停表。各 `Image` 用绝对时刻判断自己是否到点，多个不同延迟的 GIF 互不影响。`Delay` 为 0/1 时按浏览器惯例兜到 100ms。播放中的控件在 `AnimationClock` 中**唯一登记**（`Add` 去重）；`Tick` 用快照遍历，达到循环上限时返回结束标记由 ticker 集中注销，不在遍历中改注册表。
 - **代价**：内存 ≈ 帧数 × 逻辑屏幕宽 × 高 × 4；每次切帧整张 `UpdateSubresource`。长动画 / 大图需改成按需解码。
+
+## 4.3 播放控制（`dui::Gif`）
+
+`dui::Gif` 是 `dui::Image` 的薄派生控件：帧解码、纹理复用、contain、布局与统一 ticker 全部继承，只承载播放状态机的公共 API。帧状态结构（`Animation`）留在 `UI/Image.cpp`，`Image` 提供 4 个 protected 播放原语，`Gif` 只做转发 —— 公共头不暴露内部结构，也不重复帧播放逻辑。
+
+| 方法 | 语义 |
+| --- | --- |
+| `Pause()` | 停当前帧、保留游标、从 ticker 注销（暂停期间不空转） |
+| `Play()` | 从暂停处继续；`nextTickMs` 清零重新起算，跳过暂停时长。已播完设定轮数时从头重播 |
+| `Stop()` | 回首帧、重置已完成轮数、注销；**保留帧序列**，`Play()` 可从头重播 |
+| `SetLoopCount(n)` | `0` = 无限（默认）；`n > 0` 播完 n 轮停在最后一帧并注销。可在加载前设置，改值立即生效但不重置当前轮 |
+
+- `LoadFile` 与 `LoadAnimatedFile` 都是虚函数，且在 `Gif` 上等价（统一走多帧解码），避免经 `Image*` 调用时静默退化成静态单帧；单帧图退化为静态显示。
+- **不解析 GIF 文件内的 Netscape 循环次数**（`DecodedAnimation` 无该字段）：循环次数只由 `SetLoopCount` 控制，默认无限。
+- 明确不做：帧完成回调、seek、逐帧事件、播放速度调节。
 
 ---
 
@@ -89,7 +104,7 @@ WIC 的 import lib 在 SDK 里叫 **`windowscodecs.lib`**（没有 `wincodec.lib
 
 1. 只有 contain 一种适配（等比缩放 + 居中）；没有 `cover` / `fill` / `object-position`。
 2. 无圆角、阴影、遮罩（图像走的是纹理采样路径，没有 SDF 裁形）。
-3. 动画仅支持 GIF，不解析 Netscape 循环次数（统一按无限循环）；`LoadFile` / `LoadMemory` 等静态接口仍只取第 0 帧。
+3. 动画仅支持 GIF；不解析文件内 Netscape 循环次数（由 `Gif::SetLoopCount` 覆盖，默认无限）；`Image::LoadFile` / `LoadMemory` 等静态接口仍只取第 0 帧，`Gif::LoadFile` 统一走多帧解码。
 4. 纹理常驻显存直到控件释放（无 LRU 淘汰；字形图集有 LRU，见 11-Text §4）。
 5. 图像元素无子元素（`dui::Image` 继承 `Element` 而非 `Panel`）。
 
@@ -103,14 +118,19 @@ if (!img->LoadFile(L"logo.png")) {
     // 失败原因在 img->LastError()
 }
 
-auto* gif = root->AddChild<dui::Image>(dui::Style().Width(320.f).Height(134.f));
-if (!gif->LoadAnimatedFile(L"demo.gif")) {
-    // GIF 动画：WIC 多帧 + 帧延迟自动播放
+auto* gif = root->AddChild<dui::Gif>(dui::Style().Width(320.f).Height(134.f));
+if (!gif->LoadFile(L"demo.gif")) {
+    // 失败原因在 gif->LastError()
 }
+gif->SetLoopCount(3);   // 播 3 轮后停在最后一帧；0 = 无限
+gif->Pause();            // 停当前帧
+gif->Play();             // 从暂停处继续
+gif->Stop();             // 回首帧并停止；Play() 从头重播
 ```
 
-- `LoadFile(const wchar_t*)` / `LoadFile(const String&)`：从文件加载。
-- `LoadAnimatedFile(const wchar_t*)` / `LoadAnimatedFile(const String&)`：从文件加载动画 GIF 并自动播放；单帧 GIF 按静态图显示。
+- `LoadFile(const wchar_t*)` / `LoadFile(const String&)`：`Image` 为静态单帧；`Gif` 统一走多帧解码并自动播放。
+- `LoadAnimatedFile(const wchar_t*)` / `LoadAnimatedFile(const String&)`：加载动画 GIF 并自动播放；在 `Gif` 上与 `LoadFile` 等价。
+- `dui::Gif` 的 `Pause()` / `Play()` / `Stop()` / `SetLoopCount()`：见 §4.3。
 - `LoadMemory(const void*, uint32_t)`：从内存加载（格式由内容嗅探）。
 - `Clear()`：清除图像并停止动画（GPU 纹理在下一次纹理同步时回收）。
 - `PixelWidth() / PixelHeight()`：图像像素尺寸。

@@ -200,8 +200,8 @@ private:
             .FlexShrink(0.f)
             .AlignItems(dui::Align::Center)
             .JustifyContent(dui::Justify::Center)
-            .Cursor(dui::Cursor::Hand)
-            .When(dui::State::Hover, dui::Style().Background(hoverBg)));
+            .Cursor(dui::Cursor::Hand));
+        btn->When(dui::State::Hover, dui::Style().Background(hoverBg));
         dui::Text* icon = btn->AddChild<dui::Text>(GlyphText(glyph).c_str(), dui::Style()
             .FontFamily(family.c_str())
             .FontSize(14.f)

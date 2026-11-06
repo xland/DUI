@@ -5,14 +5,14 @@
 //
 //  已定案并在此落形的关键契约：
 //    · 静态外观（含布局属性）全部在 Style 里；Set(Prop) 只承载运行时动态值
-//    · 用一次的样式内联（dui::Style() 链式临时），共享/带变体的才起名
-//    · 合并优先级 disabled > pressed > selected > focused > hover（03-Style §6.2）
+//    · 用一次的样式内联（dui::Style() 链式临时），需要复用的才起名
+//    · 状态变体归 Element::When（03-Style §6.2）：Style 是纯静态声明集，
+//      不响应运行时状态位
 // ============================================================================
 
 #pragma once
 
 #include <cstdint>
-#include <utility>
 #include <vector>
 
 #include "Core/Core.h"
@@ -111,9 +111,6 @@ public:
     // 沿派生链由近及远查找（03-Style §5 第 4 层）；找不到返回 nullptr
     const StyleValue* Find(Prop p) const;
 
-    // 状态变体（同一状态只保留一份 Decl，后设覆盖先设）
-    const Style* StateVariant(State s) const;
-
     const Style* Parent() const noexcept { return parent_; }
     const char*  Name()   const noexcept { return name_; }
 
@@ -175,18 +172,14 @@ public:
     Style& ThumbBorderColor(dui::Color c);
     Style& ThumbBorderWidth(float dip);
 
-    // 状态变体（03-Style §6.2）：立即换值，不带过渡；动画走 Element::Animate
-    Style& When(State s, const Style& variant);
-
 private:
-    friend class Element;     // SetState 需读状态变体的声明集计算失效标志
+    friend class Element;     // StateVariantFlags 需读状态变体声明集计算失效标志
 
     StyleValue& Ensure(Prop p);
     Style& SetU(Prop p, uint32_t u);
     Style& SetF(Prop p, float f);
 
     std::vector<StyleValue>               decls_;
-    std::vector<std::pair<State, Style>>  states_;
     const Style* parent_ = nullptr;       // 派生基（生命周期由使用者保证为静态常量）
     const char*  name_ = nullptr;         // 注册表键 / 调试标识；匿名样式为 nullptr
 };

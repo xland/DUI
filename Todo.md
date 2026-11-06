@@ -78,7 +78,7 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 1. **API 冻结**：`Samples/` 两个示例是"可执行规格"，改动公共签名 = 违规；新能力先改示例和文档，再改实现。
 2. **无异常 / 无 RTTI**（/EHs-c-、/GR-）：错误走 `Result<T>`；不用 typeid/dynamic_cast/std::variant。
 3. **类作用域同名遮蔽坑**：方法名与类型同名（`Display`/`Color`/`FontWeight`/`Lifetime`）时，类内引用类型必须写全限定 `dui::Xxx`（UI.h 已有注释示例）。
-4. **Style 链式返回左值**：`When` 等收样式的参数一律 `const Style&`，不要写 `&&`。
+4. **链式返回左值**：`Style` 链式方法（`Style&`）与 `Element::When`（`Element&`）都返回左值；收样式的参数一律 `const Style&`，不要写 `&&`。
 5. **SetStyle 一律拷贝持有**（经 `ownedStyle_`）：链式临时可直传不悬空；派生链 `parent_` 与字体指针仍指向外部，生命周期契约不变（历史：曾存裸指针致临时悬空崩溃，见 M4 踩坑）。
 6. **状态位契约**：`SetState` 相同值幂等；标脏帧末合并（M3 实现）。
 7. **硬性红线**：不做 System DPI aware 回退、不做位图缩放、非整数档自绘、描边像素对齐（12-Windowing §7.1）。
@@ -413,7 +413,7 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
     （否则裁剪带留在原位，背景被裁没、只有文字看似在动）。
 - **已知限制**（后续项）：
   - 无平滑滚动 / 惯性（`UI.Animation` 联动列 P1）；无键盘滚动（PageUp/Down / 方向键）；
-  - 滚动条不随悬停淡出（可经 `When(State::Hover, ...)` 变体 + 颜色过渡自行实现）；
+  - 滚动条不随悬停淡出（可经 `元素->When(State::Hover, ...)` 变体 + `Animate()` 自行实现）；
   - 滚动量按像素（无行滚动 / 吸附）；
   - **视口外的内容仍参与收集**（MVP 未做视口剔除，10-Rendering §2 的"裁剪剔除"待补）
     → 收集量与内容总量成正比，长列表需自行控制条目数；
@@ -504,7 +504,7 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
   同一个字符被插入两次（IME 提交）。
 - **焦点服务**（新建 `DUI/UI/Focus.h/.cpp`）：焦点唯一，挂在元素上。
   `FocusedElement()` / `IsFocused()` / `SetFocus()`；`Element::Focus()/Blur()/HasFocus()`。
-  换焦点时旧元素清 `State::Focused`、新元素置位 → 样式状态变体自动生效；
+  换焦点时旧元素清 `State::Focused`、新元素置位 → 元素状态变体自动生效；
   另有 `Element::OnFocusChanged(bool)` 钩子（控件据此把光标放到文本末尾；
   失焦时 `TextBox` 清除选区 —— 否则选区底色留在失焦控件上，且不可见的选区会让
   再次聚焦后的 Delete/输入替换掉用户看不见的内容）。
@@ -651,6 +651,12 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
     全画布 BGRA8；`Image` 复用同一张纹理换帧（不重复 `Register`）；`AnimationClock`
     统一驱动帧动画、光标闪烁与命令式属性补间，App 层只留一个窗口定时器（有帧动画
     或属性动画 20ms / 只有闪烁 500ms，最小化停表），帧时间用绝对时刻判断。
+  - **GIF 播放控制**：新增 `dui::Gif`（继承 `dui::Image`），承载 `Pause/Play/Stop/SetLoopCount`；
+    `Image` 只加 protected 播放原语，`Animation` 结构仍留在 `Image.cpp`（pimpl 不暴露）。
+    `LoadFile` / `LoadAnimatedFile` 设为 virtual 且在 `Gif` 上等价（统一多帧解码），避免经
+    `Image*` 调用时静默退化成静态单帧；`AnimationClock::Add` 去重防 `Play()` 重复注册让帧速翻倍，
+    `Tick` 改快照遍历，防播完循环上限时在遍历中改注册表导致迭代器失效。`Stop()` 保留帧序列可重播；
+    不解析 GIF 文件内 Netscape 循环次数（由 `SetLoopCount` 覆盖，默认无限）。
   - 踩坑：**命令行 msbuild 全量重建会刷 LNK4020**（"pdb 类型记录已损坏"）—— `/MP` 多进程
     编译 + `/Zi` 缺 `/FS` 所致；VS 内构建由 `Microsoft.CppCommon.targets` 在 `UseMultiToolTask`
     为真时自动加 `/FS`，所以 VS 里看不到。规避：命令行加 `-p:UseMultiToolTask=true`

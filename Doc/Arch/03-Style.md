@@ -33,11 +33,11 @@
 Theme ──┐
         │  默认值兜底
         ▼
-Style（命名 / 不可变 / 可共享 / 可派生）
-        │  SetStyle 引用
+Style（命名 / 不可变 / 可派生；纯静态声明集）
+        │  SetStyle 拷贝持有
         ▼
-Element ── 本地覆盖（稀疏，最高优先级）
-        │
+Element ── 本地覆盖（稀疏）
+        ├─ 状态变体（State → 差异集，由 Element::When 设置）
         ├─ 继承属性：由父元素计算值下传
         └─ 非继承属性：自身链上解析
 ```
@@ -47,14 +47,15 @@ Element ── 本地覆盖（稀疏，最高优先级）
 | `Property` | 单个样式属性：整数 ID + 类型 + 标志位 + 名字（调试用） | 编译期常量表 |
 | `StyleValue` | 属性值，定长 8 字节 tagged union | 值类型 |
 | `Decl` | 稀疏声明：`SmallVec<{PropId, StyleValue}, N>` | 值类型 |
-| `Style` | **不可变、可共享、可派生**的 `Decl`；**名字可选**（仅注册表条目与调试标识） | 匿名不进注册表；具名才注册在 `StyleRegistry` |
+| `Style` | **不可变、可派生**的 `Decl`，**纯静态**：不响应状态位；**名字可选**（仅注册表条目与调试标识） | 匿名不进注册表；具名才注册在 `StyleRegistry` |
 | `Theme` | 每个属性的默认值 + 各控件的默认 `Style` + 资源（字体、图标） | 应用级，可整体替换 |
 | 本地覆盖 | 挂在单个元素上的 `Decl`，优先级高于 `Style` | 随元素 |
+| 状态变体 | 挂在单个元素上的 `(State → Decl)` 表，由 `Element::When` 设置；**不进 Style** | 随元素 |
 | `StyleContext` | 遍历期携带的解析上下文（继承态 + 当前元素链） | 栈上，遍历结束即弃 |
 
 **复用的三个层次**（对应 R2 / R3）：
 
-1. **共享** —— 多个元素 `SetStyle` 同一个 `Style`，数据只有一份。
+1. **写法复用** —— 多个元素 `SetStyle` 同一份 `Style` 声明（运行时各自拷贝持有，见 §6.1）；交互态差异由各元素用 `When` 单独附加，不写进共享声明。
 2. **派生** —— `Style B` 派生自 `A` 只存差异，改 `A` 时 `B` 的差异仍生效。
 3. **继承** —— 部分属性沿元素树向下传递，父设一次，整棵子树生效。
 
@@ -157,7 +158,7 @@ DUI_PROPERTY(FontSize,        Length,  Inherit | Layout | Text)
 | 层 | 来源 | 说明 |
 | --- | --- | --- |
 | 1 | 动画值 | 命令式 `Element::Animate()` 写入 `Element::animated_`（稀疏数组）；遍历内 `StyleContext` 与遍历外 `Style::Resolve` **均经 `TryResolveElement`** 查此层（[05-Animation.md](./05-Animation.md) §3） |
-| 2 | 状态变体 | 每个状态一份 `Decl`（全集见 §6.2）；多状态同时成立时按 `disabled > pressed > selected > focused > hover` 合并 |
+| 2 | 状态变体 | `Element::When` 挂在该元素上的 `(State → Decl)` 表（全集见 §6.2）；多状态同时成立时按 `disabled > pressed > selected > focused > hover` 合并 |
 | 3 | 元素本地覆盖 | `element->Set(Prop::X, v)` |
 | 4 | 元素引用的 `Style` | 沿派生链由近及远上溯 |
 | 5 | 父元素计算值 | **仅 `Inherit` 属性** |
@@ -194,20 +195,26 @@ a->Set(Prop::Color, 0xFFC00000);           // 单元素覆盖，优先级更高
 auto* b = panel->AddChild<Text>(L"副标题", kTitle);
 ```
 
-### 6.2 状态变体
+### 6.2 状态变体（挂在元素上）
+
+`When` 是 **`Element`** 的方法，`Style` 上没有。静态外观写进 `Style`，交互态差异逐元素附加：
 
 ```cpp
 static const Style kButton = Style("button")
     .Background(0xFF2D7FF9).Color(0xFFFFFFFF)
-    .CornerRadius(4.f).Padding({8.f, 16.f})
-    .When(State::Hover,    Style().Background(0xFF1A6FE0))
-    .When(State::Pressed,  Style().Background(0xFF1560C0))
-    .When(State::Disabled, Style().Background(0xFFCCCCCC).Color(0x80FFFFFF));
+    .CornerRadius(4.f).Padding({8.f, 16.f});
+
+auto* btn = panel->AddChild<Button>(kButton);
+btn->When(State::Hover,    Style().Background(0xFF1A6FE0))
+   .When(State::Pressed,  Style().Background(0xFF1560C0))
+   .When(State::Disabled, Style().Background(0xFFCCCCCC).Color(0x80FFFFFF));
 ```
 
-`When` 的第二参数是 **`Style`**：状态变体只是一份"该状态成立时要叠加的差异集"，拷贝并入外层 `Style` 的状态表，不注册、不被元素引用。
-
-静态外观由样式描述，状态位由框架或业务切换，样式层只做查表 —— 不需要为每个状态新建元素或重新设置属性（输入与事件机制见 [06-Events.md](./06-Events.md)）。
+- `AddChild` 返回 `T*`，故用 `->When(...)`；`When` 返回 `Element&`，可连续附加多个状态。
+- 第二参数是 **`Style`**：一份"该状态成立时要叠加的差异集"，按值拷进元素的状态表，不注册、不被其它元素引用；变体自身仍可用 `Style::Derive` 派生（解析走 `Find`）。
+- 同一状态只保留一份，后设覆盖先设；状态位成立时**立即生效、不带过渡**，需要补间时显式调用 `Element::Animate()`（[05-Animation.md](./05-Animation.md)）。
+- **为什么归元素**：状态位本来就在 `Element` 上（由框架或业务切换）；变体随元素后可用运行时数据构造（如按数据算出的 hover 底色），不必为它重建整份静态外观，也不会把元素级差异塞进共享声明。代价是具名 `Style` 不再自带交互态、`Style::Derive` 链上也不再有变体语义 —— 需要统一交互态时把差异集做成常量逐个 `When` 绑定（见 `Samples/TextInput`）。
+- 状态切换只标脏、帧末统一解析重绘，不需要为每个状态新建元素或重设属性（输入与事件机制见 [06-Events.md](./06-Events.md)）。
 
 #### 状态全集（已定）
 
@@ -234,7 +241,7 @@ static const Style kButton = Style("button")
 disabled  >  pressed  >  selected  >  focused  >  hover
 ```
 
-`disabled` 必须在视觉上压过一切；`pressed` 比 `selected` 更即时。固定顺序可预测、可写进文档，不需要 CSS 那套特异性计算。状态变体**立即生效、不带过渡**；需要补间时由业务代码显式调用 `Element::Animate()`（[05-Animation.md](./05-Animation.md) §1）。
+`disabled` 必须在视觉上压过一切；`pressed` 比 `selected` 更即时。固定顺序可预测、可写进文档，不需要 CSS 那套特异性计算。仲裁是**逐属性**的：某属性在最高优先级变体里没声明，就继续向下找（解析见 §5 层 2）。
 
 #### 写入契约（已定）
 
@@ -281,7 +288,7 @@ Color c = Style::Resolve(element, Prop::Color);   // 非继承属性 O(1–3)
 | 同上，且 `X` 带 `Inherit` | 整棵子树 | 继承值下传 |
 | 同上，仅带 `Paint` | 自身矩形加入脏区 | 不触发布局 |
 | `SetStyle(s)` | 按两Style差异集的属性标志取并集 | 简单实现可先按 `Layout|Paint` 最坏情况处理 |
-| 状态切换 | 按该状态 `Decl` 中属性的标志 | 状态变体通常只有 `Paint` 属性 |
+| 状态切换 | 按该状态变体（元素持有）中各属性的标志 | 状态变体通常只有 `Paint` 属性 |
 | 动画每帧 | 按被动画属性的标志 | 目前开放的标签全是 `Paint`（见 [05-Animation.md](./05-Animation.md) §3） |
 | 换主题 | 整树全量标脏 | 低频大动作，走"全失效"路径 |
 

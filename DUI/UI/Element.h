@@ -124,6 +124,12 @@ public:
         return StartAnimation(prop.prop, std::is_same_v<T, dui::Color>, to, cfg);
     }
 
+    // 状态变体（03-Style §6.2）：每个状态一份差异集，状态位成立时立即生效、
+    // 不带过渡。同状态后设覆盖先设；返回 *this 便于连写多个状态。
+    // 变体随元素（不随 Style），因此可以用运行时数据构造，且不影响其它元素。
+    Element& When(State s, const Style& variant);
+    const Style* StateVariant(State s) const noexcept;
+
     // 状态位：相同值幂等（03-Style §6.2）；标脏按该状态变体的属性标志取并集
     void SetState(State s, bool on);
     bool HasState(State s) const noexcept { return (states_ & static_cast<uint32_t>(s)) != 0; }
@@ -316,6 +322,7 @@ private:
     AnimationHandle StartAnimation(Prop p, bool color, const StyleValue& to,
                                    const AnimConfig& cfg);
     void TickAnimations(uint64_t nowMs);
+    uint32_t StateVariantFlags(State s) const;   // 变体属性的失效标志并集
 
     // 成员函数 + 上下文 → std::function 的通用绑定（与 OnClick 同构）
     template <class E, class Ctx>
@@ -342,6 +349,7 @@ private:
 
     Element*                   parent_ = nullptr;
     std::vector<Element*>      children_;     // 父持有子，析构递归删除
+    std::vector<std::pair<State, Style>> stateVariants_;   // 状态变体（级联第 2 层）
     std::vector<detail::AnimSlot> anims_;    // 活动补间（完成即移除，终值留在 animated_）
     Rect                       bounds_;       // Arrange 结果（相对父，DIP）
     Vec2                       measured_{};   // Measure 结果（外层盒）

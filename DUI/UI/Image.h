@@ -7,10 +7,12 @@
 //
 //  尺寸：自然尺寸 = 图像像素尺寸 ÷ 当前 DPI 缩放（保证 1 图像像素 =
 //  1 物理像素，跨 DPI 不糊）；显式给 Width/Height 时按 contain 等比居中。
-//  动画：LoadAnimatedFile 解出 GIF 全部帧，按帧延迟在同一张纹理上换帧播放。
+//  动画：LoadAnimatedFile 解出 GIF 全部帧，按帧延迟在同一张纹理上换帧播放；
+//  播放控制（暂停 / 播放 / 停止 / 循环次数）由派生控件 dui::Gif 承载。
 // ============================================================================
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -29,11 +31,11 @@ public:
     // 图像元素在收集期单独成绘制单元（图像批在批序末尾，同单元会盖住文字）
     Kind GetKind() const noexcept override { return Kind::Image; }
 
-    // 从文件加载；失败返回 false（原因见 LastError）
-    bool LoadFile(const wchar_t* path);
+    // 从文件加载；失败返回 false（原因见 LastError）。虚：dui::Gif 改为多帧解码
+    virtual bool LoadFile(const wchar_t* path);
     bool LoadFile(const String& path) { return LoadFile(path.c_str()); }
     // 加载动画 GIF（WIC 多帧 + disposal 合成）；按帧延迟自动播放
-    bool LoadAnimatedFile(const wchar_t* path);
+    virtual bool LoadAnimatedFile(const wchar_t* path);
     bool LoadAnimatedFile(const String& path) { return LoadAnimatedFile(path.c_str()); }
     // 从内存加载（格式由内容嗅探）；失败返回 false
     bool LoadMemory(const void* data, uint32_t size);
@@ -52,10 +54,19 @@ protected:
     // 绘制：把纹理铺满内容盒（元素盒去掉 padding）
     void OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) override;
 
+    // 播放控制原语（供 dui::Gif 转发）。实现在 Image.cpp —— 那里才能看到
+    // 完整的 Animation 类型；公共头保持 pimpl，不暴露帧序列结构。
+    void PauseAnimation();
+    void PlayAnimation();
+    void StopAnimation();
+    void SetAnimationLoopCount(uint32_t count);   // 0 = 无限
+
 private:
     friend class AnimationClock;
-    void AdvanceAnimation(uint64_t nowMs);
-    void StopAnimation();
+    // 返回 false = 播放结束，由 ticker 注销（不在遍历中直接改注册表）
+    bool AdvanceAnimation(uint64_t nowMs);
+    void DisposeAnimation();                     // 销毁帧序列并注销
+    void ApplyFrame(size_t index);               // 覆盖同一张纹理的像素并标脏
 
     // graphics::ImageTexture*（pimpl：公共头不引入 windows.h / d3d11.h）
     std::shared_ptr<void> tex_;

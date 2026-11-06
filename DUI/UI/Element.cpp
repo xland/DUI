@@ -39,16 +39,37 @@ void Element::SetOverride(Prop p, float f, uint32_t u) {
 void Element::SetState(State s, bool on) {
     const uint32_t mask = static_cast<uint32_t>(s);
     const uint32_t next = on ? (states_ | mask) : (states_ & ~mask);
-    if (next == states_) return;   // 相同值幂等：不标脏、不重建过渡（03-Style §6.2）
+    if (next == states_) return;   // 相同值幂等：不标脏、不触发任何动画（03-Style §6.2）
     states_ = next;
     // 标脏 = 该状态变体中各属性的失效标志并集（03-Style §7）；无变体则无视觉变化
-    uint32_t flags = 0;
-    for (const Style* st = style_; st != nullptr; st = st->Parent()) {
-        if (const Style* variant = st->StateVariant(s)) {
-            for (const StyleValue& d : variant->decls_) flags |= PropFlagsOf(d.prop);
-        }
+    MarkDirty(StateVariantFlags(s));
+}
+
+const Style* Element::StateVariant(State s) const noexcept {
+    for (const auto& [state, style] : stateVariants_) {
+        if (state == s) return &style;
     }
-    if (flags != 0) MarkDirty(flags);
+    return nullptr;
+}
+
+uint32_t Element::StateVariantFlags(State s) const {
+    const Style* variant = StateVariant(s);
+    if (variant == nullptr) return 0;
+    uint32_t flags = 0;
+    for (const StyleValue& d : variant->decls_) flags |= PropFlagsOf(d.prop);
+    return flags;
+}
+
+Element& Element::When(State s, const Style& variant) {
+    Style* slot = nullptr;
+    for (auto& [state, style] : stateVariants_) {
+        if (state == s) { slot = &style; break; }
+    }
+    if (slot != nullptr) *slot = variant;      // 同状态只留一份，后设覆盖先设
+    else stateVariants_.emplace_back(s, variant);
+    // 创建后设置、且当前已处于该状态时立即生效
+    if (HasState(s)) MarkDirty(StateVariantFlags(s));
+    return *this;
 }
 
 void Element::MarkDirty(uint32_t flags) {

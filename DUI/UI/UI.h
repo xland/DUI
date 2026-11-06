@@ -8,6 +8,7 @@
 //    UI/Text.h     文本控件 + Button
 //    UI/TextBox.h  文本编辑控件（TextBox 单行 / TextArea 多行 / 密码掩码）
 //    UI/Image.h    图像控件（位图；Windows 内置解码器格式）
+//    UI/Gif.h      动画图像控件（Pause / Play / Stop / SetLoopCount）
 //    UI/Animation.h 命令式属性动画（属性标签 / AnimConfig / AnimationHandle）
 //    UI/Focus.h    焦点服务与 Tab 链
 //  本头聚合以上全部并声明跨模块入口（布局 / 命中测试），业务代码仍只
@@ -22,6 +23,7 @@
 #include "UI/Text.h"
 #include "UI/TextBox.h"
 #include "UI/Image.h"
+#include "UI/Gif.h"
 #include "UI/Animation.h"
 #include "UI/Focus.h"
 

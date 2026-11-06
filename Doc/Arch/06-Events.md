@@ -20,7 +20,7 @@
 ### 1.1 约束（沿用既定决策）
 
 - 单线程（ADR-012）：事件分发在 UI 线程同步完成，无队列、无锁。
-- 无异常（ADR-007 **已定**）/ 无 RTTI（同条 ADR 草案，待拍板）：事件类型用整数 ID；处理器存储不用 `std::function` 的类型擦除开销（见 D1）。
+- 无异常（ADR-007 **已定**）/ 无 RTTI（同条 ADR 草案，待拍板）：事件按具体类型分发，绑定槽用 `std::function` 且按需分配（见 §4.2 / D1）。
 - 输入归一化在 Platform 层完成（Win32 消息 → 归一化事件，[01-Layering.md](./01-Layering.md) §2），UI 层不接触 `HWND`/`WPARAM`。
 - 动画 transform（[05-Animation.md](./05-Animation.md) §6）必须参与命中测试 —— 事件与绘制的坐标变换保持一致。
 
@@ -36,18 +36,18 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 
 - **事件是只读描述 + 一个可写标志**：分发时在栈上构造事件对象（无堆分配），处理器读取细节、设置 `handled`。
 - **处理器存在元素上**：随元素创建/销毁，天然满足 R7 的一半（销毁即摘除）。
-- **两层 API**：
-  - 底层：`AddHandler(EventId, handler)` 覆盖全部事件；
-  - 语义糖：控件暴露具名方法（`OnClick` / `OnTextChanged`…），内部转接底层事件 —— 便利性来自这层（R1/R3）。
+- **一层 API + 阶段参数**：具名语义糖（`OnClick` / `OnPointerDown` / `OnKeyDown`…）
+  直接承载全部可路由事件，末尾可选 `Phase` 参数声明阶段（默认 `Phase::Bubble`，
+  `Phase::Tunnel` 为隧道）。不引入事件 ID 表，事件按具体类型分发（R1/R3，见 §5.1）。
 
 ### 2.1 与 CSS/WPF/浏览器的对照
 
 | 概念 | CSS / DOM | WPF | DUI |
 | --- | --- | --- | --- |
-| 绑定 | `addEventListener` | `+=` 委托 | `OnClick(fn)` / `AddHandler(id, fn)` |
+| 绑定 | `addEventListener` | `+=` 委托 | `OnClick(fn)` / `OnXxx(fn, dui::Phase::Tunnel)` |
 | 冒泡 | 是（`stopPropagation`） | 是（`Handled`） | 是（`e.handled = true`） |
-| 捕获阶段 | `capture: true` | `Preview*` 隧道 | `Phase::Tunnel`（已定，D2） |
-| 指针捕获 | `setPointerCapture` | `CaptureMouse` | `SetPointerCapture()` |
+| 捕获阶段 | `capture: true` | `Preview*` 隧道 | `Phase::Tunnel`（已落地，D2） |
+| 指针捕获 | `setPointerCapture` | `CaptureMouse` | `Element::SetCapture()` / `ReleaseCapture()` |
 
 ---
 
@@ -57,9 +57,9 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 | --- | --- | --- |
 | 指针 | `PointerDown / Move / Up / Cancel` | 坐标为**元素本地坐标**；含按键掩码 |
 | 指针 | `PointerEnter / Leave` | 直达事件，不走路由；由命中测试差分驱动（含 transform 变化） |
-| 指针 | `Wheel` | 滚动增量，冒泡（容器滚动用） |
+| 指针 | `Wheel` | 滚动增量，双阶段路由；无人处理后由滚动容器消费 |
 | 语义 | `Click / DoubleClick / RightClick` | 控件级：按下 + 抬起同元素且未拖出（阈值内） |
-| 键盘 | `KeyDown / KeyUp / Char` | 路由到焦点元素后冒泡（加速键场景） |
+| 键盘 | `KeyDown / KeyUp / Char` | 从焦点元素出发，隧道 + 冒泡（加速键场景） |
 | 焦点 | `GotFocus / LostFocus` | 直达事件 |
 | 文本 | `TextInput / Composition*` | IME 组合串事件，与 Text 编辑联动（见 [11-Text.md](./11-Text.md) §5） |
 | 生命周期 | `Loaded / Unloaded` | 元素进入/离开可见树（注册全局资源、启动动画的钩子） |
@@ -68,8 +68,8 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 
 ### 3.1 滚轮与滚动条拖拽（M5.6 落地）
 
-`Wheel` 事件与滚动条交互当前**不进入通用事件路由**（双阶段路由属 M4 后续），
-而是由 App 层适配器直接路由到滚动容器：
+`Wheel` 事件已进入通用双阶段路由；未被任何处理器 `handled` 时，由 App 层适配器
+继续路由到滚动容器：
 
 | 输入 | 平台层 | App 层路由 |
 | --- | --- | --- |
@@ -86,9 +86,11 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 | 绑定 | 事件对象 | 路由语义 |
 | --- | --- | --- |
 | `OnPointerEnter` / `OnPointerLeave` | `PointerEvent` | **直达事件**：按"悬停链"差分触发（进入新链 → 移入；离开旧链 → 移出）。移到子元素上不算离开父元素 |
-| `OnPointerMove` / `OnPointerDown` / `OnPointerUp` | `PointerEvent` | **冒泡**：命中元素 → 根，处理器置 `ev.handled` 终止冒泡 |
-| `OnWheel` | `WheelEvent`（`delta` 格数 / `horizontal` / `handled`） | **冒泡**；置 `handled` 则该次滚轮不再交给滚动容器消费 |
+| `OnPointerMove` / `OnPointerDown` / `OnPointerUp` | `PointerEvent` | **双阶段**：隧道（根 → 命中）+ 冒泡（命中 → 根）；默认冒泡，传 `Phase::Tunnel` 绑隧道；任一阶段置 `ev.handled` 终止后续派发 |
+| `OnWheel` | `WheelEvent`（`delta` 格数 / `horizontal` / `handled`） | 同上；置 `handled` 则该次滚轮不再交给滚动容器消费 |
 
+- 全部可路由事件（`OnClick`、指针 `Move/Down/Up`、`OnWheel`、键盘 `OnKeyDown/OnKeyUp/OnChar`）都支持 `Phase`；`Enter/Leave` 是直达事件，无阶段。
+- 同一元素可在两个阶段各绑一个处理器（槽互不覆盖）。
 - 绑定形态与 `OnClick` 同构：成员函数 + 上下文，或 `std::function`。
 - 派发**只经过有绑定者的元素**（未绑定直接跳过，不产生调用开销）；不做防抖与节流（由开发者自行处理）。
 - 处理器存储按需分配（元素未绑定任何事件时不占这部分内存）。
@@ -101,7 +103,7 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 
 | 绑定 | 事件对象 | 路由语义 |
 | --- | --- | --- |
-| `OnKeyDown` / `OnKeyUp` | `KeyEvent`（`key` = VK_* 虚拟键码，`ctrl/shift/alt`） | **冒泡**：先到焦点元素，再沿祖先链上行；置 `ev.handled` 终止冒泡 |
+| `OnKeyDown` / `OnKeyUp` | `KeyEvent`（`key` = VK_* 虚拟键码，`ctrl/shift/alt`） | 从焦点元素出发，双阶段（隧道 根 → 焦点，冒泡 焦点 → 根）；置 `ev.handled` 终止后续派发 |
 | `OnChar` | `KeyEvent`（`ch` = UTF-16 字符） | 同上；IME 提交亦走此路 |
 
 - 平台层：`WM_KEYDOWN/WM_KEYUP/WM_CHAR/WM_SYSCHAR/WM_IME_CHAR` → `NativeWindowHost::OnKeyDown/OnKeyUp/OnChar`；`WM_IME_CHAR` 被吃掉（否则 `DefWindowProc` 会再生成一个 `WM_CHAR`，同一字符插入两次）。
@@ -175,23 +177,17 @@ btn->OnClick([](ClickEvent& e){ DoThing(); });
 // 2) 成员函数 + 上下文（最常用）
 page->AddChild<Button>(L"添加")->OnClick(this, &SettingsPage::OnAddClicked);
 
-// 3) 底层全事件
-item->AddHandler(Event::PointerDown, { this, &ListItem::OnPress });
+// 3) 隧道阶段（父容器预判：根先收到，可拦掉子元素）
+list->OnPointerDown(this, &SettingsPage::OnPreview, dui::Phase::Tunnel);
 ```
 
 ### 4.2 处理器签名与存储
 
-```cpp
-template<typename E>                       // E = 具体事件类型（编译期，无 RTTI）
-class Handler {                            // 16 B：fn 指针 + ctx 指针
-    void (*fn)(void* ctx, E& e);
-    void* ctx;
-};
-```
-
-- 分发为**直接函数调用**（trampoline），无虚表、无堆分配（R8）。
-- 需要捕获状态的 lambda：走成员函数 + 上下文形态；或使用 `SmallFn`（SBO 闭包，内联 16 B，溢出到 Arena）作为备选（D1）。
-- 每元素 `SmallVec<HandlerEntry, 2>` 内联存储，超出溢出到 Arena —— 注册发生在构建期，非热路径。
+- 每个事件一个具名绑定（`OnClick` / `OnPointerDown` / `OnKeyDown`…），签名统一为
+  `void(E&)`；两种形态：`std::function<void(E&)>` 或成员函数 + 上下文（内部转成 lambda）。
+- 处理器存在元素上的 `Handlers` 里：可路由事件各有冒泡槽与 `tunnel*` 隧道槽，
+  按 `Phase` 选槽写入；`Handlers` 惰性分配，未绑定任何事件的元素不占这部分内存。
+- 派发期按槽直接调用，不做事件 ID 查表；注册发生在构建期，非热路径（R8）。
 
 ### 4.3 事件对象
 
@@ -223,26 +219,26 @@ struct PointerEvent : EventBase {
 
 - **可路由事件都有两个阶段**：处理器声明所属阶段，默认冒泡（§5.1）。
 - **终止规则**：任一阶段置 `handled` → 跳过其后全部阶段（含目标元素自己的后续处理器）。
-- **目标元素**：先派发其捕获处理器，再派发冒泡处理器。
+- **目标元素**：先派发其隧道处理器（根 → 目标），再派发冒泡处理器（目标 → 根）。
 - **直达事件**（`Enter/Leave`、`GotFocus/LostFocus`、`Loaded/Unloaded`）不走路由、无阶段，只送目标元素。
 - `Click` 等语义事件合成后同样走双阶段（从目标开始）。
-- **指针捕获 ≠ 捕获阶段**：`SetPointerCapture()`（R6）指"抬起前 Move/Up 直达某元素"；"捕获阶段"指路由的隧道阶段。两者独立、常配合使用（拖拽 = 指针捕获 + 冒泡 Move）。
+- **指针捕获 ≠ 捕获阶段**：`Element::SetCapture()`（R6）指"抬起前 Move/Up 直达某元素"；"捕获阶段"指路由的隧道阶段。两者独立、常配合使用（拖拽 = 指针捕获 + 冒泡 Move）。
 - **命中测试读变换**：`translation` / `scale` / `rotation` 均为非继承属性，命中测试在遍历外通过 `Style::Resolve(element, Prop)` 读取（[15-Properties.md](./15-Properties.md) §5.2），成本可控。
 
 ### 5.1 阶段声明 API
 
 ```cpp
 // 冒泡（默认）
-btn->AddHandler(Event::PointerDown, h);
+btn->OnPointerDown(fn);
 
-// 捕获/隧道（父容器预判）
-list->AddHandler(Event::PointerDown, h, Phase::Tunnel);
+// 隧道（父容器预判：根先收到）
+list->OnPointerDown(fn, dui::Phase::Tunnel);
 ```
 
-设计：**单一事件 ID 表 + `Phase` 参数**，而非 WPF 式成对 Preview ID —— 避免 ID 膨胀，同一事件可在两阶段各注册处理器。语义糖（`OnClick` 等）只覆盖冒泡；捕获场景走 `AddHandler`（低频、本就偏底层）。
+具名绑定末尾的可选 `Phase` 参数声明阶段，全部可路由事件都适用；同一元素可在两阶段各绑一个处理器。不引入事件 ID 表，也不需要成对 Preview 事件。
 
 - `Click` 等语义事件由事件系统合成后**从目标元素开始路由**（父列表可统一收点击）。
-- 指针捕获（R6）：`element->SetPointerCapture()` 后，`Move/Up` 不再命中测试，直达捕获者直至抬起或释放 —— 拖拽、滑块、菜单外点关闭的基础。
+- 指针捕获（R6）：`element->SetCapture()` 后，`Move/Up` 不再命中测试，直达捕获者直至抬起或释放 —— 拖拽、滑块、菜单外点关闭的基础。
 
 ---
 
@@ -271,15 +267,9 @@ list->AddHandler(Event::PointerDown, h, Phase::Tunnel);
 
 ## 8. 决策点
 
-### D1 处理器存储：`Handler`（fn+ctx）为主（建议）vs `std::function` vs `SmallFn`
+### D1 处理器存储（已收敛）
 
-| 方案 | 体 | 性 | 复 | 说明 |
-| --- | --- | --- | --- | --- |
-| **fn+ctx（建议）** | +++ | +++ | ++ | 16 B、直调、零分配；捕获场景引导到"成员函数+上下文"，恰好也是界面代码的主流写法 |
-| `std::function` | -- | + | + | 支持任意捕获，但体积大（MSVC ~64 B）、可能分配、有类型擦除开销 |
-| `SmallFn`（SBO 16 B） | + | ++ | ○ | 兼顾捕获便利与零分配；实现约百行；可作为 P1 增强 |
-
-**建议：MVP 用 fn+ctx**；`SmallFn` 列为 P1（API 不变，仅存储升级），`std::function` 不用。
+实际实现：具名槽 + `std::function<void(E&)>`，`Handlers` 惰性分配（未绑定事件的元素不占内存），成员函数调用亦由 lambda 包装。派发期只做槽判空 + 直接调用，无事件 ID 查表、无堆分配；注册发生在构建期。若后续要压体积，可在不改绑定 API 的前提下替换存储实现。
 
 ### D2 路由阶段：捕获 + 冒泡双阶段（**已拍板**）
 
@@ -287,7 +277,8 @@ list->AddHandler(Event::PointerDown, h, Phase::Tunnel);
 
 理由：父容器拦截/预判（拖拽预判、工具提示、输入过滤、列表统一收事件）是常见需求，不该让开发者等二期；实现增量主要是路由循环多一个方向，成本小。
 
-配套：处理器以 `Phase` 参数声明阶段（默认冒泡），事件 ID 保持单表不成对 —— 原 §11-4 悬案一并解决。
+配套：全部可路由事件以具名绑定末尾的 `Phase` 参数声明阶段（默认 `Phase::Bubble`，
+`Phase::Tunnel` 为隧道）；不引入事件 ID 表与成对 Preview 事件 —— 原 §11-4 悬案一并解决。
 
 ### D3 便捷 API 形态：链式返回 `Element&`（建议）
 
@@ -319,8 +310,8 @@ list->AddHandler(Event::PointerDown, h, Phase::Tunnel);
 
 | 期 | 内容 |
 | --- | --- |
-| **P0** | 指针事件 + 命中测试（含 transform）、**冒泡 + 捕获双阶段** + `handled`、`Click` 合成、焦点 + Tab（M5.9 已落地）、fn+ctx 处理器、语义糖首批（`OnClick/OnKeyDown/OnWheel`）、延迟删除 |
-| **P1** | 指针捕获、`PointerEnter/Leave` 差分（M5.8 已落地）、加速键表、`SmallFn` 捕获闭包、语义事件全量、IME 组合串（Composition*） |
+| **P0** | 指针事件 + 命中测试（含 transform）、**冒泡 + 捕获双阶段** + `handled`、`Click` 合成、焦点 + Tab（M5.9 已落地）、具名绑定（`OnClick/OnKeyDown/OnWheel`…）、延迟删除 |
+| **P1** | 指针捕获（`Element::SetCapture()`）、`PointerEnter/Leave` 差分（M5.8 已落地）、加速键表、语义事件全量、IME 组合串（Composition*） |
 | **P2** | weak token 生命周期托管、触摸手势识别（长按/双指）、无障碍事件（与 ADR-017 联动） |
 
 ---
@@ -330,7 +321,7 @@ list->AddHandler(Event::PointerDown, h, Phase::Tunnel);
 1. D1–D5 是否按建议拍板（D3 同时结束 ADR-018 的链式 API 悬案）。
 2. 语义事件首批清单（§3 表）是否增减。
 3. `Click` 的合成规则：拖出阈值（建议 4 dip）内抬起算点击；双击间隔跟随系统 `GetDoubleClickTime()`。
-4. ~~已解决~~：不按阶段分表，单事件 ID 表 + `Phase` 参数（见 D2）。
+4. ~~已解决~~：不按阶段分表，具名绑定统一用 `Phase` 参数声明阶段（见 §5.1）。
 5. 触摸手势（长按/滑动）是否提前到 P1。
 6. ~~已定~~：程序化设状态位用 `element->SetState(State::Selected, v)`；写入契约（相同值幂等、标脏帧末合并）与状态全集见 [03-Style.md](./03-Style.md) §6.2。
-7. `Element::Lifetime()` 返回类型命名（示例中暂用 `auto`），与 [07-Threading.md](./07-Threading.md) §4.3 的 `ui.Post(life, fn)` 对齐。
+7. ~~已解决~~：`Element::Lifetime()` 返回 `dui::Lifetime`，配合 [07-Threading.md](./07-Threading.md) §4.3 的 `dui::PostUi(life, fn)` 使用（已落地）；协程里在 `co_await Foreground()` 之后自行 `if (!life)` 判断。

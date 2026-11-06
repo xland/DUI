@@ -165,8 +165,9 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 - Click 合成加 4dip 拖出阈值（06-Events §3）。
 - **偏差 1**：Dispatcher 按 Todo 放 Core，但含 PostMessage —— 与 01-Layering「Core 不依赖
   Win32」偏差；pimpl 把 windows.h 挡在 .cpp，DUI.h 无 windows.h 约束未破。
-- **偏差 2**：隧道（Tunnel）阶段未实现——AddHandler/Phase 公共 API 尚未设计（API 冻结约束：
-  新能力先改示例和文档），当前仅冒泡 + handled；该项与指针捕获一并顺延，落地前需先定 API。
+- **偏差 2**：隧道（Tunnel）阶段未实现——当时 Phase 公共 API 尚未设计（API 冻结约束：
+  新能力先改示例和文档），M4 仅冒泡 + handled；该项与指针捕获一并顺延，已于 M6 以
+  `OnXxx(fn, dui::Phase::Tunnel)` 与 `Element::SetCapture()` 落地。
 - **偏差 3**：任务体用 std::function（有分配）；队列节点固定池（07-Threading D5）、退出排空
   （R6 完整版）、WhenAll/WhenAny 均列 P1。线程池析构 detach。
 - **崩溃修复（2026-10-29）**：修完着色器入口名（CompileShader 增加 entry 参数，M3 起设备
@@ -752,6 +753,18 @@ DUI/Platform/Window.h/.cpp  NativeWindow（RegisterClass/CreateWindowExW/窗口�
 - Debug + Release 全量重建零警告。
 
 参考：`12-Windowing §6.1`、`06-Events §3`（点击冒泡）。
+
+---
+
+## M5.12 — 异步示例 + 生命周期安全回投 ✅（2026-11-06 完成）
+
+- 框架补齐（`Core/Threading.h`）：`dui::PostUi(Lifetime, fn)` 安全回投（回调风格）；
+  `Task<void>` 全特化（`return_void` + 无参 `Then`）；`Foreground()` 在 UI 卸载时 `h.destroy()` 修帧泄漏。
+  `Task<T>` 模板至此首次被实例化验证（MSVC v145 / `/EHs-c-` 下协程可用）。
+- 新增 `Samples/Async`（挂入 `DUI.slnx`）：点击 → `Task<void>` 线性协程，10 轮
+  `co_await Background()`（子线程耗时）→ `co_await Foreground()`（切回 UI 更新文字）→ 完成；
+  `Lifetime` 在协程内 UI 线程取，回切后由开发者自查 `if (!life) co_return;`。
+- 文档同步：`07-Threading §4.1/§4.2/§4.3/§7`、`06-Events §11-7`、`00-Overview §6`。
 
 ---
 

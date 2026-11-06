@@ -81,10 +81,10 @@
 ## 6. 当前工程状态
 
 ```
-DUI.slnx                 解决方案：x64 单一平台，十一个工程（1 库 + 10 示例）
+DUI.slnx                 解决方案：x64 单一平台，十二个工程（1 库 + 11 示例）
 DUI/                     库工程（DUI.vcxproj，静态库）
   DUI.h                  公共入口（业务代码唯一 include）
-  Core/                  Result、String/Color/Rect/Thickness、协程 Task（M1 骨架）
+  Core/                  Result、String/Color/Rect/Thickness、协程 Task<T>/Task<void> + PostUi 安全回投
   UI/                    Style（声明集 + 链式构造合一）、Element、Panel、Text/Button、TextBox/TextArea、Image、Canvas/Scroller、Focus、事件（M1 骨架）
   App/                   Application、Window/WindowOptions（M1 骨架）
   Platform/              NativeWindow（HWND 封装、窗口过程、DPI 感知清单）（M2）
@@ -101,6 +101,7 @@ Samples/                 示例工程（每个示例一个子目录 = 一个工�
   Image/                 图像控件演示（dui::Image：WIC 解码 / 自然尺寸 / 拉伸 / 透明度）
   CustomFrame/           自定义窗口边框与标题栏演示（Chrome::Borderless + DWM 阴影 + 拖动移动 + 拖边框缩放）
   Animation/             动画示例集（属性补间 / 缓动 / 句柄 / 位置·旋转·缩放 / 布局尺寸对照 / 组合动画）
+  Async/                 异步示例（协程 Background/Foreground：子线程跑任务，过程中切回 UI 更新界面）
 Build/                   产物根：Build\<工程>\<配置>\ 最终产物；Build\Temp\<工程>\<配置>\ 中间产物
 DUI.props                公共编译基线（库与子工程共同 import，根目录）
 Doc/Arch/                本文档集
@@ -117,7 +118,7 @@ D3D11 矩形渲染 + 最小输入；M4 Dispatcher + 线程池 + 真协程 + Clic
 | --- | --- | --- |
 | M2 | ✅ Platform.Window（HWND）+ 消息循环 + OnCreate/Show 时序（交换链归 M3） | 12-Windowing |
 | M3 | ✅ 样式解析（级联/状态优先级）+ Flex 布局 + 失效标脏 + 矩形绘制 | 03-Style / 04-Layout / 10-Rendering |
-| M4 | ✅ Dispatcher + 线程池 + 协程真实异步 + 输入命中/路由（隧道部分顺延，见 Todo M4 偏差 2） | 06-Events / 07-Threading |
+| M4 | ✅ Dispatcher + 线程池 + 协程真实异步 + 输入命中/路由（隧道与指针捕获于 M6 补齐） | 06-Events / 07-Threading |
 | M5 | ✅ DirectWrite 文本（shape/layout/raster + 灰度图集）+ DPI 切换分级失效（完整字形重光栅随窗口 DPI 走，见 Todo M5） | 11-Text / 12-Windowing |
 | M5.5 | ✅ 2D 绘图控件 `dui::Canvas` + Graphics 形状批（SDF 图元） | 10-Rendering / 03-Style |
 | M5.6 | ✅ 滚动容器 `dui::Scroller`（横纵滚动条 + 绘制单元裁剪） | 04-Layout / 06-Events / 10-Rendering |

@@ -28,8 +28,11 @@ class Painter;
 enum class Kind : uint8_t { Node, Text, Scroller, Image };
 
 // ---------------------------------------------------------------------------
-// 事件（06-Events §3；M4 接入命中测试与路由，M5.8 补齐元素级指针事件）
+// 事件（06-Events §3）：可路由事件走隧道（根 → 命中）+ 冒泡（命中 → 根）。
+// Phase 只用于可路由事件；Enter/Leave 是直达事件，没有阶段。
 // ---------------------------------------------------------------------------
+enum class Phase : uint8_t { Bubble, Tunnel };
+
 struct ClickEvent {
     Element* source = nullptr;   // 命中的目标元素（06-Events §4.3）
     bool     handled = false;    // 置 true 终止冒泡
@@ -73,6 +76,13 @@ Element* FocusedElement() noexcept;
 bool IsFocused(const Element* e) noexcept;
 // 设置焦点：旧元素清 State::Focused，新元素置 State::Focused；e 为 nullptr 则清焦点
 void SetFocus(Element* e);
+
+// ---- 指针捕获（06-Events §5）----------------------------------------------
+// 窗口级唯一目标，Element::SetCapture() / ReleaseCapture() 的服务入口。
+// 捕获期间 Move/Up 直达该元素（仍从其开始冒泡），抬起自动释放。
+void SetCaptureElement(Element* e) noexcept;
+Element* CapturedElement() noexcept;
+void ClearCaptureIf(Element* e) noexcept;
 
 // ---------------------------------------------------------------------------
 // Element：树节点 + 状态位 + 本地覆盖
@@ -138,20 +148,22 @@ public:
     // 注：返回类型写全限定 —— 方法名 Lifetime 遮蔽同名类型
     dui::Lifetime Lifetime() const noexcept { return lifetime_; }
 
-    // 点击绑定：成员函数 + 上下文（06-Events §4.1）；M4 起由命中测试触发
+    // 点击绑定（06-Events §4.1）：默认冒泡；Phase::Tunnel 时在隧道阶段先收到
     template <class Ctx>
-    void OnClick(Ctx* ctx, void (Ctx::*fn)(ClickEvent&)) {
-        onClick_ = [ctx, fn](ClickEvent& e) { (ctx->*fn)(e); };
+    void OnClick(Ctx* ctx, void (Ctx::*fn)(ClickEvent&), Phase phase = Phase::Bubble) {
+        (phase == Phase::Tunnel ? onTunnelClick_ : onClick_) =
+            [ctx, fn](ClickEvent& e) { (ctx->*fn)(e); };
     }
-    void OnClick(std::function<void(ClickEvent&)> fn) { onClick_ = std::move(fn); }
+    void OnClick(std::function<void(ClickEvent&)> fn, Phase phase = Phase::Bubble) {
+        (phase == Phase::Tunnel ? onTunnelClick_ : onClick_) = std::move(fn);
+    }
 
     // ------------------------------------------------------------------
     // 指针事件绑定（与 OnClick 同构：成员函数 + 上下文 / std::function）
-    //   OnPointerEnter / OnPointerLeave —— 直达事件（不冒泡）：由命中链差分驱动，
-    //     元素进入/离开"悬停链"时各触发一次（移到子元素上不算离开本元素）。
-    //   OnPointerMove / OnPointerDown / OnPointerUp —— 冒泡：从命中元素向上，
-    //     处理器置 ev.handled 可终止冒泡。
-    //   OnWheel —— 冒泡：置 ev.handled 可阻止滚动容器消费该次滚轮。
+    //   OnPointerEnter / OnPointerLeave —— 直达事件：命中链差分驱动，无阶段。
+    //   OnPointerMove / Down / Up / OnWheel —— 双阶段：Phase::Tunnel 时根先收到，
+    //     默认 Phase::Bubble 从命中元素向上；任一阶段置 handled 终止其余派发。
+    //   OnWheel 置 ev.handled 还能阻止滚动容器消费该次滚轮。
     // 不做防抖/节流（由开发者自行处理）。
     // ------------------------------------------------------------------
     template <class Ctx>
@@ -167,59 +179,92 @@ public:
     void OnPointerLeave(std::function<void(PointerEvent&)> fn) { MutableHandlers().leave = std::move(fn); }
 
     template <class Ctx>
-    void OnPointerMove(Ctx* ctx, void (Ctx::*fn)(PointerEvent&)) {
-        BindMember(MutableHandlers().move, ctx, fn);
+    void OnPointerMove(Ctx* ctx, void (Ctx::*fn)(PointerEvent&), Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        BindMember(phase == Phase::Tunnel ? h.tunnelMove : h.move, ctx, fn);
     }
-    void OnPointerMove(std::function<void(PointerEvent&)> fn) { MutableHandlers().move = std::move(fn); }
+    void OnPointerMove(std::function<void(PointerEvent&)> fn, Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        (phase == Phase::Tunnel ? h.tunnelMove : h.move) = std::move(fn);
+    }
 
     template <class Ctx>
-    void OnPointerDown(Ctx* ctx, void (Ctx::*fn)(PointerEvent&)) {
-        BindMember(MutableHandlers().down, ctx, fn);
+    void OnPointerDown(Ctx* ctx, void (Ctx::*fn)(PointerEvent&), Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        BindMember(phase == Phase::Tunnel ? h.tunnelDown : h.down, ctx, fn);
     }
-    void OnPointerDown(std::function<void(PointerEvent&)> fn) { MutableHandlers().down = std::move(fn); }
+    void OnPointerDown(std::function<void(PointerEvent&)> fn, Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        (phase == Phase::Tunnel ? h.tunnelDown : h.down) = std::move(fn);
+    }
 
     template <class Ctx>
-    void OnPointerUp(Ctx* ctx, void (Ctx::*fn)(PointerEvent&)) {
-        BindMember(MutableHandlers().up, ctx, fn);
+    void OnPointerUp(Ctx* ctx, void (Ctx::*fn)(PointerEvent&), Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        BindMember(phase == Phase::Tunnel ? h.tunnelUp : h.up, ctx, fn);
     }
-    void OnPointerUp(std::function<void(PointerEvent&)> fn) { MutableHandlers().up = std::move(fn); }
+    void OnPointerUp(std::function<void(PointerEvent&)> fn, Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        (phase == Phase::Tunnel ? h.tunnelUp : h.up) = std::move(fn);
+    }
 
     template <class Ctx>
-    void OnWheel(Ctx* ctx, void (Ctx::*fn)(WheelEvent&)) {
-        BindMember(MutableHandlers().wheel, ctx, fn);
+    void OnWheel(Ctx* ctx, void (Ctx::*fn)(WheelEvent&), Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        BindMember(phase == Phase::Tunnel ? h.tunnelWheel : h.wheel, ctx, fn);
     }
-    void OnWheel(std::function<void(WheelEvent&)> fn) { MutableHandlers().wheel = std::move(fn); }
+    void OnWheel(std::function<void(WheelEvent&)> fn, Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        (phase == Phase::Tunnel ? h.tunnelWheel : h.wheel) = std::move(fn);
+    }
 
     // ------------------------------------------------------------------
     // 键盘事件绑定（与 OnClick 同构：成员函数 + 上下文 / std::function）
-    //   路由：先到焦点元素，再沿祖先链冒泡（06-Events §3 键盘行）。
+    //   路由：从焦点元素出发，双阶段（隧道 根 → 焦点，冒泡 焦点 → 根）。
+    //   OnKeyDown / OnKeyUp / OnChar 均支持 Phase 参数（默认 Phase::Bubble）。
     //   OnKeyDown / OnKeyUp：ev.key = VK_* 虚拟键码，ev.ctrl/shift/alt = 修饰键；
     //   OnChar：ev.ch = 字符（UTF-16，IME 提交亦走此路）。
-    //   处理器置 ev.handled 可终止冒泡。
+    //   处理器置 ev.handled 可终止后续阶段。
     // ------------------------------------------------------------------
     template <class Ctx>
-    void OnKeyDown(Ctx* ctx, void (Ctx::*fn)(KeyEvent&)) {
-        BindMember(MutableHandlers().keyDown, ctx, fn);
+    void OnKeyDown(Ctx* ctx, void (Ctx::*fn)(KeyEvent&), Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        BindMember(phase == Phase::Tunnel ? h.tunnelKeyDown : h.keyDown, ctx, fn);
     }
-    void OnKeyDown(std::function<void(KeyEvent&)> fn) { MutableHandlers().keyDown = std::move(fn); }
+    void OnKeyDown(std::function<void(KeyEvent&)> fn, Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        (phase == Phase::Tunnel ? h.tunnelKeyDown : h.keyDown) = std::move(fn);
+    }
 
     template <class Ctx>
-    void OnKeyUp(Ctx* ctx, void (Ctx::*fn)(KeyEvent&)) {
-        BindMember(MutableHandlers().keyUp, ctx, fn);
+    void OnKeyUp(Ctx* ctx, void (Ctx::*fn)(KeyEvent&), Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        BindMember(phase == Phase::Tunnel ? h.tunnelKeyUp : h.keyUp, ctx, fn);
     }
-    void OnKeyUp(std::function<void(KeyEvent&)> fn) { MutableHandlers().keyUp = std::move(fn); }
+    void OnKeyUp(std::function<void(KeyEvent&)> fn, Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        (phase == Phase::Tunnel ? h.tunnelKeyUp : h.keyUp) = std::move(fn);
+    }
 
     template <class Ctx>
-    void OnChar(Ctx* ctx, void (Ctx::*fn)(KeyEvent&)) {
-        BindMember(MutableHandlers().ch, ctx, fn);
+    void OnChar(Ctx* ctx, void (Ctx::*fn)(KeyEvent&), Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        BindMember(phase == Phase::Tunnel ? h.tunnelChar : h.ch, ctx, fn);
     }
-    void OnChar(std::function<void(KeyEvent&)> fn) { MutableHandlers().ch = std::move(fn); }
+    void OnChar(std::function<void(KeyEvent&)> fn, Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        (phase == Phase::Tunnel ? h.tunnelChar : h.ch) = std::move(fn);
+    }
 
-    // 指针/滚轮/键盘处理器集合：按需分配 —— 未绑定任何事件的元素不占这部分内存
+    // 指针/滚轮/键盘处理器集合：按需分配 —— 未绑定任何事件的元素不占这部分内存。
+    // tunnel* 为隧道阶段专用槽，与冒泡槽互不覆盖（同一元素可两阶段各绑一个）。
     struct Handlers {
         std::function<void(PointerEvent&)> enter, leave, move, down, up;
         std::function<void(WheelEvent&)>   wheel;
         std::function<void(KeyEvent&)>     keyDown, keyUp, ch;
+        std::function<void(PointerEvent&)> tunnelMove, tunnelDown, tunnelUp;
+        std::function<void(WheelEvent&)>   tunnelWheel;
+        std::function<void(KeyEvent&)>     tunnelKeyDown, tunnelKeyUp, tunnelChar;
     };
     // 事件派发只读访问（Event.cpp）
     const Handlers* HandlersPtr() const noexcept { return handlers_.get(); }
@@ -239,6 +284,12 @@ public:
     void Focus();
     void Blur();
     bool HasFocus() const noexcept;
+
+    // 指针捕获（06-Events §5）：捕获期间 Move/Up 不再命中测试，直达本元素，
+    // 仍从其开始冒泡；抬起时框架自动释放，元素销毁时自动失效。
+    void SetCapture();
+    void ReleaseCapture();
+    bool HasCapture() const noexcept;
 
     // 树结构
     Element* Parent() const noexcept { return parent_; }
@@ -310,6 +361,7 @@ protected:
     uint32_t                   states_ = 0;
     dui::Lifetime              lifetime_;
     std::function<void(ClickEvent&)> onClick_;
+    std::function<void(ClickEvent&)> onTunnelClick_;   // Click 的隧道阶段槽
 
 protected:
     Handlers& MutableHandlers() {

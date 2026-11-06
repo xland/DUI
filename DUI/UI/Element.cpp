@@ -12,7 +12,8 @@
 namespace dui {
 
 Element::~Element() {
-    ClearFocusIf(this);   // 焦点元素被销毁 → 清焦点（避免全局焦点悬空）
+    ClearFocusIf(this);     // 焦点元素被销毁 → 清焦点（避免全局焦点悬空）
+    ClearCaptureIf(this);   // 捕获目标被销毁 → 清捕获（避免悬空）
     lifetime_.Kill();   // 生命周期令牌置否：延迟回投的回调据此丢弃（06-Events D7）
     detail::UnregisterAnimatedElement(this);   // 动画句柄随元素销毁自动失效
     for (Element* c : children_) delete c;
@@ -91,6 +92,15 @@ void Element::Blur() {
 }
 
 bool Element::HasFocus() const noexcept { return IsFocused(this); }
+
+// 指针捕获（06-Events §5）：状态存于 UI/Event.cpp，抬起由 App 层释放
+void Element::SetCapture() { SetCaptureElement(this); }
+
+void Element::ReleaseCapture() {
+    if (HasCapture()) SetCaptureElement(nullptr);
+}
+
+bool Element::HasCapture() const noexcept { return CapturedElement() == this; }
 
 // ---------------------------------------------------------------------------
 // Measure：容器默认 = 子项沿主轴聚合（04-Layout §4.1/§6.1）

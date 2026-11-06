@@ -2,11 +2,12 @@
 //  DUI/UI/Event.cpp — 命中测试与最小输入支持（06-Events，M3 子集）
 //
 //  M3 范围：按 Rect 的最深命中、hover/pressed 状态链维护（含祖先，CSS 直觉）、
-//  Click 合成（按下抬起同元素）。双阶段路由、指针捕获、拖出阈值在 M4 落地。
+//  Click 合成（按下抬起同元素）。
+//  M6 追加：双阶段路由（隧道 + 冒泡，Phase 参数）与指针捕获（Element::SetCapture）。
 //  M5.8 追加：元素级指针事件（移入/移出/移动/按下/弹起/滚轮）——
 //    移入/移出按"悬停链"差分直达；移动/按下/弹起/滚轮冒泡，handled 可终止；
 //    派发只经过有绑定者的元素（无绑定直接跳过），不做防抖与节流。
-//  M5.9 追加：元素级键盘事件（KeyDown/KeyUp/Char）——先到焦点元素再冒泡；
+//  M5.9 追加：元素级键盘事件（KeyDown/KeyUp/Char）——从焦点元素出发双阶段路由；
 //    派发前先走控件内部钩子（Element::Handle*），钩子消费则不再向上冒泡。
 //
 //  e.source 语义（按两个示例的用法实现）：处理器宿主元素 —— 点击落在子元素上
@@ -21,6 +22,10 @@
 namespace dui {
 
 namespace {
+
+// 指针捕获：窗口级唯一目标（06-Events §5）。捕获期间 Move/Up 直达该元素；
+// 抬起由 App 层释放，元素析构由 ClearCaptureIf 清理。
+Element* g_capture = nullptr;
 
 bool InRect(const Rect& r, const Vec2& p) {
     return p.x >= r.x && p.x <= r.Right() && p.y >= r.y && p.y <= r.Bottom();
@@ -57,6 +62,11 @@ Element* HitTestInner(Element* e, const Vec2& ptAbs) {
 
 }  // namespace
 
+// ---- 指针捕获服务（Element::SetCapture / ReleaseCapture 的入口）-------------
+void SetCaptureElement(Element* e) noexcept { g_capture = e; }
+Element* CapturedElement() noexcept { return g_capture; }
+void ClearCaptureIf(Element* e) noexcept { if (g_capture == e) g_capture = nullptr; }
+
 Element* HitTest(Element* root, const Vec2& pt) {
     if (root == nullptr) return nullptr;
     const Transform2D t = ElementTransform(root);
@@ -82,13 +92,25 @@ Element* FindFocusable(Element* e) {
     return nullptr;
 }
 
+// Click 的两阶段派发：隧道（根 → 命中）→ 冒泡（命中 → 根）。
+// 用同一个事件对象贯穿，任一阶段置 handled 会终止后续全部派发（06-Events §5）。
 void DispatchClick(Element* hit) {
-    for (Element* e = hit; e != nullptr; e = e->Parent()) {
+    if (hit == nullptr) return;
+    std::vector<Element*> chain;
+    for (Element* e = hit; e != nullptr; e = e->Parent()) chain.push_back(e);
+    ClickEvent ev;
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {   // 隧道：根 → 命中
+        Element* e = *it;
+        if (!e->onTunnelClick_) continue;
+        ev.source = e;
+        e->onTunnelClick_(ev);
+        if (ev.handled) return;
+    }
+    for (Element* e : chain) {                                   // 冒泡：命中 → 根
         if (!e->onClick_) continue;
-        ClickEvent ev;
         ev.source = e;
         e->onClick_(ev);
-        if (ev.handled) break;   // 冒泡终止（06-Events §5）
+        if (ev.handled) return;
     }
 }
 
@@ -140,6 +162,39 @@ bool BubbleDispatch(Element* hit, E& ev,
     return false;
 }
 
+// 隧道派发：根 → 命中元素。用递归回溯得到根优先的顺序，零额外缓冲/分配。
+// 控件内部钩子（Handle*）不参与隧道，仍只在冒泡阶段执行。
+template <class E>
+bool TunnelDispatch(Element* e, E& ev,
+                    std::function<void(E&)> Element::Handlers::*slot) {
+    if (e == nullptr) return false;
+    if (e->Parent() != nullptr) {
+        TunnelDispatch(e->Parent(), ev, slot);
+        if (ev.handled) return true;   // 上层已拦截 → 子元素不再收到
+    }
+    const Element::Handlers* h = e->HandlersPtr();
+    if (h != nullptr) {
+        const std::function<void(E&)>& fn = h->*slot;
+        if (fn) {
+            ev.source = e;
+            fn(ev);
+        }
+    }
+    return ev.handled;
+}
+
+// 双阶段：隧道（根 → 命中）→ 冒泡（命中 → 根）。
+// 任一阶段置 handled → 后续全部阶段不再派发（含目标元素自己的后续处理器）。
+template <class E>
+bool PhasedDispatch(Element* hit, E& ev,
+                    std::function<void(E&)> Element::Handlers::*tunnelSlot,
+                    std::function<void(E&)> Element::Handlers::*bubbleSlot,
+                    bool (Element::*hook)(E&) = nullptr) {
+    if (hit == nullptr) return false;
+    if (TunnelDispatch(hit, ev, tunnelSlot)) return true;
+    return BubbleDispatch(hit, ev, bubbleSlot, hook);
+}
+
 }  // namespace
 
 // 移入/移出：悬停链差分直达（不冒泡）。
@@ -169,19 +224,22 @@ void DispatchHoverTransitions(Element* previous, Element* current, const Vec2& p
 void DispatchPointerMove(Element* hit, const Vec2& pt) {
     PointerEvent ev;
     ev.pos = pt;
-    BubbleDispatch(hit, ev, &Element::Handlers::move, &Element::HandlePointerMove);
+    PhasedDispatch(hit, ev, &Element::Handlers::tunnelMove,
+                   &Element::Handlers::move, &Element::HandlePointerMove);
 }
 
 void DispatchPointerDown(Element* hit, const Vec2& pt) {
     PointerEvent ev;
     ev.pos = pt;
-    BubbleDispatch(hit, ev, &Element::Handlers::down, &Element::HandlePointerDown);
+    PhasedDispatch(hit, ev, &Element::Handlers::tunnelDown,
+                   &Element::Handlers::down, &Element::HandlePointerDown);
 }
 
 void DispatchPointerUp(Element* hit, const Vec2& pt) {
     PointerEvent ev;
     ev.pos = pt;
-    BubbleDispatch(hit, ev, &Element::Handlers::up, &Element::HandlePointerUp);
+    PhasedDispatch(hit, ev, &Element::Handlers::tunnelUp,
+                   &Element::Handlers::up, &Element::HandlePointerUp);
 }
 
 bool DispatchWheel(Element* hit, const Vec2& pt, float delta, bool horizontal) {
@@ -189,11 +247,12 @@ bool DispatchWheel(Element* hit, const Vec2& pt, float delta, bool horizontal) {
     ev.pos = pt;
     ev.delta = delta;
     ev.horizontal = horizontal;
-    return BubbleDispatch(hit, ev, &Element::Handlers::wheel);
+    return PhasedDispatch(hit, ev, &Element::Handlers::tunnelWheel,
+                          &Element::Handlers::wheel);
 }
 
 // ---------------------------------------------------------------------------
-// 键盘事件（M5.9）：先到焦点元素，再沿祖先链冒泡
+// 键盘事件（M5.9）：从焦点元素出发，隧道（根 → 焦点）+ 冒泡（焦点 → 根）
 // ---------------------------------------------------------------------------
 
 bool DispatchKeyDown(Element* target, int key, bool ctrl, bool shift, bool alt) {
@@ -202,7 +261,8 @@ bool DispatchKeyDown(Element* target, int key, bool ctrl, bool shift, bool alt) 
     ev.ctrl = ctrl;
     ev.shift = shift;
     ev.alt = alt;
-    return BubbleDispatch(target, ev, &Element::Handlers::keyDown, &Element::HandleKeyDown);
+    return PhasedDispatch(target, ev, &Element::Handlers::tunnelKeyDown,
+                          &Element::Handlers::keyDown, &Element::HandleKeyDown);
 }
 
 bool DispatchKeyUp(Element* target, int key, bool ctrl, bool shift, bool alt) {
@@ -211,13 +271,15 @@ bool DispatchKeyUp(Element* target, int key, bool ctrl, bool shift, bool alt) {
     ev.ctrl = ctrl;
     ev.shift = shift;
     ev.alt = alt;
-    return BubbleDispatch(target, ev, &Element::Handlers::keyUp, &Element::HandleKeyUp);
+    return PhasedDispatch(target, ev, &Element::Handlers::tunnelKeyUp,
+                          &Element::Handlers::keyUp, &Element::HandleKeyUp);
 }
 
 bool DispatchChar(Element* target, wchar_t ch) {
     KeyEvent ev;
     ev.ch = ch;
-    return BubbleDispatch(target, ev, &Element::Handlers::ch, &Element::HandleChar);
+    return PhasedDispatch(target, ev, &Element::Handlers::tunnelChar,
+                          &Element::Handlers::ch, &Element::HandleChar);
 }
 
 }  // namespace dui

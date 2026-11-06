@@ -77,7 +77,10 @@ UI 线程                                后台
 
 ## 4. API 形态
 
-### 4.1 回调风格（P0）
+### 4.1 回调风格（P0，设计草案）
+
+> 当前实现：回调风格见 §4.3（`ThreadPool::Shared().Post(fn)` 去子线程、`PostUi(life, fn)` 回 UI），
+> 协程风格见 §4.2 落地说明。`Application::Current()` / `ui.Background(fn)` / `op.Cancel()` / `Result<T>` 尚未实现。
 
 ```cpp
 Dispatcher& ui = Application::Current().Dispatcher();
@@ -97,7 +100,7 @@ auto op = ui.Background(fn);
 op.Cancel();                                    // 排队中直接丢弃；运行中交令牌自查
 ```
 
-### 4.2 协程风格（**体验主路径**，P0 最小集，R3）
+### 4.2 协程风格（**体验主路径**，P0 最小集，R3，已落地）
 
 > 协程风格是**开发者体验的主路径**：与回调风格平级，文档、示例、API 命名都以协程为主；回调风格作为等价备选并存。
 
@@ -127,15 +130,35 @@ namespace dui {
 - 不用"标签对象"写法（`co_await Background{}`）：函数调用读起来是"动作"，可扩展参数（如 `Background(pool)`），也避免了无括号时像漏写调用的观感。
 - 与 `ui.Background(fn)` 区分：**带参数的那个是投递任务**（成员函数），**不带参数的是协程切换点**（命名空间函数）。
 - **协程体内不用异常**（与 ADR-007 一致）：错误经 `Result<T>` 传递（对齐 ADR-007 错误传递方向）；未捕获异常路径统一 `terminate`。
-- MSVC 在 `/EHs-c-` 下协程本身可用（无 try/catch 即可），实现时验证。
+- MSVC 在 `/EHs-c-` 下协程本身可用（无 try/catch 即可），实现时验证（M5.12 已验证通过）。
 
-### 4.3 安全回投（P1，R4）
+**当前实现（`Core/Threading.h`，M5.12 落地）**：`Task<T>` 与 `Task<void>` 均为 eager 协程，
+创建即运行到首个 `co_await`，无需 `Start()`；`Task<void>` 用 `co_return;` / 自然结束，`Task<T>` 用 `co_return v;`。
+`Then` 只在完成时回投一次，**过程中更新界面靠循环里每轮 `co_await dui::Foreground()`**（每次回切 = 一次 UI 队列 Post）。
+`Foreground()` 在 UI Dispatcher 已卸载时销毁挂起帧，避免协程永不恢复导致帧泄漏；
+元素存活仍由开发者在 `co_await Foreground()` 之后（已在 UI 线程）用 `Lifetime` 自查。
+完整可编译范例：`Samples/Async`（`Work` 线性 10 步，每步切回 UI 更新文字）。
+
+### 4.3 安全回投（已落地，R4）
 
 ```cpp
-ui.Post(view->Lifetime(), [view]{ view->SetImage(img); });   // view 已销毁 → 任务丢弃
+auto life = view->Lifetime();                  // UI 线程取令牌
+dui::ThreadPool::Shared().Post([view, life] {
+    Image img = DecodeImage(path);             // 子线程：只碰纯数据
+    dui::PostUi(life, [view, img] {            // 回投 UI 线程
+        view->SetImage(img);                   // 碰 UI，安全
+    });
+});
 ```
 
-`Lifetime()` 返回元素存活性令牌（对应 [06-Events.md](./06-Events.md) D5 的 weak token），事件处理器发起的回投建议一律用它，消除"回调时界面已销毁"这一最常见悬挂。
+`PostUi(life, fn)`（`Core/Threading.h`，inline）把 `fn` 投进 UI Dispatcher 队列，执行前检查令牌：
+元素已销毁，或 `Application::Run` 退出后 UI Dispatcher 已卸载，任务直接丢弃，不触碰悬空元素。
+检查与元素析构同在 UI 线程，无需加锁。`life` 由 `Element::Lifetime()` 在 UI 线程取出，
+对应 [06-Events.md](./06-Events.md) D5 的 weak token；事件处理器发起的回投建议一律用它。
+
+不带令牌的底层入口仍是 `dui::Dispatcher::Ui()->Post(fn)`。等价的协程写法见 §4.2：
+每轮 `co_await dui::Foreground()` 切回 UI 后自行检查 `Lifetime`；`Samples/Async` 用协程，
+回调风格仍可用 `PostUi`。
 
 ---
 
@@ -186,8 +209,8 @@ ui.Post(view->Lifetime(), [view]{ view->SetImage(img); });   // view 已销毁 �
 
 | 期 | 内容 |
 | --- | --- |
-| **P0** | `Dispatcher`（UI 排空 + PostMessage 唤醒）、固定线程池、`Background`/`Post` 回调风格、**协程最小集**（`Task<T>` + `Background`/`Foreground` awaiter，体验主路径）、取消令牌、退出排空 |
-| **P1** | 协程增强（`WhenAll`/`WhenAny` 等组合子）、`Lifetime` 安全回投、`PostDelayed` |
+| **P0** | `Dispatcher`（UI 排空 + PostMessage 唤醒）、固定线程池、`Background`/`Post` 回调风格、**协程最小集（已落地：`Task<T>` / `Task<void>` + `Background`/`Foreground`）**、取消令牌、退出排空 |
+| **P1** | 协程增强（`WhenAll`/`WhenAny` 等组合子）、`Lifetime` 安全回投（已落地：`PostUi`）、`PostDelayed` |
 | **P2** | 专线程 `RunDedicated`、优先级队列、任务亲和性（同 key 串行） |
 
 ---

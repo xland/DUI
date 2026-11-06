@@ -8,7 +8,9 @@
 //  日志直接读回 dui::Text 的当前内容再追加一行，不需要 vector / 环形缓冲。
 //  root 用 Row + FlexWrap(Wrap) 自动排成示例网格；FontSize / Color 由继承
 //  下传，单个示例里不重复写外观配置。
-//  框架目前只有冒泡阶段：没有捕获/隧道，也没有元素级指针捕获。
+//  可路由事件分两阶段：隧道（根 → 命中）+ 冒泡（命中 → 根）；
+//  Enter / Leave 是直达事件，没有阶段。指针捕获（Element::SetCapture）属于
+//  控件行为，不在本示例集演示。
 // ============================================================================
 
 #include <windows.h>
@@ -157,13 +159,37 @@ void DemoWhen(dui::Panel* root) {
     col->AddChild<dui::Text>(L"移到方块上立即换色（无过渡）");
 }
 
+// ---- 9 隧道：根先收到，再冒泡回根 ------------------------------------------
+void DemoTunnel(dui::Panel* root) {
+    dui::Panel* col = Demo(root, L"9 隧道：根 → 父 → 子 → 父 → 根");
+    dui::Text* log = col->AddChild<dui::Text>(L"", dui::Style().Height(110.f));
+    auto say = [log](const wchar_t* s) { log->SetText(log->Text_() + s + L"\n"); };
+    dui::Panel* outer = Box(col,   190.f, 84.f, 0xFFD1D5DB);
+    dui::Panel* inner = Box(outer, 120.f, 48.f, 0xFF2563EB);
+
+    // 隧道：绑在上级容器，却比子元素先收到。在这里置 e.handled = true 可拦掉
+    // 后面全部阶段（子元素连 Down 都收不到），用于预判/过滤。
+    col->OnPointerDown([say, log](dui::PointerEvent&) {
+        log->SetText(L"");
+        say(L"1 根（隧道）");
+    }, dui::Phase::Tunnel);
+    outer->OnPointerDown([say](dui::PointerEvent&) {
+        say(L"2 父（隧道）");
+    }, dui::Phase::Tunnel);
+
+    // 冒泡：默认阶段，命中元素 → 父 → 根；同一元素两个阶段的处理器互不覆盖。
+    inner->OnPointerDown([say](dui::PointerEvent&) { say(L"3 子（冒泡）"); });
+    outer->OnPointerDown([say](dui::PointerEvent&) { say(L"4 父（冒泡）"); });
+    col->OnPointerDown([say](dui::PointerEvent&)   { say(L"5 根（冒泡）"); });
+}
+
 class EventWindow final : public dui::Window {
 public:
     EventWindow()
         : dui::Window(dui::WindowOptions{
               .title  = L"DUI 事件示例集",
               .width  = 1200.f,
-              .height = 620.f,
+              .height = 900.f,
           }) {}
 
 protected:
@@ -185,6 +211,7 @@ protected:
         DemoWheel(root);
         DemoKeyboard(root);
         DemoWhen(root);
+        DemoTunnel(root);
     }
 };
 

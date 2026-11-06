@@ -45,15 +45,15 @@ void SetPressedChain(Element* hit, bool on);
 // 元素级指针事件派发（UI/Event.cpp）：
 //   移入/移出 —— 直达事件：按"悬停链"差分触发（进入新链的元素触发移入，
 //                 离开旧链的元素触发移出；移到子元素上不算离开父元素）
-//   移动/按下/弹起/滚轮 —— 冒泡：从命中元素向上，处理器置 handled 可终止
-// 派发只经过"有绑定者"的元素，无绑定直接跳过。
+//   移动/按下/弹起/滚轮 —— 双阶段：隧道（根 → 命中）+ 冒泡（命中 → 根）
+// 派发只经过"有绑定者"的元素，无绑定直接跳过；handled 可终止后续阶段。
 void DispatchHoverTransitions(Element* previous, Element* current, const Vec2& pt);
 void DispatchPointerMove(Element* hit, const Vec2& pt);
 void DispatchPointerDown(Element* hit, const Vec2& pt);
 void DispatchPointerUp(Element* hit, const Vec2& pt);
 bool DispatchWheel(Element* hit, const Vec2& pt, float delta, bool horizontal);
 
-// 键盘事件派发（UI/Event.cpp）：先到焦点元素，再沿祖先链冒泡。
+// 键盘事件派发（UI/Event.cpp）：从焦点元素出发，双阶段路由（隧道 + 冒泡）。
 // 返回 true 表示已被处理（handled）——调用方据此决定默认行为（如 Tab 移焦）。
 bool DispatchKeyDown(Element* target, int key, bool ctrl, bool shift, bool alt);
 bool DispatchKeyUp(Element* target, int key, bool ctrl, bool shift, bool alt);

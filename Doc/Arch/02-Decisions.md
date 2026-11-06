@@ -325,10 +325,10 @@ Doc/Arch/                文档
 
 | 决策项 | 结论 | 理由 |
 | --- | --- | --- |
-| 绑定形态 | `btn->OnClick(fn)` / `OnClick(this, &T::Method)` / `AddHandler(id, h)` 三形态 | 语义糖保便利（R1），底层入口保完整（R3） |
-| 处理器存储 | `Handler`（fn 指针 + ctx 指针，16 B）直调；`SmallFn` 捕获闭包列 P1；不用 `std::function` | 分发热路径零分配零虚表；注册期构建才发生 |
-| 路由 | **冒泡 + 捕获（隧道）双阶段**（MVP 即提供）+ `handled` + 直达事件；处理器以 `Phase` 参数声明阶段，事件 ID 单表不成对 | 拦截/预判是常见需求；单表 + Phase 参数避免事件 ID 成对膨胀 |
-| 指针捕获 | `SetPointerCapture()`，拖拽基础 | 抬起前 Move/Up 直达捕获者 |
+| 绑定形态 | `btn->OnClick(fn)` / `OnClick(this, &T::Method)` / `OnXxx(fn, dui::Phase::Tunnel)` | 具名绑定覆盖全部可路由事件，末尾可选 `Phase` 声明阶段 |
+| 处理器存储 | 具名槽 + `std::function<void(E&)>`，`Handlers` 惰性分配 | 派发期只做槽判空 + 直调，无事件 ID 查表、无堆分配 |
+| 路由 | **冒泡 + 捕获（隧道）双阶段** + `handled` + 直达事件；`Phase` 参数声明阶段 | 拦截/预判是常见需求；不引入事件 ID 表与成对 Preview 事件 |
+| 指针捕获 | `Element::SetCapture()`，拖拽基础 | 抬起前 Move/Up 直达捕获者 |
 | 焦点 | 唯一焦点 + Tab 链（树序 + `focusable`/`tabStop`）；焦点态自动写 `State::Focused` 联动样式 | 焦点视觉零成本接入样式系统 |
 | 分发期改树 | 允许修改/标脏；销毁走延迟删除队列 | 不把生命周期复杂度转嫁给开发者 |
 | 生命周期 | 处理器随元素销毁自动摘除；ctx 裸指针由开发者负责，weak token 列 P2 | 简单显式，反馈频繁再托管 |

@@ -83,6 +83,18 @@ public:
             RequestFrame();
             return;
         }
+        if (Element* cap = CapturedElement()) {
+            // 捕获期间：不命中测试、不更新悬停链，Move 直达捕获者（仍从其开始冒泡）
+            if (hover_ != nullptr) {
+                UpdateHoverChain(hover_, nullptr);
+                DispatchHoverTransitions(hover_, nullptr, pt);
+                hover_ = nullptr;
+            }
+            lastPt_ = pt;
+            DispatchPointerMove(cap, pt);
+            RequestFrame();
+            return;
+        }
         Element* hit = HitTest(window_.Root(), pt);
         UpdateHoverChain(hover_, hit);
         DispatchHoverTransitions(hover_, hit, pt);   // 移入/移出（悬停链差分）
@@ -119,15 +131,24 @@ public:
                 RequestFrame();
                 return;
             }
-            Element* hit = HitTest(window_.Root(), pt);
+            Element* cap = CapturedElement();
+            Element* hit = cap != nullptr ? cap : HitTest(window_.Root(), pt);
             SetPressedChain(pressed_, false);
-            DispatchPointerUp(hit, pt);                // 弹起（冒泡，按当前命中位置）
-            // Click 合成：按下抬起同元素且拖出在阈值内（06-Events §3：4 dip）
-            constexpr float kDragThreshold = 4.f;
-            if (pressed_ != nullptr && hit == pressed_ &&
-                pt.x >= pressPt_.x - kDragThreshold && pt.x <= pressPt_.x + kDragThreshold &&
-                pt.y >= pressPt_.y - kDragThreshold && pt.y <= pressPt_.y + kDragThreshold) {
-                DispatchClick(pressed_);
+            DispatchPointerUp(hit, pt);                // 弹起（冒泡）
+            if (cap != nullptr) {
+                SetCaptureElement(nullptr);            // 抬起自动释放捕获（拖拽不合成 Click）
+                Element* cur = HitTest(window_.Root(), pt);
+                UpdateHoverChain(hover_, cur);         // 恢复悬停链到当前指针位置
+                DispatchHoverTransitions(hover_, cur, pt);
+                hover_ = cur;
+            } else {
+                // Click 合成：按下抬起同元素且拖出在阈值内（06-Events §3：4 dip）
+                constexpr float kDragThreshold = 4.f;
+                if (pressed_ != nullptr && hit == pressed_ &&
+                    pt.x >= pressPt_.x - kDragThreshold && pt.x <= pressPt_.x + kDragThreshold &&
+                    pt.y >= pressPt_.y - kDragThreshold && pt.y <= pressPt_.y + kDragThreshold) {
+                    DispatchClick(pressed_);
+                }
             }
             pressed_ = nullptr;
         }
@@ -415,7 +436,10 @@ int Application::Run(Window& window) {
         dispatcher_.Drain();
         // 窗口失活（切到别的应用）→ 清焦点：编辑控件随之失焦 —— 选区消失、
         // 光标停止闪烁。最小化不在此列（保留焦点，还原后可直接继续输入）。
-        if (host.TakeDeactivate()) SetFocus(nullptr);
+        if (host.TakeDeactivate()) {
+            SetFocus(nullptr);
+            SetCaptureElement(nullptr);   // 失活时可能收不到抬起消息 → 防捕获残留
+        }
         window.SyncTickTimer();      // UI 统一节拍：按需启停 / 换周期（渲染前同步）
         // 最小化：客户区尺寸为 0 → RenderFrame 直接返回且**不清脏标记**，若此时
         // 仍按 dirty 进帧，主循环永远进不了 WaitMessage → 退化成忙转（CPU 100%）。

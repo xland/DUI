@@ -411,3 +411,20 @@ Doc/Arch/                文档
 | 内存 | 中文界面 UTF-16 更省（2 B/字 vs UTF-8 3 B/字） | 纯 ASCII 时相反，量级可忽略 |
 
 **已定：按上表。** 与 [11-Text.md](./11-Text.md) §4 的"模型内部 UTF-16"一致；示例与文档片段已统一改为 `L"..."`。
+
+---
+
+## ADR-027 UI 线程的 COM 单元（M7.1，已定并实测）
+
+**背景**：M7 初版沿用 `Graphics/ImageCodec.cpp` 的进程级 `CoInitializeEx(COINIT_MULTITHREADED)`。`Samples/Dialog` 实测点击「打开/保存/选择文件夹」后进程无响应、且枚举不到任何对话框窗口（卡在 `IFileDialog::Show` 内部）；`MessageBoxW` 不受影响。Common Item Dialog 与 Shell 扩展是 STA 组件，MTA 线程跑其模态循环会死锁。
+
+| 决策项 | 结论 | 理由 |
+| --- | --- | --- |
+| 初始化 | `Application::Run` 起始调用 `OleInitialize(nullptr)`，建立 **STA（主 STA / `APTTYPE_MAINSTA`）**，进程级持有不配对 Uninitialize | STA + OLE 是 Win32 UI 线程的常规形态，覆盖 Shell 拖放 / 扩展 |
+| 顺序 | 必须早于任何可能初始化 COM 的组件（尤其 WIC 的 MTA 尝试） | COM 单元在本线程一旦建立不能改；WIC 随后请求 MTA 只返回 `RPC_E_CHANGED_MODE`，COM 仍可用，WIC 在 STA 下同样工作 |
+| 兜底 | `Platform/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验，放行 `APTTYPE_STA` / `APTTYPE_MAINSTA`，其余返回 `Error` | 自定义宿主若先把 UI 线程建成 MTA，宁可显式报错也不挂界面 |
+| 背景线程 | 不变：不初始化 COM；WIC 若在工作线程首次使用，其自身的 MTA 初始化照旧 | 后台只碰纯数据（ADR-022 / 07-Threading §3.1） |
+
+**不采用**：专用 STA 线程 + 跨线程 owner + 同步等待（复杂度高、owner 归属易错）。
+
+**验证**：改 STA 后四类系统对话框均能弹出、关闭后主循环恢复、进程响应正常；15 个示例（含 WIC 的 `Image`）启动无回归。注意 `OleInitialize` 得到的是 `APTTYPE_MAINSTA`，只判断 `APTTYPE_STA` 会把合法单元误判成错误 → 弹窗静默不出现（`../Pitfalls.md §4.11`）。

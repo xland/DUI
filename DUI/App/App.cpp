@@ -11,6 +11,8 @@
 #include "Platform/Window.h"
 #include "UI/Scroller.h"
 
+#include <ole2.h>
+
 #include <cstdio>
 
 namespace dui {
@@ -260,6 +262,9 @@ public:
             pendingDeactivate_ = false;
             return;
         }
+        // 系统对话框弹出期间宿主失活不是「切到别的应用」：不清编辑控件焦点
+        // （17-Dialogs §6.2；dialogDepth_ 由 App/Dialog.cpp 在调用前后维护）。
+        if (window_.dialogDepth_ > 0) return;
         pendingDeactivate_ = true;
     }
 
@@ -386,6 +391,17 @@ Application::~Application() = default;
 
 int Application::Run(Window& window) {
     lastError_.clear();
+
+    // UI 线程的 COM 单元必须是 STA（17-Dialogs §9）：Common Item Dialog 与
+    // Shell 扩展是 STA 组件，MTA 下 IFileDialog::Show 会在创建窗口前死锁。
+    // OleInitialize 同时建立 STA 与 OLE（Shell 拖放/扩展需要）；必须早于 WIC
+    // 的 CoInitializeEx(MTA)（后者在已 STA 的线程上只返回 RPC_E_CHANGED_MODE，
+    // COM 仍可用）。进程级持有，不配对 Uninitialize（与 ImageCodec.cpp 一致）。
+    const HRESULT uiCom = OleInitialize(nullptr);
+    if (uiCom == RPC_E_CHANGED_MODE) {
+        std::printf("[DUI] COM already initialized as MTA on UI thread; "
+                    "system file dialogs will report an error\n");
+    }
 
     graphics::Device device;
     platform::NativeWindow native;

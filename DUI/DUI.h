@@ -12,6 +12,7 @@
 #include "UI/UI.h"
 #include "UI/Canvas.h"
 #include "UI/Scroller.h"
+#include "App/Dialog.h"
 #include "App/App.h"
 
 namespace dui {

@@ -89,7 +89,13 @@
     <ClInclude Include="App\App.h">
       <Filter>头文件\App</Filter>
     </ClInclude>
+    <ClInclude Include="App\Dialog.h">
+      <Filter>头文件\App</Filter>
+    </ClInclude>
     <ClInclude Include="Platform\Window.h">
+      <Filter>头文件\Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="Platform\Dialog.h">
       <Filter>头文件\Platform</Filter>
     </ClInclude>
     <ClInclude Include="Graphics\Graphics.h">
@@ -151,10 +157,16 @@
     <ClCompile Include="App\App.cpp">
       <Filter>源文件\App</Filter>
     </ClCompile>
+    <ClCompile Include="App\Dialog.cpp">
+      <Filter>源文件\App</Filter>
+    </ClCompile>
     <ClCompile Include="App\Frame.cpp">
       <Filter>源文件\App</Filter>
     </ClCompile>
     <ClCompile Include="Platform\Window.cpp">
+      <Filter>源文件\Platform</Filter>
+    </ClCompile>
+    <ClCompile Include="Platform\Dialog.cpp">
       <Filter>源文件\Platform</Filter>
     </ClCompile>
     <ClCompile Include="Graphics\Graphics.cpp">

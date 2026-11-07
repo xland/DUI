@@ -89,7 +89,9 @@
     <ClInclude Include="UI\Canvas.h" />
     <ClInclude Include="UI\Scroller.h" />
     <ClInclude Include="App\App.h" />
+    <ClInclude Include="App\Dialog.h" />
     <ClInclude Include="Platform\Window.h" />
+    <ClInclude Include="Platform\Dialog.h" />
     <ClInclude Include="Graphics\Graphics.h" />
     <ClInclude Include="Graphics\ImageCodec.h" />
   </ItemGroup>
@@ -111,8 +113,13 @@
     <ClCompile Include="UI\Layout.cpp" />
     <ClCompile Include="UI\Event.cpp" />
     <ClCompile Include="App\App.cpp" />
+    <ClCompile Include="App\Dialog.cpp" />
     <ClCompile Include="App\Frame.cpp" />
     <ClCompile Include="Platform\Window.cpp" />
+    <!-- 与 App\Dialog.cpp 同名：显式指定 obj 名，避免 MSB8027 输出冲突 -->
+    <ClCompile Include="Platform\Dialog.cpp">
+      <ObjectFileName>$(IntDir)Platform_Dialog.obj</ObjectFileName>
+    </ClCompile>
     <ClCompile Include="Graphics\Graphics.cpp" />
     <ClCompile Include="Graphics\ImageCodec.cpp" />
   </ItemGroup>

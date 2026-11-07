@@ -75,19 +75,20 @@
 | [11-Text.md](./11-Text.md) | 文本：排版引擎、富文本文档模型、编辑器控件分层 |
 | [12-Windowing.md](./12-Windowing.md) | 窗口与高 DPI：感知级别、三套坐标、DPI 切换时序 |
 | [15-Properties.md](./15-Properties.md) | 属性主表（唯一事实来源）：属性全集、标志位、运行时读路径 |
+| [17-Dialogs.md](./17-Dialogs.md) | 系统对话框：打开/保存文件、选择文件夹、消息警告（分层、API、验收；使用说明见 `../Dialogs.md`） |
 
 随讨论推进，将与实现相关的细节拆分为：`13-Memory.md`、`14-Build.md`。
 
 ## 6. 当前工程状态
 
 ```
-DUI.slnx                 解决方案：x64 单一平台，十二个工程（1 库 + 11 示例）
+DUI.slnx                 解决方案：x64 单一平台，十六个工程（1 库 + 15 示例）
 DUI/                     库工程（DUI.vcxproj，静态库）
   DUI.h                  公共入口（业务代码唯一 include）
   Core/                  Result、String/Color/Rect/Thickness、协程 Task<T>/Task<void> + PostUi 安全回投
   UI/                    Style（声明集 + 链式构造合一）、Element、Panel、Text/Button、TextBox/TextArea、Image、Canvas/Scroller、Focus、事件（M1 骨架）
-  App/                   Application、Window/WindowOptions（M1 骨架）
-  Platform/              NativeWindow（HWND 封装、窗口过程、DPI 感知清单）（M2）
+  App/                   Application、Window/WindowOptions（M1 骨架）+ 系统对话框公共 API/装配（Dialog.h/.cpp，M7）
+  Platform/              NativeWindow（HWND 封装、窗口过程、DPI 感知清单）（M2）+ 系统对话框 Win32/COM 实现（Dialog.h/.cpp，M7）
   Graphics/              Device（D3D11/Flip Model/BGRA8）+ Painter（有序绘制指令 + 状态槽 / SDF 圆角矩形 / 字形 / 形状 / 图像）（M3/M5/M5.6/B2）
   Text/                  DWrite 排版 + GlyphAtlas 灰度图集（M5）
 Samples/                 示例工程（每个示例一个子目录 = 一个工程）
@@ -105,6 +106,7 @@ Samples/                 示例工程（每个示例一个子目录 = 一个工�
   CustomCtrl/            自定义控件演示（派生 Element：自然尺寸 / OnPaint 自绘 / 指针拖拽 / 状态变体 / 变更回调）
   Animation/             动画示例集（属性补间 / 缓动 / 句柄 / 位置·旋转·缩放 / 布局尺寸对照 / 组合动画）
   Async/                 异步示例（协程 Background/Foreground：子线程跑任务，过程中切回 UI 更新界面）
+  Dialog/                系统对话框示例（打开/保存文件、选择文件夹、消息警告 + MessageBox 宏兼容守卫）
 Build/                   产物根：Build\<工程>\<配置>\ 最终产物；Build\Temp\<工程>\<配置>\ 中间产物
 DUI.props                公共编译基线（库与子工程共同 import，根目录）
 Doc/Arch/                本文档集
@@ -130,6 +132,7 @@ D3D11 矩形渲染 + 最小输入；M4 Dispatcher + 线程池 + 真协程 + Clic
 | M5.9 | ✅ 键盘事件（KeyDown/KeyUp/Char 冒泡）+ 焦点与 Tab 链 + `dui::TextBox`/`dui::TextArea` | 06-Events / 11-Text |
 | M5.10 | ✅ 图像控件 `dui::Image`（WIC 解码 + 图像批 + 纹理仓库） | 16-Image / 10-Rendering |
 | M6 | ✅ 命令式属性动画（`Animate` / `AnimationHandle`）+ 统一 ticker；观测指标待做 | 05-Animation / 10-Rendering |
+| M7 | ✅ 系统对话框：打开/保存文件、选择文件夹、消息警告（三态结果 + C++20 `std::span` + `MessageBox` 宏兼容）；M7.1 修 MTA 死锁，UI 线程 COM 固定 STA（ADR-027）；人工实测待做 | 17-Dialogs / 02-Decisions |
 
 编译基线**已落地并验证**（Debug/Release 均可构建，产物 `DUI.lib`）：
 

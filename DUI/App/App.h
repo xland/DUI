@@ -20,6 +20,7 @@
 
 #include "Core/Dispatcher.h"
 #include "UI/UI.h"
+#include "App/Dialog.h"
 
 namespace dui {
 
@@ -88,6 +89,21 @@ public:
     // 客户区尺寸（DIP）：自绘边框热区判定用（OnNcHitTest）
     Vec2 ClientSizeDip() const;
 
+    // ---- 系统对话框（17-Dialogs）：同步模态，UI 线程、Run 建好 HWND 后调用 ----
+    // 结果三态：IsOk / IsCancelled / IsError；只返回路径，不读写文件。
+    // 调用期间系统接管消息泵，框架主循环挂起（Dispatcher 回投延后但不丢）。
+    DialogResult<std::vector<String>> OpenFile  (const OpenFileOptions&   options = {});
+    DialogResult<String>             SaveFile  (const SaveFileOptions&   options = {});
+    DialogResult<String>             OpenFolder(const OpenFolderOptions& options = {});
+    MessageResult                    MessageBox(const MessageOptions&    options);
+
+    // Win32 同名宏（#define MessageBox MessageBoxW）兼容别名：仅当业务 TU 在
+    // DUI.h 之后才 include windows.h 时被预处理命中；业务不要主动调用。
+    MessageResult MessageBoxW(const MessageOptions& options);
+
+    MessageResult Warn(const wchar_t* text, const wchar_t* title = nullptr);
+    bool          Confirm(const wchar_t* text, const wchar_t* title = nullptr);
+
 protected:
     // 原生窗口已创建、尚未显示：唯一搭界面的地方（构建期间窗口不可见）
     virtual void OnCreate() {}
@@ -116,6 +132,8 @@ private:
     std::unique_ptr<Panel> root_;
     uintptr_t tickTimer_ = 0;          // UI 统一节拍定时器（0 = 未启动）
     unsigned  tickPeriodMs_ = 0;       // 当前周期（变化时才重设 SetTimer）
+    // 系统对话框弹出期间 > 0：宿主失活不按「切到别的应用」清焦点（17-Dialogs §6.2）
+    int       dialogDepth_ = 0;
 
     // M2 内部用（M3 交换链创建也需要）；不进公共 API
     void* NativeHandle() const noexcept;   // HWND（App.cpp 定义）

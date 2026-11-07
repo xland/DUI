@@ -17,4 +17,5 @@
   <Project Path="Samples/Async/Async.vcxproj" Id="d4a1e6b7-2f83-4c50-91ea-7b3c8d5f0a29" />
   <Project Path="Samples/CustomCtrl/CustomCtrl.vcxproj" Id="9b3e7c14-6d28-4f05-8a71-2c5d9e0b3f68" />
   <Project Path="Samples/Style/Style.vcxproj" Id="1f6c9a35-7b42-4d18-9e03-5a8c2d7b0f64" />
+  <Project Path="Samples/Dialog/Dialog.vcxproj" Id="e2b7c4d1-9a53-4f80-b26e-8d1c5a70f3b6" />
 </Solution>

@@ -8,7 +8,7 @@
 //    · 拖拽边框缩放窗口：OnNcHitTest 命中四边 / 四角 → HTTOP / HTLEFT /
 //      HTRIGHT / HTBOTTOM / HTTOPLEFT / HTTOPRIGHT / HTBOTTOMLEFT /
 //      HTBOTTOMRIGHT，由系统接管缩放；
-//    · 标题栏按钮：iconfont 图标（最小化 / 最大化或还原 / 关闭）。
+//    · 标题栏按钮：框架内置矢量 Icon（最小化 / 最大化或还原 / 关闭）。
 //
 //  业务只报"命中区"，移动与缩放全由系统完成 —— 不必自己处理鼠标按下、移动、
 //  抬起，也不必自己做窗口几何计算（12-Windowing §6）。
@@ -33,12 +33,7 @@ namespace {
 constexpr float kTitleBarHeight = 36.f;
 constexpr float kResizeBorder   = 8.f;   // 边框缩放热区厚度（四边通用，顶边压在标题栏上）
 constexpr float kButtonWidth    = 46.f;  // 标题栏按钮宽度
-
-// ---- iconfont 图标码位（字体包附带的 iconfont.json）----
-constexpr wchar_t kGlyphClose    = 0xE6E7;
-constexpr wchar_t kGlyphMinimize = 0xE6E8;
-constexpr wchar_t kGlyphMaximize = 0xE6E5;
-constexpr wchar_t kGlyphRestore  = 0xE6E9;
+constexpr float kIconSize       = 12.f;  // 矢量图标尺寸（Style().Width/Height）
 
 // ---- 配色（0xAARRGGBB）----
 constexpr dui::Color kTitleBarBg   = 0xFF2B2B33;
@@ -49,23 +44,6 @@ constexpr dui::Color kCloseHover   = 0xFFE81123;   // Windows 关闭按钮红
 constexpr dui::Color kContentBg    = 0xFFF6F7F9;
 constexpr dui::Color kTextPrimary  = 0xFF1F2937;
 constexpr dui::Color kTextSecond   = 0xFF6B7280;
-
-// exe 所在目录 + 文件名（PostBuildEvent 把 iconfont.ttf 拷到 exe 目录）
-dui::String FontPathInExeDir() {
-    wchar_t buf[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, buf, MAX_PATH);
-    dui::String path(buf);
-    const size_t slash = path.find_last_of(L'\\');
-    if (slash != dui::String::npos) path.resize(slash + 1);
-    return path + L"iconfont.ttf";
-}
-
-// 单个图标码位 → 文本（Text 的内容）
-dui::String GlyphText(wchar_t cp) {
-    dui::String s;
-    s.push_back(cp);
-    return s;
-}
 
 class CustomFrameWindow final : public dui::Window {
 public:
@@ -84,10 +62,6 @@ protected:
             .FlexDirection(dui::FlexDirection::Column)
             .Background(0xFFFFFFFF));
 
-        // 图标字体族：Style().FontFamily 只存指针（不拷字符串），族名串必须活过
-        // 整个使用期 —— 局部 String 出函数即悬空 → 图标全渲染成方框，故用 static。
-        static const dui::String family = dui::LoadFontFamily(FontPathInExeDir().c_str());
-
         // ---- 标题栏（自绘）----
         dui::Panel* bar = root->AddChild<dui::Panel>(dui::Style()
             .FlexDirection(dui::FlexDirection::Row)
@@ -104,14 +78,14 @@ protected:
 
         bar->AddChild<dui::Panel>(dui::Style().FlexGrow(1.f));   // 弹性占位：按钮靠右
 
-        // ---- 标题栏按钮（iconfont 图标）----
-        dui::Panel* minBtn = MakeIconButton(bar, family, kGlyphMinimize, kButtonHover, nullptr);
+        // ---- 标题栏按钮（框架内置矢量 Icon）----
+        dui::Panel* minBtn = MakeIconButton(bar, dui::IconName::Minimize, kButtonHover, nullptr);
         minBtn->OnClick(this, &CustomFrameWindow::OnMinimizeClick);
 
-        dui::Panel* maxBtn = MakeIconButton(bar, family, kGlyphMaximize, kButtonHover, &maximizeIcon_);
+        dui::Panel* maxBtn = MakeIconButton(bar, dui::IconName::Maximize, kButtonHover, &maximizeIcon_);
         maxBtn->OnClick(this, &CustomFrameWindow::OnMaximizeClick);
 
-        dui::Panel* closeBtn = MakeIconButton(bar, family, kGlyphClose, kCloseHover, nullptr);
+        dui::Panel* closeBtn = MakeIconButton(bar, dui::IconName::Close, kCloseHover, nullptr);
         closeBtn->OnClick(this, &CustomFrameWindow::OnCloseClick);
 
         // ---- 内容区 ----
@@ -141,7 +115,7 @@ protected:
     // 尺寸 / 最大化状态变化 → 刷新最大化按钮的图标（最大化 ↔ 还原）
     void OnStateChanged() override {
         if (maximizeIcon_ == nullptr) return;
-        maximizeIcon_->SetText(GlyphText(IsMaximized() ? kGlyphRestore : kGlyphMaximize));
+        maximizeIcon_->SetIcon(IsMaximized() ? dui::IconName::Restore : dui::IconName::Maximize);
     }
 
     // 非客户区命中：把"标题栏 / 边框热区"报给系统，由系统接管移动与缩放
@@ -190,10 +164,10 @@ protected:
     }
 
 private:
-    // 标题栏图标按钮：Panel 底板（承载 hover 底色）+ 内部 Text（iconfont 码位）
-    // iconOut 非空时回传图标文本元素（最大化按钮要按窗口状态换图标）
-    dui::Panel* MakeIconButton(dui::Panel* bar, const dui::String& family,
-                                wchar_t glyph, dui::Color hoverBg, dui::Text** iconOut) {
+    // 标题栏图标按钮：Panel 底板（承载 hover 底色）+ 内部 dui::Icon（矢量自绘）
+    // iconOut 非空时回传图标控件（最大化按钮要按窗口状态换图样）
+    dui::Panel* MakeIconButton(dui::Panel* bar, dui::IconName name,
+                                dui::Color hoverBg, dui::Icon** iconOut) {
         dui::Panel* btn = bar->AddChild<dui::Panel>(dui::Style()
             .Width(kButtonWidth)
             .Height(kTitleBarHeight)
@@ -202,20 +176,20 @@ private:
             .JustifyContent(dui::Justify::Center)
             .Cursor(dui::Cursor::Hand));
         btn->When(dui::State::Hover, dui::Style().Background(hoverBg));
-        dui::Text* icon = btn->AddChild<dui::Text>(GlyphText(glyph).c_str(), dui::Style()
-            .FontFamily(family.c_str())
-            .FontSize(14.f)
+        dui::Icon* icon = btn->AddChild<dui::Icon>(dui::Style()
+            .Width(kIconSize).Height(kIconSize)
             .Color(kIconColor));
+        icon->SetIcon(name);
         if (iconOut != nullptr) *iconOut = icon;
         return btn;
     }
 
-    // 点击沿祖先链冒泡（06-Events §5）：点在图标上（命中 Text）也能触发按钮
+    // 点击沿祖先链冒泡（06-Events §5）：点在图标上（命中 Icon）也能触发按钮
     void OnMinimizeClick(dui::ClickEvent&)   { Minimize(); }
     void OnMaximizeClick(dui::ClickEvent&)   { MaximizeOrRestore(); }
     void OnCloseClick(dui::ClickEvent&)      { Close(); }
 
-    dui::Text* maximizeIcon_ = nullptr;
+    dui::Icon* maximizeIcon_ = nullptr;
 };
 
 }  // namespace

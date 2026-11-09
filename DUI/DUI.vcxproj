@@ -81,6 +81,7 @@
     <ClInclude Include="UI\Element.h" />
     <ClInclude Include="UI\Panel.h" />
     <ClInclude Include="UI\Text.h" />
+    <ClInclude Include="UI\Icon.h" />
     <ClInclude Include="UI\TextBox.h" />
     <ClInclude Include="UI\Image.h" />
     <ClInclude Include="UI\Gif.h" />
@@ -102,6 +103,7 @@
     <ClCompile Include="UI\Style.cpp" />
     <ClCompile Include="UI\Element.cpp" />
     <ClCompile Include="UI\Text.cpp" />
+    <ClCompile Include="UI\Icon.cpp" />
     <ClCompile Include="UI\TextBox.cpp" />
     <ClCompile Include="UI\Image.cpp" />
     <ClCompile Include="UI\Gif.cpp" />

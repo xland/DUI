@@ -71,6 +71,9 @@
     <ClInclude Include="UI\Text.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
+    <ClInclude Include="UI\Icon.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
     <ClInclude Include="UI\TextBox.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
@@ -128,6 +131,9 @@
       <Filter>源文件\UI</Filter>
     </ClCompile>
     <ClCompile Include="UI\Text.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\Icon.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
     <ClCompile Include="UI\TextBox.cpp">

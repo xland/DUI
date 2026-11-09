@@ -343,6 +343,12 @@ void Painter::PushShapeQuad(float cx, float cy, float hw, float hh,
                             float p0x, float p0y, float p1x, float p1y,
                             float extra, float halfStroke, Color color, uint32_t kind) {
     if (hw <= 0.f || hh <= 0.f) return;
+    // 形状批的 cov 用 smoothstep(-0.5, 0.5, d)，需要 1 像素 AA 过渡带。
+    // 调用方给的 hw/hh 正好是形状外沿，圆弧 / 圆头在左右（上下）极值处与 quad 边
+    // 相切，外侧半透明边会被硬裁掉 → 看起来"被切平了一点"。外扩 1 物理像素，
+    // 只放大采样范围，SDF 参数（半轴 / 线段端点 / 半 ext）不变，形状本身不动。
+    hw += 1.f;
+    hh += 1.f;
     PaintCommand& c = NewCommand(PaintOp::Shape, 0, PackColor(color, 1.f));
     c.p[0] = cx; c.p[1] = cy; c.p[2] = hw; c.p[3] = hh;
     c.p[4] = p0x; c.p[5] = p0y; c.p[6] = p1x; c.p[7] = p1y;

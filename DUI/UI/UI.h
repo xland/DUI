@@ -6,6 +6,7 @@
 //    UI/Element.h  元素树节点（树结构、状态位、本地覆盖、点击绑定）
 //    UI/Panel.h    容器基类（AddChild 创建即定型）
 //    UI/Text.h     文本控件 + Button
+//    UI/Icon.h     内置矢量图标（IconName + Icon 控件）
 //    UI/TextBox.h  文本编辑控件（TextBox 单行 / TextArea 多行 / 密码掩码）
 //    UI/Image.h    图像控件（位图；Windows 内置解码器格式）
 //    UI/Gif.h      动画图像控件（Pause / Play / Stop / SetLoopCount）
@@ -21,6 +22,7 @@
 #include "UI/Element.h"
 #include "UI/Panel.h"
 #include "UI/Text.h"
+#include "UI/Icon.h"
 #include "UI/TextBox.h"
 #include "UI/Image.h"
 #include "UI/Gif.h"

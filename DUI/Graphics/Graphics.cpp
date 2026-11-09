@@ -14,6 +14,7 @@
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3dcompiler.lib")
+#pragma comment(lib, "dcomp.lib")
 
 namespace dui::graphics {
 
@@ -463,12 +464,17 @@ Device::~Device() {
         if (t.tex != nullptr) t.tex->Release();
         if (t.srv != nullptr) t.srv->Release();
     }
+    // visual 持有交换链的引用，先释放视觉树再释放交换链
+    if (dcompVisual_ != nullptr) dcompVisual_->Release();
+    if (dcompTarget_ != nullptr) dcompTarget_->Release();
+    if (dcompDevice_ != nullptr) dcompDevice_->Release();
     if (swap_ != nullptr) swap_->Release();
     if (ctx_ != nullptr) ctx_->Release();
     if (dev_ != nullptr) dev_->Release();
 }
 
-bool Device::Init(HWND hwnd, String& error) {
+bool Device::Init(HWND hwnd, bool transparent, String& error) {
+    transparent_ = transparent;
     constexpr D3D_FEATURE_LEVEL kLevels[] = {
         D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0,
     };
@@ -488,7 +494,8 @@ bool Device::Init(HWND hwnd, String& error) {
     IDXGIFactory2* factory = nullptr;
     hr = CreateDXGIFactory1(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(&factory));
     if (SUCCEEDED(hr)) {
-        // Flip Model + BGRA8 + 2 缓冲（10-Rendering §5 已定）
+        // Flip Model + BGRA8 + 2 缓冲（10-Rendering §5 已定）。统一走 Composition
+        // 交换链，AlphaMode 只改取值、不再分流创建方式；IGNORE 时普通窗口无额外开销。
         DXGI_SWAP_CHAIN_DESC1 sd{};
         sd.Width = static_cast<UINT>(w);
         sd.Height = static_cast<UINT>(h);
@@ -496,12 +503,31 @@ bool Device::Init(HWND hwnd, String& error) {
         sd.SampleDesc.Count = 1;
         sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         sd.BufferCount = 2;
-        sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        hr = factory->CreateSwapChainForHwnd(dev_, hwnd, &sd, nullptr, nullptr, &swap_);
+        sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+        sd.Scaling = DXGI_SCALING_STRETCH;
+        sd.AlphaMode = transparent ? DXGI_ALPHA_MODE_PREMULTIPLIED : DXGI_ALPHA_MODE_IGNORE;
+        hr = factory->CreateSwapChainForComposition(dev_, &sd, nullptr, &swap_);
         factory->Release();
     }
     if (FAILED(hr)) {
-        error = L"CreateSwapChainForHwnd failed";
+        error = L"CreateSwapChainForComposition failed";
+        return false;
+    }
+
+    // 窗口带 WS_EX_NOREDIRECTIONBITMAP，内容完全由这棵视觉树交给 DWM 合成。
+    IDXGIDevice* dxgiDevice = nullptr;
+    hr = dev_->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgiDevice));
+    if (SUCCEEDED(hr)) {
+        hr = DCompositionCreateDevice(dxgiDevice, IID_PPV_ARGS(&dcompDevice_));
+        dxgiDevice->Release();
+    }
+    if (SUCCEEDED(hr)) hr = dcompDevice_->CreateTargetForHwnd(hwnd, TRUE, &dcompTarget_);
+    if (SUCCEEDED(hr)) hr = dcompDevice_->CreateVisual(&dcompVisual_);
+    if (SUCCEEDED(hr)) hr = dcompVisual_->SetContent(swap_);
+    if (SUCCEEDED(hr)) hr = dcompTarget_->SetRoot(dcompVisual_);
+    if (SUCCEEDED(hr)) hr = dcompDevice_->Commit();
+    if (FAILED(hr)) {
+        error = L"DirectComposition setup failed";
         return false;
     }
 
@@ -746,8 +772,10 @@ void Device::EnsureVertexBuffer(uint32_t vertexCount) {
 
 void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
     if (rtv_ == nullptr) return;
-    constexpr float kBlack[4] = {0.f, 0.f, 0.f, 1.f};
-    ctx_->ClearRenderTargetView(rtv_, kBlack);
+    // transparent 窗口清成全透明，DWM 按视觉树的 alpha 与桌面合成；
+    // 普通窗口仍用原来的不透明黑底，视觉不变。
+    const float kClear[4] = {0.f, 0.f, 0.f, transparent_ ? 0.f : 1.f};
+    ctx_->ClearRenderTargetView(rtv_, kClear);
     if (units == nullptr || unitCount == 0) return;
 
     // 每条指令 = 一个 quad；VB 按段顺序线性排布（段内 stride 一致）

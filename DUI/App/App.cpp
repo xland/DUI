@@ -299,9 +299,9 @@ Window::Window(const WindowOptions& options) : options_(options) {
 
 Window::~Window() = default;
 
-void* Window::NativeHandle() const noexcept {
+HWND Window::NativeHandle() const noexcept {
     if (native_ == nullptr) return nullptr;
-    return static_cast<void*>(static_cast<platform::NativeWindow*>(native_)->Handle());
+    return static_cast<platform::NativeWindow*>(native_)->Handle();
 }
 
 // 窗口操作（无边框窗口的自绘标题栏按钮）
@@ -418,10 +418,7 @@ int Application::Run(Window& window) {
     // 初始居中：仍在 OnCreate / Show 之前，构建过程不可见（App.h 契约）
     if (window.options_.center) native.CenterOnScreen();
 
-    if (!device.Init(native.Handle(), lastError_)) {
-        std::printf("[DUI] device init failed: %ls\n", lastError_.c_str());
-        return 1;
-    }
+    if (!device.Init(native.Handle(), window.options_.transparent, lastError_)) return 1;
 
     // UI Dispatcher（07-Threading）：后台完成回投 → PostMessage 唤醒 → [调度] 排空
     constexpr unsigned kWakeMessage = WM_APP;   // 窗口过程仅借它唤醒泵，无副作用

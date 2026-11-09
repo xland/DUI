@@ -82,7 +82,7 @@
 ## 6. 当前工程状态
 
 ```
-DUI.slnx                 解决方案：x64 单一平台，十七个工程（1 库 + 16 示例）
+DUI.slnx                 解决方案：x64 单一平台，十八个工程（1 库 + 17 示例）
 DUI/                     库工程（DUI.vcxproj，静态库）
   DUI.h                  公共入口（业务代码唯一 include）
   Core/                  Result、String/Color/Rect/Thickness、协程 Task<T>/Task<void> + PostUi 安全回投
@@ -104,6 +104,7 @@ Samples/                 示例工程（每个示例一个子目录 = 一个工�
   TextInput/             文本输入演示（单行 TextBox / 密码框 / 多行 TextArea + 焦点与 Tab 链）
   Image/                 图像控件演示（dui::Image：WIC 解码 / 自然尺寸 / 拉伸 / 透明度）
   CustomFrame/           自定义窗口边框与标题栏演示（Chrome::Borderless + DWM 阴影 + 拖动移动 + 拖边框缩放 + 矢量 Icon 标题栏按钮）
+  CircleWindow/          圆形半透明窗口（WindowOptions::transparent + DirectComposition / SetWindowRgn 圆裁剪 / 全窗口 HTCAPTION 拖动 / Canvas 细线圆边框）
   CustomCtrl/            自定义控件演示（派生 Element：自然尺寸 / OnPaint 自绘 / 指针拖拽 / 状态变体 / 变更回调）
   Animation/             动画示例集（属性补间 / 缓动 / 句柄 / 位置·旋转·缩放 / 布局尺寸对照 / 组合动画）
   Async/                 异步示例（协程 Background/Foreground：子线程跑任务，过程中切回 UI 更新界面）

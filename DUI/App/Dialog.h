@@ -1,7 +1,7 @@
 // ============================================================================
 //  DUI/App/Dialog.h — 系统对话框公共 API（17-Dialogs）
 //
-//  公共头不含 windows.h：owner HWND 以 void* 在层间传递，Win32/COM 细节全在
+//  owner HWND 以 void* 在层间传递，Win32/COM 细节全在
 //  Platform/Dialog.cpp。结果三态（Ok / Cancelled / Error）与现有 Result<T> 分开：
 //  Result<T> 无法区分「用户取消」与「真出错」。
 //

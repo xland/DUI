@@ -1,5 +1,5 @@
 // ============================================================================
-//  DUI/Platform/Window.h — 平台窗口封装（内部头，不进 DUI.h，公共 API 无 windows.h）
+//  DUI/Platform/Window.h — 平台窗口封装（内部头，不进 DUI.h）
 //
 //  分层（01-Layering §1）：Platform 是最底层，不得反向依赖 App/UI ——
 //  窗口事件经 NativeWindowHost 抽象上抛，由 App 层适配到 dui::Window

@@ -12,6 +12,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <dcomp.h>
 #include <memory>
 #include <vector>
 
@@ -152,7 +153,9 @@ public:
     Device(const Device&) = delete;
     Device& operator=(const Device&) = delete;
 
-    bool Init(HWND hwnd, String& error);
+    // transparent = true → PREMULTIPLIED + 全透明清屏，背景可透视桌面（ADR-010）；
+    // 默认 false → IGNORE + 不透明清屏，视觉与普通窗口一致。
+    bool Init(HWND hwnd, bool transparent, String& error);
 
     // 幂等：尺寸未变直接返回。DPI 变化与窗口缩放共用此入口（12-Windowing §5）
     void Resize(const Vec2& clientPx);
@@ -179,6 +182,10 @@ private:
     ID3D11Device*           dev_ = nullptr;
     ID3D11DeviceContext*    ctx_ = nullptr;
     IDXGISwapChain1*        swap_ = nullptr;
+    // DirectComposition 视觉树：所有窗口内容都经它交给 DWM 合成（ADR-010）
+    IDCompositionDevice*    dcompDevice_ = nullptr;
+    IDCompositionTarget*    dcompTarget_ = nullptr;
+    IDCompositionVisual*    dcompVisual_ = nullptr;
     ID3D11RenderTargetView* rtv_ = nullptr;
     ID3D11VertexShader*     vs_ = nullptr;
     ID3D11PixelShader*      ps_ = nullptr;
@@ -216,6 +223,7 @@ private:
     std::vector<EmittedSegment> segments_;
     std::vector<uint32_t> unitFirstSeg_;
     uint32_t vbCapacity_ = 0;
+    bool     transparent_ = false;
     float    width_ = 0.f;
     float    height_ = 0.f;
     Painter  painter_;

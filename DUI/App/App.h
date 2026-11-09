@@ -18,6 +18,15 @@
 #include <cstdint>
 #include <memory>
 
+#include <windows.h>      // 公共 API 直接使用 HWND 等 Win32 类型
+
+// winuser.h 在 UNICODE 下把 MessageBox 定义成 MessageBoxW；公共头引入 Win32 头后
+// 必须清掉该宏，否则 Window::MessageBox 声明会被替换成 MessageBoxW，与下面的
+// 兼容别名重复。App/Dialog.h 里另有一处同样的兜底（应对业务先包含 windows.h）。
+#ifdef MessageBox
+#undef MessageBox
+#endif
+
 #include "Core/Dispatcher.h"
 #include "UI/UI.h"
 #include "App/Dialog.h"
@@ -25,7 +34,7 @@
 namespace dui {
 
 namespace platform {
-class NativeWindow;      // App/Frame.cpp 组装层使用（App.h 不带 windows.h）
+class NativeWindow;      // App/Frame.cpp 组装层使用（避免依赖 Platform 内部头）
 }
 namespace graphics {
 class Device;
@@ -62,6 +71,9 @@ struct WindowOptions {
     float width = 800.f;         // DIP
     float height = 600.f;        // DIP
     Chrome chrome = Chrome::System;
+    // true → 交换链按 PREMULTIPLIED 合成、清屏全透明，窗口背景可透视桌面
+    // （DirectComposition 承载，ADR-010）。默认 false：IGNORE + 不透明清屏。
+    bool transparent = false;
     // 初始显示时置于窗口所在显示器**工作区**正中（不含任务栏）。
     // 默认 true；设 false 沿用系统在 CW_USEDEFAULT 处的层叠摆放。
     bool center = true;
@@ -88,6 +100,9 @@ public:
 
     // 客户区尺寸（DIP）：自绘边框热区判定用（OnNcHitTest）
     Vec2 ClientSizeDip() const;
+
+    // 原生窗口句柄：OnCreate 起有效（此时 HWND 已建、窗口尚未显示）。
+    HWND NativeHandle() const noexcept;
 
     // ---- 系统对话框（17-Dialogs）：同步模态，UI 线程、Run 建好 HWND 后调用 ----
     // 结果三态：IsOk / IsCancelled / IsError；只返回路径，不读写文件。
@@ -134,9 +149,6 @@ private:
     unsigned  tickPeriodMs_ = 0;       // 当前周期（变化时才重设 SetTimer）
     // 系统对话框弹出期间 > 0：宿主失活不按「切到别的应用」清焦点（17-Dialogs §6.2）
     int       dialogDepth_ = 0;
-
-    // M2 内部用（M3 交换链创建也需要）；不进公共 API
-    void* NativeHandle() const noexcept;   // HWND（App.cpp 定义）
 
     // UI 统一节拍（内部）：App 层只启停一个窗口定时器，需求与周期问 AnimationClock
     void SyncTickTimer();

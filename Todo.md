@@ -1,7 +1,7 @@
 # DUI 开发任务清单（Todo）
 
 > 最后更新：2026-11-09。
-> 进度：**M1–M5.26 全部完成**（窗口/样式/布局/绘制/异步/文本/DPI/动画/Canvas/Scroller/
+> 进度：**M1–M5.27 全部完成**（窗口/样式/布局/绘制/异步/文本/DPI/动画/Canvas/Scroller/
 > TextBox/Image/Gif/无边框窗口/Grid/Position/zIndex/有序指令显示列表…）；
 > **M6 主体完成**（命令式属性动画 + Paint 级 2D transform），仅剩收尾（见 §2）。
 > 历史里程碑已归档为索引（§5）；实现踩坑与结论在 `Doc/Pitfalls.md`；
@@ -147,6 +147,7 @@ cd /d <项目根>
 | M7.1 | 11-07 | 修复「点击后界面卡死」：UI 线程 COM 由 MTA 改 STA（`OleInitialize` + 单元校验，ADR-027）；自动化点击复测四类弹窗 / 15 个示例（`Doc/Pitfalls.md §4.11`） |
 | M5.25 | 11-09 | `Samples/Dialog` 六个可点击项按钮化（背景色 + `When(State::Hover)` 效果），`Doc/Dialogs.md §2` 同步；"封装 Button 组件"任务取消（现有 `dui::Button` 已够用），框架零改动 |
 | M5.26 | 11-09 | 内置矢量 `Icon` 组件：`dui::IconName` 强类型枚举（9 图样）+ `dui::Icon` 控件 + `dui::DrawIcon()` 底层绘制；尺寸只走 `Style().Width/Height`、颜色走继承 `Color`；新建 `Samples/Icon`；`Samples/CustomFrame` 标题栏按钮由 iconfont 换成 Icon（移除字体加载与 PostBuildEvent） |
+| M5.27 | 11-09 | 公共 API 暴露 `HWND`（`Window::NativeHandle()`，公共头改为引入 `windows.h`）；窗口渲染统一走 `WS_EX_NOREDIRECTIONBITMAP` + `CreateSwapChainForComposition` + DirectComposition（ADR-010 落地），`WindowOptions::transparent` 决定 `AlphaMode`/清屏 alpha；新建 `Samples/CircleWindow`（圆形半透明窗口 / `SetWindowRgn` 圆裁剪 / 全窗口 HTCAPTION 拖动 / Canvas 细线圆边框） |
 
 ---
 

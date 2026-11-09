@@ -103,7 +103,10 @@ bool NativeWindow::Create(const wchar_t* title, float widthDip, float heightDip,
     borderless_ = borderless;
 
     const DWORD style = borderless ? kStyleBorderless : kStyleSystem;
-    const DWORD exStyle = borderless ? kExStyleBorderless : 0;
+    // 所有窗口统一不建系统重定向表面，内容由 DirectComposition 视觉树交给
+    // DWM 合成（ADR-010）；WS_EX_APPWINDOW 仅用于让无边框窗口进任务栏。
+    const DWORD exStyle = (borderless ? kExStyleBorderless : 0)
+                          | WS_EX_NOREDIRECTIONBITMAP;
 
     // 先按 96dpi 占位尺寸创建（隐藏），拿到真实显示器 DPI 后再定最终尺寸，
     // 中间过程不可见（App.h OnCreate 契约：构建期间窗口不可见）。

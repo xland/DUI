@@ -94,7 +94,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `cornerRadius` | Thickness | ✗ | Paint | ✓ | 0 | |
 | `borderWidth` | Thickness | ✗ | Layout·Paint | ✓ | 0 | |
 | `borderColor` | Color | ✗ | Paint | ✓ | 透明 | |
-| `shadow` | ShadowRef | ✗ | Paint | ✗ | None | |
+| `shadow` | 标量组（`f`=blur DIP、`extra[0/1]`=offsetX/Y、`u`=颜色） | ✗ | Paint | ✗ | 无（颜色 0） | **已落地**：`Style::Shadow(blur, color, offsetX, offsetY)`；只投元素边框盒（圆角矩形），Shape 批 kind=3 的 SDF 衰减带近似高斯，无纹理/离屏。不支持 inset/spread/多阴影，不随元素 Opacity 变化 |
 
 ### 4.3.1 滚动条（dui::Scroller 自绘轨道/滑块；MVP 子集，运行时已接入）
 
@@ -206,7 +206,7 @@ StyleValue opacity = ResolveProperty(element, Prop::Opacity);
 
 ## 7. 待确认
 
-1. `shadow` / `textDecoration` 是否进 MVP（当前列在表内但排期靠后）。
+1. ~~`shadow` 是否进 MVP~~ 已落地（box-shadow 子集，见 §4.3）；`textDecoration` 是否进 MVP。
 2. `zIndex` 是否扩展到普通流（当前仅同一 CB 内的 Absolute，已落地，见 04-Layout §4.3）。
 3. `alignItems: Baseline` 是否纳入（文本混排场景常用）。
 4. 是否需要 `letterSpacing` 之外的 `wordSpacing`。

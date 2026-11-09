@@ -6,7 +6,8 @@
 //  级联优先级（Style → 本地 Set → 状态变体）、
 //  视觉属性集（Background / Color / CornerRadius / Opacity / 字号字重 /
 //  LineHeight / Padding / Cursor）、Margin（外边距盒，不塌陷）、
-//  TextAlign（内容盒内对齐 + 继承）、运行时 Set 覆盖（Thickness / 字体族指针）。
+//  TextAlign（内容盒内对齐 + 继承）、运行时 Set 覆盖（Thickness / 字体族指针）、
+//  Shadow（box-shadow 子集：圆角矩形投影，Shape 批 SDF 衰减带，无纹理/离屏）。
 //
 //  布局相关示例见 Samples/Layout；定位相关示例见 Samples/Position。
 //
@@ -48,7 +49,7 @@ public:
         : dui::Window(dui::WindowOptions{
               .title  = L"Style · 样式能力演示",
               .width  = 900.f,
-              .height = 1000.f,
+              .height = 1100.f,
           }) {}
 
 protected:
@@ -191,6 +192,23 @@ protected:
             dui::Panel* cell = alignRow->AddChild<dui::Panel>(cellStyle);
             if (i < 3) cell->AddChild<dui::Text>(alignLabels[i], dui::Style().TextAlign(aligns[i]));
             else       cell->AddChild<dui::Text>(alignLabels[i]);
+        }
+
+        // ---- 阴影：box-shadow 子集（SDF 衰减带，无纹理 / 无离屏 / 无缓存） ----
+        NewCaption(root, L"Shadow(blur, color, offsetX, offsetY)：圆角矩形投影，SDF 衰减带近似高斯");
+        dui::Panel* shadowRow = root->AddChild<dui::Panel>(dui::Style()
+            .FlexDirection(dui::FlexDirection::Row)
+            .Gap(16.f));
+        const wchar_t* shadowLabels[] = {L"blur 12 · 向下偏移 6", L"blur 12 · 居中", L"blur 0 · 纯偏移硬阴影"};
+        const float blurs[] = {12.f, 12.f, 0.f};
+        const float offs[] = {6.f, 0.f, 8.f};
+        for (int i = 0; i < 3; ++i) {
+            dui::Panel* cell = shadowRow->AddChild<dui::Panel>(dui::Style()
+                .Width(240.f).Height(72.f)
+                .Background(0xFFFFFFFF).CornerRadius(10.f)
+                .Shadow(blurs[i], 0x59000000, 0.f, offs[i])
+                .JustifyContent(dui::Justify::Center).AlignItems(dui::Align::Center));
+            cell->AddChild<dui::Text>(shadowLabels[i]);
         }
 
         // ---- 运行时覆盖：Set 可改 Thickness 类属性与字体族 --------------------

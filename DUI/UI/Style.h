@@ -54,6 +54,9 @@ enum class Prop : uint16_t {
     // Grid（04-Layout §4.2）：轨道列表是变长声明，实体存 Style（见 FindTracks）；
     // 这两个 Prop 只作名义声明 / 失效标志，另四个是标量放置属性。
     GridTemplateColumns, GridTemplateRows, GridRow, GridColumn, GridRowSpan, GridColumnSpan,
+    // 阴影（box-shadow 子集；10-Rendering）：f = blur(DIP)，extra[0/1] = offsetX/Y(DIP)，
+    // u = 颜色 ARGB（0 = 无阴影）。只投元素边框盒，走 Shape 批 kind=3 的 SDF 衰减带。
+    Shadow,
 };
 
 // 状态位（03-Style §6.2 已定全集）；disabled/selected 等写入方见文档
@@ -208,6 +211,10 @@ public:
     Style& Gap(float dip);
     Style& CornerRadius(float dip);              // 四边同值
     Style& CornerRadius(const Thickness& t);
+    // 阴影（box-shadow 子集）：blur = 模糊半径 DIP，color 含 alpha（0 = 无阴影），
+    // offsetX/Y = 偏移 DIP。只投元素边框盒（圆角矩形），SDF 衰减带近似高斯；
+    // 不支持 inset / spread / 多阴影，也不随元素 Opacity 变化。
+    Style& Shadow(float blurDip, dui::Color color, float offsetXDip = 0.f, float offsetYDip = 0.f);
 
     // 滚动条轨道 / 滑块（dui::Scroller 自绘部分）
     // 宽度 = 纵向条厚度，高度 = 横向条厚度；默认厚 10 DIP、直角、无边框

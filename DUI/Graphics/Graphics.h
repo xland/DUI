@@ -111,6 +111,10 @@ public:
     void StrokeEllipse(Vec2 center, float rxDip, float ryDip, Color color, float widthDip, float scale);
     void StrokeRoundRect(const Rect& dipRect, float radiusDip, float widthDip, Color color, float scale);
 
+    // 阴影（box-shadow 子集）：把元素边框盒按 blur 软化成投影（Shape 批 kind=3）。
+    // quad 外扩 blur，SDF 仍以 dipRect 为边界；blur<=0 时由调用方退化成普通矩形。
+    void ShadowRoundRect(const Rect& dipRect, float radiusDip, float blurDip, Color color, float scale);
+
     const std::vector<PaintCommand>& Commands() const noexcept { return commands_; }
     const std::vector<PaintState>& States() const noexcept { return states_; }
 

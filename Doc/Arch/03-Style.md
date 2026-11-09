@@ -340,7 +340,7 @@ Color c = Style::Resolve(element, Prop::Color);   // 非继承属性 O(1–3)
 ## 10. 待确认
 
 1. **D1 / D2 / D3 / D4** 是否按建议拍板。
-2. MVP 属性清单（§3.2）是否增减；`shadow`、`textDecoration` 是否进 MVP。
+2. MVP 属性清单（§3.2）是否增减；~~`shadow`~~ 已落地（box-shadow 子集，见 15-Properties §4.3）、`textDecoration` 是否进 MVP。
 3. ~~已定~~：状态全集、多状态合并优先级、`SetState` 写入契约、`selected` 归属见 §6.2。
 4. `background` 是否提前升级为 `Brush`（纯色 / 线性渐变 / 图片）—— 影响是否需要资源引用与资源管理。
 5. 元素本地覆盖是否允许超过 2 条（内联容量取值，决定元素基础尺寸）。

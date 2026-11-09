@@ -153,4 +153,14 @@ Style& Style::CornerRadius(const Thickness& t) {
     return *this;
 }
 
+// 阴影（10-Rendering）：f = blur，extra[0/1] = offsetX/Y，u = 颜色（含 alpha）
+Style& Style::Shadow(float blurDip, dui::Color color, float offsetXDip, float offsetYDip) {
+    StyleValue& v = Ensure(Prop::Shadow);
+    v.f = blurDip;
+    v.u = color;
+    v.extra[0] = offsetXDip;
+    v.extra[1] = offsetYDip;
+    return *this;
+}
+
 }  // namespace dui

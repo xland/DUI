@@ -256,7 +256,24 @@ private:
         clipPx_ = st.clip;
     }
 
+    // 阴影（box-shadow 子集）：画在元素背景之下，且先于背景的透明早退 ——
+    // 背景透明的元素同样可以有投影。只投元素边框盒，不影响命中测试。
+    void DrawShadow(Element* e, const StyleContext& ctx) {
+        const StyleValue sh = ResolveProperty(e, Prop::Shadow, ctx);
+        if (sh.u == 0) return;                    // 颜色透明 = 无阴影
+        const Rect b = e->Bounds();
+        if (b.w <= 0.f || b.h <= 0.f) return;
+        const Rect r{b.x + sh.extra[0], b.y + sh.extra[1], b.w, b.h};
+        const float radius = ResolveProperty(e, Prop::CornerRadius, ctx).f;
+        if (sh.f <= 0.f) {
+            painter_->FillRoundedRect(r, radius, sh.u, 1.f, scale_);   // 纯偏移硬阴影
+        } else {
+            painter_->ShadowRoundRect(r, radius, sh.f, sh.u, scale_);
+        }
+    }
+
     void DrawBackground(Element* e, const StyleContext& ctx) {
+        DrawShadow(e, ctx);
         const StyleValue bg = ResolveProperty(e, Prop::BackgroundColor, ctx);
         if (bg.u == 0) return;
         const float radius = ResolveProperty(e, Prop::CornerRadius, ctx).f;

@@ -1,7 +1,7 @@
 # DUI 开发任务清单（Todo）
 
 > 最后更新：2026-11-09。
-> 进度：**M1–M5.30 全部完成**（窗口/样式/布局/绘制/异步/文本/DPI/动画/Canvas/Scroller/
+> 进度：**M1–M5.31 全部完成**（窗口/样式/布局/绘制/异步/文本/DPI/动画/Canvas/Scroller/
 > TextBox/Image/Gif/无边框窗口/Grid/Position/zIndex/有序指令显示列表…）；
 > **M6 主体完成**（命令式属性动画 + Paint 级 2D transform），仅剩收尾（见 §2）。
 > 历史里程碑已归档为索引（§5）；实现踩坑与结论在 `Doc/Pitfalls.md`；
@@ -151,6 +151,7 @@ cd /d <项目根>
 | M5.28 | 11-09 | 系统原生弹出菜单：`dui::Menu` 链式构建（`Add` / `Separator` / `AddSubMenu` / `AddCheck`）+ `Window::ShowMenu(menu[, posDip])`（`TrackPopupMenuEx` + `TPM_RETURNCMD`）；`PointerEvent::button` + `PointerButton` 枚举，平台层转发 `WM_RBUTTONUP`（右键抬起不参与左键 pressed / 焦点 / Click 合成）；新建 `Samples/Menu` |
 | M5.29 | 11-09 | 事件对象统一：删除 `ClickEvent`，`OnClick` 回调改收 `PointerEvent&`（`pos` = 抬起处、`button` = Left）；`click` / `tunnelClick` 槽并入惰性 `Handlers`，`DispatchClick` 复用 `PhasedDispatch`（删手写双阶段派发与 `friend`，未绑 Click 的元素少占 64B）；9 个示例 + `Doc/Dialogs.md` / `06-Events.md` 签名同步，运行时语义不变 |
 | M5.30 | 11-09 | 新增 `dui::Svg`（派生 `Image`）：WIC 无内置 SVG 解码器，改走 Direct2D 内置 SVG（`ID2D1DeviceContext5`，Win10 1703+）按显示尺寸 × DPI 光栅成 BGRA8 → `TextureStore`，渲染核心零改动；`LoadSvgFile` / `LoadSvgMemory`、viewBox 固有尺寸、尺寸/DPI 变化重光栅；`App/Frame.cpp` 纹理同步移到收集之后；示例并入 `Samples/Image`（含 `icon.svg`）；ADR-017 / `16-Image.md` / `00-Overview` 同步 |
+| M5.31 | 11-09 | 元素阴影（方案 1：SDF 衰减带）：新增 `Prop::Shadow` + `Style::Shadow(blur, color, offsetX, offsetY)`（f/u/extra 槽装下，无需 ShadowRef）；`Painter::ShadowRoundRect` 走 Shape 批新增 `kind=3`，把 1px AA 过渡带换成以元素边界为中心的 S 形衰减带（d=0 处 cov=0.5，对齐高斯边界半强度），quad 外扩 blur；`Collector::DrawShadow` 在背景之前绘制（透明背景也有投影，不影响命中）；零纹理/零离屏/零缓存，未设阴影元素零开销；示例并入 `Samples/Style` |
 
 ---
 

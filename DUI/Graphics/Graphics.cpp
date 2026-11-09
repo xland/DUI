@@ -202,14 +202,22 @@ float4 PSMain(PSInS i) : SV_Target {
         d = sdSegment(i.local, i.params.xy, i.params.zw) - i.extraKind.x;
     } else if (i.extraKind.y < 1.5) {     // 椭圆
         d = sdEllipse(i.local, i.params.xy);
-    } else {                              // 圆角矩形
+    } else {                              // 圆角矩形 / 阴影圆角矩形
         d = sdRoundBox(i.local, i.params.xy, i.extraKind.x);
     }
-    if (i.halfStroke > 0.0) d = abs(d) - i.halfStroke;
-    // 过渡带固定 1 像素：三种 SDF 均为像素空间的真实距离（梯度模长≈1）。
-    // 不能用 fwidth —— 它等于 |ddx|+|ddy|，斜向梯度会算出 1.41 倍宽度，
-    // 导致同一多边形各边粗细不一（斜边粗、水平/垂直边细）。
-    float cov = 1.0 - smoothstep(-0.5, 0.5, d);
+    float cov;
+    if (i.extraKind.y > 2.5) {
+        // kind 3 阴影：halfStroke 复用为 blur（像素）。以元素边界为中心的 S 形
+        // 衰减带（d=0 处 cov=0.5，与高斯模糊在边界处的半强度一致）；盒外部分
+        // 即投影，盒内部分由元素背景覆盖。
+        cov = 1.0 - smoothstep(-i.halfStroke, i.halfStroke, d);
+    } else {
+        if (i.halfStroke > 0.0) d = abs(d) - i.halfStroke;
+        // 过渡带固定 1 像素：三种 SDF 均为像素空间的真实距离（梯度模长≈1）。
+        // 不能用 fwidth —— 它等于 |ddx|+|ddy|，斜向梯度会算出 1.41 倍宽度，
+        // 导致同一多边形各边粗细不一（斜边粗、水平/垂直边细）。
+        cov = 1.0 - smoothstep(-0.5, 0.5, d);
+    }
     float4 c = i.color;
     c.rgb *= c.a;                        // straight → 预乘（ADR-013）
     return float4(c.rgb * cov, c.a * cov);
@@ -419,6 +427,28 @@ void Painter::StrokeRoundRect(const Rect& dipRect, float radiusDip, float widthD
     const float hw = w * 0.5f;
     const float hh = h * 0.5f;
     PushShapeQuad(cx, cy, hw + half, hh + half, hw, hh, 0.f, 0.f, radius, half, color, 2);
+}
+
+// 阴影（box-shadow 子集）：kind 3 = 阴影圆角矩形，halfStroke 复用为 blur 像素。
+// quad 外扩 blur 让衰减带有采样范围；SDF 参数（半 ext / 圆角）仍是元素盒本身。
+void Painter::ShadowRoundRect(const Rect& dipRect, float radiusDip, float blurDip,
+                              Color color, float scale) {
+    if (blurDip <= 0.f) return;
+    const float ox = (dipRect.x + originDipX_) * scale;
+    const float oy = (dipRect.y + originDipY_) * scale;
+    const float w = dipRect.w * scale;
+    const float h = dipRect.h * scale;
+    if (w <= 0.f || h <= 0.f) return;
+    float radius = radiusDip * scale;
+    if (radius < 1.f) radius = 0.f;
+    if (radius > w * 0.5f) radius = w * 0.5f;
+    if (radius > h * 0.5f) radius = h * 0.5f;
+    const float blur = blurDip * scale;
+    const float cx = ox + w * 0.5f;
+    const float cy = oy + h * 0.5f;
+    const float hw = w * 0.5f;
+    const float hh = h * 0.5f;
+    PushShapeQuad(cx, cy, hw + blur, hh + blur, hw, hh, 0.f, 0.f, radius, blur, color, 3);
 }
 
 void Painter::FillRoundedRect(const Rect& dipRect, float radiusDip, Color color, float opacity, float) {

@@ -292,6 +292,7 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::BackgroundColor:
     case Prop::CornerRadius:
     case Prop::Opacity:
+    case Prop::Shadow:
     // Paint 级 transform：只重收集顶点，不触发 Measure/Arrange
     case Prop::TranslationX:
     case Prop::TranslationY:

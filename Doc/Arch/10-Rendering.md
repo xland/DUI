@@ -1,6 +1,6 @@
 # 渲染
 
-> 状态：草案 v0.1 — **渲染主路径已定案**（§9 结论记录）；模糊/阴影、离屏缓冲等 P1/P2 项随实现推进补充。
+> 状态：草案 v0.1 — **渲染主路径已定案**（§9 结论记录）；阴影已落地（box-shadow 子集，Shape 批 kind=3 的 SDF 衰减带，无纹理/离屏）；模糊、离屏缓冲、任意形状投影（drop-shadow）等 P1/P2 项随实现推进补充。
 > 需求来源：保留模式 + 脏区（ADR-005）、按需呈现（"没有失效就没有工作"）、高保真（[12-Windowing.md](./12-Windowing.md) §7.1）、批量化（[00-Overview.md](./00-Overview.md) §3）。
 > 相关：[01-Layering.md](./01-Layering.md) §3（帧生命周期）与 Graphics 模块清单、[02-Decisions.md](./02-Decisions.md) ADR-001（D3D11+DXGI）/ ADR-003（字形光栅）/ ADR-005（保留模式）、[03-Style.md](./03-Style.md) §7（失效表）、[05-Animation.md](./05-Animation.md) §7、[12-Windowing.md](./12-Windowing.md)。
 
@@ -146,7 +146,8 @@
 | 纯色/渐变 + SDF 圆角 | `Rect` / `RoundedRect`（圆角矩形在片元内按距离场裁形，一次 draw，无 stencil） |
 | SDF 图元 | `Shape`（胶囊线段 / 椭圆 / 圆角矩形，填充与描边；kind 分支求局部空间有符号距离） |
 | 图集采样 | 字形（灰度 AA，DWrite 直出整像素覆盖率）、图标、图片 |
-| 后续：模糊/阴影 | P1+，阴影先用预烘焙或多次矩形近似 |
+| 阴影（已落地） | `Shape` kind=3：圆角矩形 SDF + 以元素边界为中心的宽衰减带（box-shadow 子集，无纹理/离屏） |
+| 后续：模糊 / 任意形状投影 | P1+，drop-shadow 需把内容离屏光栅后按 alpha 模糊 |
 
 像素对齐（[12-Windowing.md](./12-Windowing.md) §7.1-4）在顶点生成阶段完成：描边/分割线类指令的坐标对齐到物理像素网格，文本与大面积填充不做。
 

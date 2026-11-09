@@ -12,6 +12,7 @@
 #include "UI/UI.h"
 #include "UI/Canvas.h"
 #include "UI/Scroller.h"
+#include "UI/Svg.h"
 #include "App/Dialog.h"
 #include "App/Menu.h"
 #include "App/App.h"

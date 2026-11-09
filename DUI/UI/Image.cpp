@@ -179,6 +179,16 @@ void Image::ApplyFrame(size_t index) {
     MarkDirty(kFlagPaint);
 }
 
+void Image::SetPixels(uint32_t w, uint32_t h, std::vector<uint8_t>&& pixels) {
+    auto* t = static_cast<graphics::ImageTexture*>(tex_.get());
+    if (t != nullptr && t->width == w && t->height == h) {
+        t->pixels = std::move(pixels);
+        t->dirty = true;
+        return;
+    }
+    tex_ = graphics::TextureStore::Instance().Register(w, h, std::move(pixels));
+}
+
 // ---------------------------------------------------------------------------
 // 播放控制原语（dui::Gif 的公共 API 转发到这里）
 // ---------------------------------------------------------------------------

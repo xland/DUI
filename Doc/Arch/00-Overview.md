@@ -11,7 +11,7 @@
 2. **功能完备度** —— 能力覆盖优先。
 3. **效率与资源** —— 内存、性能、体积**尽量做好**，不设硬性数值门槛，以观测指标跟踪回归（见 ADR-015）。
 
-**无依赖**为硬性约束（不参与排序）：不引入任何第三方库，只依赖操作系统自带组件（d3d11 / dxgi / dwrite / dcomp / user32 / kernel32 等）。
+**无依赖**为硬性约束（不参与排序）：不引入任何第三方库，只依赖操作系统自带组件（d3d11 / dxgi / d2d1 / dwrite / dcomp / user32 / kernel32 等）。
 
 当各项冲突时的默认取向：**开发体验 > 功能完备度 > 内存 ≈ 性能 ≈ 体积**。
 
@@ -57,7 +57,7 @@
 
 > 提供 HTML 风格的**布局语义**（[04-Layout.md](./04-Layout.md)），但**不提供声明式描述语言**（无运行时解析器）；动画是命令式的，样式里没有 `transition` / `animation` 声明（[05-Animation.md](./05-Animation.md)）。
 
-> 无障碍（UIA）、SVG：待定，见 ADR-017；富文本编辑已定为目标（分阶段，见 [11-Text.md](./11-Text.md) 与 ADR-023）。
+> 无障碍（UIA）：待定，见 ADR-017；SVG 已定案（Direct2D 内置子集 + `dui::Svg`，见 [16-Image.md](./16-Image.md) §4.4）；富文本编辑已定为目标（分阶段，见 [11-Text.md](./11-Text.md) 与 ADR-023）。
 
 ## 5. 文档地图
 
@@ -86,10 +86,10 @@ DUI.slnx                 解决方案：x64 单一平台，十九个工程（1 �
 DUI/                     库工程（DUI.vcxproj，静态库）
   DUI.h                  公共入口（业务代码唯一 include）
   Core/                  Result、String/Color/Rect/Thickness、协程 Task<T>/Task<void> + PostUi 安全回投
-  UI/                    Style（声明集 + 链式构造合一）、Element、Panel、Text/Button、Icon（内置矢量图标）、TextBox/TextArea、Image、Canvas/Scroller、Focus、事件（M1 骨架）
-  App/                   Application、Window/WindowOptions（M1 骨架）+ 系统对话框公共 API/装配（Dialog.h/.cpp，M7）
+  UI/                    Style（声明集 + 链式构造合一）、Element、Panel、Text/Button、Icon（内置矢量图标）、TextBox/TextArea、Image/Gif/Svg、Canvas/Scroller、Focus、事件（M1 骨架）
+  App/                   Application、Window/WindowOptions（M1 骨架）+ 系统对话框公共 API/装配（Dialog.h/.cpp，M7）+ 系统原生弹出菜单（Menu.h/.cpp）
   Platform/              NativeWindow（HWND 封装、窗口过程、DPI 感知清单）（M2）+ 系统对话框 Win32/COM 实现（Dialog.h/.cpp，M7）
-  Graphics/              Device（D3D11/Flip Model/BGRA8）+ Painter（有序绘制指令 + 状态槽 / SDF 圆角矩形 / 字形 / 形状 / 图像）（M3/M5/M5.6/B2）
+  Graphics/              Device（D3D11/Flip Model/BGRA8）+ Painter（有序绘制指令 + 状态槽 / SDF 圆角矩形 / 字形 / 形状 / 图像）（M3/M5/M5.6/B2）+ ImageCodec（WIC）/ SvgRaster（Direct2D SVG 光栅化）
   Text/                  DWrite 排版 + GlyphAtlas 灰度图集（M5）
 Samples/                 示例工程（每个示例一个子目录 = 一个工程）
   HelloWorld/            最小示例：窗口正中一行“你好，World”

@@ -1,6 +1,6 @@
 # 图像
 
-> 状态：v0.3 — `dui::Image` 控件已落地（WIC 解码 + 图像批 + 纹理仓库）；GIF 动画与 `dui::Gif` 播放控制已支持。
+> 状态：v0.4 — `dui::Image` 控件已落地（WIC 解码 + 图像批 + 纹理仓库）；GIF 动画与 `dui::Gif` 播放控制已支持；`dui::Svg` 走 Direct2D 内置 SVG（Win10 1703+，图标级子集）。
 > 相关：[10-Rendering.md](./10-Rendering.md)（批与呈现）、[11-Text.md](./11-Text.md)（字形图集，同构的"CPU 侧数据在 UI、GPU 侧资源在 Graphics"分层）、[04-Layout.md](./04-Layout.md)（自然尺寸与布局）、[12-Windowing.md](./12-Windowing.md)（DPI）。
 
 ---
@@ -9,9 +9,9 @@
 
 | 项 | 现状 |
 | --- | --- |
-| 支持格式 | **Windows 默认能解码的**：`PNG / JPEG / BMP / DIB / GIF（含动画）/ TIFF / ICO` 等（取决于系统安装的 WIC 解码器） |
+| 支持格式 | **Windows 默认能解码的**：`PNG / JPEG / BMP / DIB / GIF（含动画）/ TIFF / ICO` 等（取决于系统安装的 WIC 解码器）；矢量 `SVG` 由 `dui::Svg` 走 Direct2D 内置解析（见 §4.4） |
 | 动画 | `Image::LoadAnimatedFile` / `Gif::LoadFile` 支持 GIF 多帧（disposal 合成 + 帧延迟）；`dui::Gif` 提供 `Pause/Play/Stop/SetLoopCount`，默认无限循环；`Image` 的静态接口仍只取第 0 帧 |
-| 不支持 | Windows 解不了的格式（WebP / AVIF 等）；SVG（矢量）；TIFF 多帧 / APNG 等其它动画格式 |
+| 不支持 | Windows 解不了的格式（WebP / AVIF 等）；浏览器级 SVG（`<text>` / 滤镜 / CSS 等，见 §4.4）；TIFF 多帧 / APNG 等其它动画格式 |
 | 缩放 | 默认**自然尺寸**显示；显式给 `Width`/`Height` 时按 **contain**（等比缩放 + 居中）适配，图像永不变形 |
 | 圆角 / 遮罩 | 不支持（图像按矩形贴图，无 SDF 裁形） |
 | 多倍图 | 不支持（只有 1 倍图；高 DPI 下按物理像素 1:1 显示，见 §4） |
@@ -99,6 +99,18 @@ B2 有序显示列表落地后，单元内段顺序 = 指令顺序（10-Renderin
 - 明确不做：帧完成回调、seek、逐帧事件、播放速度调节。
 - 完整交互演示见 `Samples/Image`（`Pause` / `Play` / `Stop` / `SetLoopCount` 按钮 + 状态反馈）。
 
+## 4.4 SVG（`dui::Svg`）
+
+- **能力来源**：WIC 没有系统内置 SVG 解码器；Windows 内置的是 Direct2D 的 `ID2D1DeviceContext5::CreateSvgDocument` / `DrawSvgDocument`（`d2d1_3.h`，Win10 1703+，与 ADR-009 基线一致）。`d2d1.lib` 随 `Graphics/SvgRaster.cpp` 携带链接指令，仍是系统组件、无第三方依赖。
+- **链路**：`Graphics/SvgRaster.cpp` 把 SVG 按目标像素尺寸画到 D2D 位图 → `CopyFromBitmap` 到 `CPU_READ` 位图后 `Map` 读回 → 预乘 alpha 转 straight（PS 里再预乘，ADR-013）→ `TextureStore::Register` → 现有图像批。D2D 的 `CPU_READ` 不能与 `TARGET` 组合，故需要两张位图。**渲染核心（D3D11 / 四批顶点 / 交换链）零改动**。
+- **UI 层不碰 Win32**：文件读取（`ReadSvgFile`）也放 Graphics 层；`Svg` 只持有原始 SVG 字节。
+- **矢量清晰度**：加载时不立即光栅（此时布局未跑、还不知道显示尺寸）；`Svg::OnPaint` 按内容盒 DIP × `scale` 生成纹理，尺寸或 DPI 变化才重做，稳态零开销。纹理同步从帧首移到收集之后、Render 之前，保证新纹理当帧上传。
+- **固有尺寸**：取根 `<svg>` 的 `viewBox`（其次 `width` / `height`），单位按 DIP；都没有时默认 24×24，也可用 `Style().Width()/Height()` 显式指定。`MeasureContent` 不依赖纹理，首次布局就有尺寸。
+- **图标级子集**（官方明确）：支持 `svg/g/path/rect/circle/ellipse/line/polygon/polyline/use/defs/clipPath/linearGradient/radialGradient/stop/image` 等元素与 `fill/stroke/transform/viewBox/preserveAspectRatio` 等 presentation 属性；**不支持** `<text>`、`<filter>`、`<mask>`、`<pattern>`、`<style>`/CSS、动画、外部资源，`<image>` 仅接受 base64 内联。
+- **静默降级**：遇到不支持的元素/属性会被忽略、其余内容尽量渲染且**不报错**，`LastError()` 拿不到线索。导出规范：文字转路径、不用滤镜/蒙版、不用 CSS。
+- **长度单位**：1703 只支持无单位值和百分比；`px/pt/pc/cm/mm/in` 要 1709，`em/ex` 一直不支持。示例素材因此只用无单位值。
+- 需要浏览器级 SVG 兼容时微软建议改用 WebView，那违背轻量/无依赖约束，不做。
+
 ---
 
 ## 5. 已知限制
@@ -108,6 +120,7 @@ B2 有序显示列表落地后，单元内段顺序 = 指令顺序（10-Renderin
 3. 动画仅支持 GIF；不解析文件内 Netscape 循环次数（由 `Gif::SetLoopCount` 覆盖，默认无限）；`Image::LoadFile` / `LoadMemory` 等静态接口仍只取第 0 帧，`Gif::LoadFile` 统一走多帧解码。
 4. 纹理常驻显存直到控件释放（无 LRU 淘汰；字形图集有 LRU，见 11-Text §4）。
 5. 图像元素无子元素（`dui::Image` 继承 `Element` 而非 `Panel`）。
+6. SVG 只是图标级子集（见 §4.4）：不支持文字/滤镜/CSS，不支持项静默忽略；1703 上不支持带绝对单位的长度值。
 
 ---
 
@@ -124,14 +137,18 @@ if (!gif->LoadFile(L"demo.gif")) {
     // 失败原因在 gif->LastError()
 }
 gif->SetLoopCount(3);   // 播 3 轮后停在最后一帧；0 = 无限
-gif->Pause();            // 停当前帧
-gif->Play();             // 从暂停处继续
-gif->Stop();             // 回首帧并停止；Play() 从头重播
+
+auto* svg = root->AddChild<dui::Svg>(dui::Style().Width(96.f).Height(96.f));
+if (!svg->LoadSvgFile(L"icon.svg")) {
+    // 失败原因在 svg->LastError()
+}
+svg->LoadSvgMemory(kSvgBytes, kSvgSize);   // 也可从内存加载
 ```
 
 - `LoadFile(const wchar_t*)` / `LoadFile(const String&)`：`Image` 为静态单帧；`Gif` 统一走多帧解码并自动播放。
 - `LoadAnimatedFile(const wchar_t*)` / `LoadAnimatedFile(const String&)`：加载动画 GIF 并自动播放；在 `Gif` 上与 `LoadFile` 等价。
 - `dui::Gif` 的 `Pause()` / `Play()` / `Stop()` / `SetLoopCount()`：见 §4.3。
+- `dui::Svg` 的 `LoadSvgFile(const wchar_t*/const String&)` / `LoadSvgMemory(const void*, uint32_t)`：见 §4.4；`IntrinsicSize()` 返回 viewBox 固有尺寸（DIP）。
 - `LoadMemory(const void*, uint32_t)`：从内存加载（格式由内容嗅探）。
 - `Clear()`：清除图像并停止动画（GPU 纹理在下一次纹理同步时回收）。
 - `PixelWidth() / PixelHeight()`：图像像素尺寸。

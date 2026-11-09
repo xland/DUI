@@ -337,9 +337,6 @@ void Application::RenderFrame(Window& window, const platform::NativeWindow& nati
 
     device.Resize(px);
 
-    // 图像纹理同步：脏纹理 → GPU；控件已释放的纹理 → 回收 GPU 资源
-    graphics::TextureStore::Instance().Sync(device);
-
     Element* root = window.Root();
     if (root->SubtreeDirty()) {
         if (SubtreeLayoutDirty(root)) RunLayout(root, native.ClientSizeDip(), native.Scale());
@@ -367,6 +364,10 @@ void Application::RenderFrame(Window& window, const platform::NativeWindow& nati
             page.dirty = false;
         }
     }
+
+    // 图像纹理同步：收集期（Svg 按显示尺寸 / DPI 重光栅）可能产生新纹理或脏像素，
+    // 与字形页一样在收集之后、Render 之前上传；控件已释放的纹理在此回收。
+    graphics::TextureStore::Instance().Sync(device);
 
     device.Render(list.Units().data(), static_cast<uint32_t>(list.Units().size()), native.Scale());
     device.Present();

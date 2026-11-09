@@ -89,6 +89,7 @@
     <ClInclude Include="UI\Focus.h" />
     <ClInclude Include="UI\Canvas.h" />
     <ClInclude Include="UI\Scroller.h" />
+    <ClInclude Include="UI\Svg.h" />
     <ClInclude Include="App\App.h" />
     <ClInclude Include="App\Dialog.h" />
     <ClInclude Include="App\Menu.h" />
@@ -112,6 +113,7 @@
     <ClCompile Include="UI\Focus.cpp" />
     <ClCompile Include="UI\Canvas.cpp" />
     <ClCompile Include="UI\Scroller.cpp" />
+    <ClCompile Include="UI\Svg.cpp" />
     <ClCompile Include="UI\StyleResolve.cpp" />
     <ClCompile Include="UI\Layout.cpp" />
     <ClCompile Include="UI\Event.cpp" />
@@ -126,6 +128,7 @@
     </ClCompile>
     <ClCompile Include="Graphics\Graphics.cpp" />
     <ClCompile Include="Graphics\ImageCodec.cpp" />
+    <ClCompile Include="Graphics\SvgRaster.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

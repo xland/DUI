@@ -49,6 +49,10 @@ public:
     const String& LastError() const noexcept { return lastError_; }
 
 protected:
+    // 派生类（Svg）替换解码结果：尺寸不变时复用同一张纹理，变化时重新登记
+    void SetPixels(uint32_t w, uint32_t h, std::vector<uint8_t>&& pixels);
+    void SetLastError(const String& msg) { lastError_ = msg; }
+
     // 自然尺寸 = 像素尺寸 ÷ DPI 缩放（DIP）
     Vec2 MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) const override;
     // 绘制：把纹理铺满内容盒（元素盒去掉 padding）

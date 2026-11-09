@@ -31,6 +31,15 @@ bool DecodeImageFile(const wchar_t* path, DecodedImage& out, String* err = nullp
 // 从内存解码（格式由内容嗅探）；失败返回 false
 bool DecodeImageMemory(const void* data, uint32_t size, DecodedImage& out, String* err = nullptr);
 
+// ---- SVG（Direct2D 内置解析，Win10 1703+；实现在 Graphics/SvgRaster.cpp）----
+// 读文件字节（Win32 文件读取放 Graphics 层，UI 层不直接依赖 Windows API）
+bool ReadSvgFile(const wchar_t* path, std::vector<uint8_t>& out, String* err = nullptr);
+// 读根 <svg> 的固有尺寸（viewBox，其次 width/height），单位按 DIP
+bool ParseSvgIntrinsicSize(const void* data, uint32_t size, Vec2& outDip);
+// 按目标像素尺寸光栅成 BGRA8 straight alpha（与 WIC 解码结果同一约定）
+bool RasterizeSvg(const void* data, uint32_t size, uint32_t pxW, uint32_t pxH,
+                  DecodedImage& out, String* err = nullptr);
+
 // 动画帧：已按 GIF disposal 规则合成到逻辑屏幕的全画布 BGRA8 + 本帧显示时长
 struct AnimationFrame {
     std::vector<uint8_t> pixels;

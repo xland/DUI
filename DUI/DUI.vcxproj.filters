@@ -89,6 +89,9 @@
     <ClInclude Include="UI\Scroller.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
+    <ClInclude Include="UI\Svg.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
     <ClInclude Include="App\App.h">
       <Filter>头文件\App</Filter>
     </ClInclude>
@@ -154,6 +157,9 @@
     <ClCompile Include="UI\Scroller.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
+    <ClCompile Include="UI\Svg.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
     <ClCompile Include="UI\StyleResolve.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
@@ -185,6 +191,9 @@
       <Filter>源文件\Graphics</Filter>
     </ClCompile>
     <ClCompile Include="Graphics\ImageCodec.cpp">
+      <Filter>源文件\Graphics</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\SvgRaster.cpp">
       <Filter>源文件\Graphics</Filter>
     </ClCompile>
   </ItemGroup>

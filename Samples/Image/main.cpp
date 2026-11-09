@@ -7,8 +7,9 @@
 //                              PNG / JPEG / BMP / GIF / TIFF / ICO …）
 //
 //  演示：大图（896×896）用样式限定盒子尺寸 → Image 按 contain 等比缩放并居中，
-//        图像始终不变形；Prop::Opacity；以及 dui::Gif 的帧动画与播放控制
-//        （Pause / Play / Stop / SetLoopCount）。
+//        图像始终不变形；Prop::Opacity；dui::Gif 的帧动画与播放控制
+//        （Pause / Play / Stop / SetLoopCount）；以及 dui::Svg 的矢量图标
+//        （同一份 SVG 在 24 / 48 / 96 DIP 下分别重新光栅，放大不糊）。
 // ============================================================================
 
 #include <windows.h>
@@ -63,7 +64,7 @@ public:
         : dui::Window(dui::WindowOptions{
               .title  = L"dui::Image 示例",
               .width  = 760.f,
-              .height = 900.f,
+              .height = 1000.f,
           }),
           path_(std::move(path)) {}
 
@@ -144,6 +145,22 @@ protected:
             anim->Play();
             status->SetText(L"SetLoopCount(0)：无限循环（默认）");
         });
+
+        // 5) dui::Svg：Direct2D 内置 SVG 解析（Win10 1703+，图标级子集）
+        //    矢量图标按"显示尺寸 × DPI"重新光栅，所以同一份文档放大也不糊。
+        root->AddChild<dui::Text>(L"Svg —— 矢量图像",
+                                  dui::Style().FontSize(13.f).Color(0xFF4B5563));
+        dui::Panel* svgRow = MakeRow(root);
+        const std::wstring icon = AssetPathInExeDir(L"icon.svg");
+        dui::Svg* small = svgRow->AddChild<dui::Svg>(dui::Style()
+            .Width(24.f).Height(24.f).Background(0xFFE5E7EB));
+        if (!small->LoadSvgFile(icon)) {
+            root->AddChild<dui::Text>(small->LastError().c_str(),
+                                      dui::Style().FontSize(13.f).Color(0xFFB42318));
+        }
+        dui::Svg* large = svgRow->AddChild<dui::Svg>(dui::Style()
+            .Width(96.f).Height(96.f).Background(0xFFE5E7EB));
+        large->LoadSvgFile(icon);
     }
 
 private:

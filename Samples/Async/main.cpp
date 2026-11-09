@@ -55,7 +55,7 @@ protected:
         dui::Text* status = root->AddChild<dui::Text>(L"等待开始",
                                   dui::Style().FontSize(22.f).Height(48.f));
 
-        start->OnClick([status](dui::ClickEvent&) {
+        start->OnClick([status](dui::PointerEvent&) {
             Work(status);   // eager 协程：创建即运行，不用 Start()/Then()
         });
     }

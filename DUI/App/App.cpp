@@ -107,7 +107,7 @@ public:
         RequestFrame();
     }
 
-    void OnPointerButton(Vec2 pt, bool down) override {
+    void OnPointerButton(Vec2 pt, PointerButton button, bool down) override {
         if (down) {
             // 命中滚动条 → 进入滑块拖拽（不参与 Click 合成，也不派发元素事件）
             Element* hit = HitTest(window_.Root(), pt);
@@ -125,7 +125,10 @@ public:
             SetPressedChain(hit, true);
             // 点击取得焦点（命中可聚焦元素或其可聚焦祖先；06-Events §6）
             if (Element* f = FindFocusable(hit)) SetFocus(f);
-            DispatchPointerDown(hit, pt);              // 按下（冒泡）
+            DispatchPointerDown(hit, pt, button);        // 按下（冒泡）
+        } else if (button != PointerButton::Left) {
+            // 非左键抬起：只派发元素级弹起，不动 pressed / 焦点 / Click 状态机
+            DispatchPointerUp(HitTest(window_.Root(), pt), pt, button);
         } else {
             if (dragging_ != nullptr) {
                 dragging_->EndBarDrag();
@@ -136,7 +139,7 @@ public:
             Element* cap = CapturedElement();
             Element* hit = cap != nullptr ? cap : HitTest(window_.Root(), pt);
             SetPressedChain(pressed_, false);
-            DispatchPointerUp(hit, pt);                // 弹起（冒泡）
+            DispatchPointerUp(hit, pt, button);          // 弹起（冒泡）
             if (cap != nullptr) {
                 SetCaptureElement(nullptr);            // 抬起自动释放捕获（拖拽不合成 Click）
                 Element* cur = HitTest(window_.Root(), pt);
@@ -149,7 +152,7 @@ public:
                 if (pressed_ != nullptr && hit == pressed_ &&
                     pt.x >= pressPt_.x - kDragThreshold && pt.x <= pressPt_.x + kDragThreshold &&
                     pt.y >= pressPt_.y - kDragThreshold && pt.y <= pressPt_.y + kDragThreshold) {
-                    DispatchClick(pressed_);
+                    DispatchClick(pressed_, pt, PointerButton::Left);
                 }
             }
             pressed_ = nullptr;
@@ -215,7 +218,7 @@ public:
 
     // 指针形态：命中链就近者胜 —— 元素指定了 cursor 就用它；没指定则沿链向上取
     // 父级的（与 CSS 的 cursor 继承同效）；都没指定再看是否为编辑控件（I-beam）。
-    // 非客户区命中：转发给业务（Chrome::Borderless 的标题栏 / 边框热区）
+    // 非客户区命中：转发给业务（frameless 的标题栏 / 边框热区）
     bool OnNcHitTest(Vec2 pt, int& hit) override {
         HitTestCode code = HitTestCode::Client;
         if (!window_.OnNcHitTest(pt, code)) return false;
@@ -410,7 +413,7 @@ int Application::Run(Window& window) {
     // 建 HWND（隐藏、按显示器 DPI 定尺寸）
     if (!native.Create(window.options_.title, window.options_.width,
                        window.options_.height, host, lastError_,
-                       window.options_.chrome == Chrome::Borderless)) {
+                       window.options_.frameless)) {
         return 1;   // lastError_ 已填（App.h 契约：失败返回非 0）
     }
     window.native_ = &native;   // 平台窗口对象（定时器等平台能力）

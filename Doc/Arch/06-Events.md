@@ -179,7 +179,7 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 
 ```cpp
 // 1) 无捕获 lambda / 自由函数
-btn->OnClick([](ClickEvent& e){ DoThing(); });
+btn->OnClick([](PointerEvent& e){ DoThing(); });
 
 // 2) 成员函数 + 上下文（最常用）
 page->AddChild<Button>(L"添加")->OnClick(this, &SettingsPage::OnAddClicked);

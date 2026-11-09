@@ -158,28 +158,6 @@ Element* FindFocusable(Element* e) {
     return nullptr;
 }
 
-// Click 的两阶段派发：隧道（根 → 命中）→ 冒泡（命中 → 根）。
-// 用同一个事件对象贯穿，任一阶段置 handled 会终止后续全部派发（06-Events §5）。
-void DispatchClick(Element* hit) {
-    if (hit == nullptr) return;
-    std::vector<Element*> chain;
-    for (Element* e = hit; e != nullptr; e = e->Parent()) chain.push_back(e);
-    ClickEvent ev;
-    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {   // 隧道：根 → 命中
-        Element* e = *it;
-        if (!e->onTunnelClick_) continue;
-        ev.source = e;
-        e->onTunnelClick_(ev);
-        if (ev.handled) return;
-    }
-    for (Element* e : chain) {                                   // 冒泡：命中 → 根
-        if (!e->onClick_) continue;
-        ev.source = e;
-        e->onClick_(ev);
-        if (ev.handled) return;
-    }
-}
-
 // hover / pressed 沿祖先链生效（CSS 直觉：指针在子文本上 = 列表项 hover）
 void UpdateHoverChain(Element* previous, Element* current) {
     for (Element* e = previous; e != nullptr; e = e->Parent()) e->SetState(State::Hover, false);
@@ -263,6 +241,16 @@ bool PhasedDispatch(Element* hit, E& ev,
 
 }  // namespace
 
+// Click：按下/抬起同元素合成的语义事件（06-Events §3）。与指针事件共用
+// PointerEvent 及双阶段路由；不经过控件内部 Handle* 钩子。
+void DispatchClick(Element* hit, const Vec2& pt, PointerButton button) {
+    PointerEvent ev;
+    ev.pos = pt;
+    ev.button = button;
+    PhasedDispatch(hit, ev, &Element::Handlers::tunnelClick,
+                   &Element::Handlers::click);
+}
+
 // 移入/移出：悬停链差分直达（不冒泡）。
 // 离开旧链中不在新链的元素 → 移出；进入新链中不在旧链的元素 → 移入。
 // （移到子元素上不算离开父元素：父元素仍在两条链里。）
@@ -294,16 +282,18 @@ void DispatchPointerMove(Element* hit, const Vec2& pt) {
                    &Element::Handlers::move, &Element::HandlePointerMove);
 }
 
-void DispatchPointerDown(Element* hit, const Vec2& pt) {
+void DispatchPointerDown(Element* hit, const Vec2& pt, PointerButton button) {
     PointerEvent ev;
     ev.pos = pt;
+    ev.button = button;
     PhasedDispatch(hit, ev, &Element::Handlers::tunnelDown,
                    &Element::Handlers::down, &Element::HandlePointerDown);
 }
 
-void DispatchPointerUp(Element* hit, const Vec2& pt) {
+void DispatchPointerUp(Element* hit, const Vec2& pt, PointerButton button) {
     PointerEvent ev;
     ev.pos = pt;
+    ev.button = button;
     PhasedDispatch(hit, ev, &Element::Handlers::tunnelUp,
                    &Element::Handlers::up, &Element::HandlePointerUp);
 }

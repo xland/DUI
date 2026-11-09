@@ -47,9 +47,9 @@ void DemoClick(dui::Panel* root) {
     dui::Panel* outer = Box(col,   190.f, 84.f, 0xFFD1D5DB);
     dui::Panel* inner = Box(outer, 120.f, 48.f, 0xFF2563EB);
 
-    col->OnClick([say](dui::ClickEvent&)   { say(L"3 根（列）"); });
-    outer->OnClick([say](dui::ClickEvent&) { say(L"2 父（灰）"); });
-    inner->OnClick([say, log](dui::ClickEvent&) {
+    col->OnClick([say](dui::PointerEvent&)   { say(L"3 根（列）"); });
+    outer->OnClick([say](dui::PointerEvent&) { say(L"2 父（灰）"); });
+    inner->OnClick([say, log](dui::PointerEvent&) {
         log->SetText(L"");           // 每次点击从空白开始，正好看到三行顺序
         say(L"1 子（蓝）");
     });
@@ -63,12 +63,12 @@ void DemoHandled(dui::Panel* root) {
     dui::Panel* outer = Box(col,   190.f, 84.f, 0xFFD1D5DB);
     dui::Panel* inner = Box(outer, 120.f, 48.f, 0xFF2563EB);
 
-    col->OnClick([say](dui::ClickEvent&) { say(L"根（被拦截，不该出现）"); });
-    outer->OnClick([say](dui::ClickEvent& e) {
+    col->OnClick([say](dui::PointerEvent&) { say(L"根（被拦截，不该出现）"); });
+    outer->OnClick([say](dui::PointerEvent& e) {
         say(L"父：handled = true");
         e.handled = true;
     });
-    inner->OnClick([say, log](dui::ClickEvent&) {
+    inner->OnClick([say, log](dui::PointerEvent&) {
         log->SetText(L"");
         say(L"子");
     });

@@ -10,7 +10,7 @@ msbuild DUI.slnx /p:Configuration=Release /p:Platform=x64
 ```
 
 产物：`DUI.lib`（静态库）与 `Samples/` 下的示例可执行文件
-（`HelloWorld` / `Layout` / `Style` / `Icon` / `Position` / `Canvas` / `Scroller` / `Dialog` / `CircleWindow` 等），统一在 `Build\<工程>\<配置>\`。
+（`HelloWorld` / `Layout` / `Style` / `Icon` / `Position` / `Canvas` / `Scroller` / `Dialog` / `CircleWindow` / `Menu` 等），统一在 `Build\<工程>\<配置>\`。
 
 ## 文档
 

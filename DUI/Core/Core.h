@@ -27,6 +27,11 @@ struct Vec2 {
     float y = 0.f;
 };
 
+// ---- 指针按键（06-Events）--------------------------------------------------
+//  Platform / UI / App 三层都要用，故定义在不依赖平台的基础层。
+//  None 用于移动 / 移入 / 移出等非按键事件。
+enum class PointerButton : uint8_t { None, Left, Right, Middle };
+
 struct Rect {
     float x = 0.f;
     float y = 0.f;

@@ -148,7 +148,7 @@ void MyWindow::OnDpiChanged(const dui::DpiChanged& e) {
 
 ---
 
-### 6.1 无边框窗口与自定义标题栏（`Chrome::Borderless`）
+### 6.1 无边框窗口与自定义标题栏（`WindowOptions::frameless`）
 
 窗口形态由构造参数声明，框架负责底层的系统对接，业务只画界面、只报"命中区"：
 
@@ -157,7 +157,7 @@ struct WindowOptions {
     const wchar_t* title = L"";
     float width  = 800.f;      // DIP
     float height = 600.f;      // DIP
-    Chrome chrome = Chrome::System;   // System / Borderless
+    bool frameless = false;    // true → 无系统标题栏 / 边框，业务自绘标题栏
     bool center = true;        // 初始显示在显示器工作区正中（默认；设 false 沿用系统层叠位置）
 };
 

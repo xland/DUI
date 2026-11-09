@@ -40,7 +40,7 @@ bool SubtreeLayoutDirty(const Element* e);
 
 // 命中测试与最小输入（UI/Event.cpp，06-Events M3 子集）
 Element* HitTest(Element* root, const Vec2& ptDip);
-void DispatchClick(Element* hit);
+void DispatchClick(Element* hit, const Vec2& pt, PointerButton button);
 void UpdateHoverChain(Element* previous, Element* current);
 void SetPressedChain(Element* hit, bool on);
 
@@ -51,8 +51,8 @@ void SetPressedChain(Element* hit, bool on);
 // 派发只经过"有绑定者"的元素，无绑定直接跳过；handled 可终止后续阶段。
 void DispatchHoverTransitions(Element* previous, Element* current, const Vec2& pt);
 void DispatchPointerMove(Element* hit, const Vec2& pt);
-void DispatchPointerDown(Element* hit, const Vec2& pt);
-void DispatchPointerUp(Element* hit, const Vec2& pt);
+void DispatchPointerDown(Element* hit, const Vec2& pt, PointerButton button);
+void DispatchPointerUp(Element* hit, const Vec2& pt, PointerButton button);
 bool DispatchWheel(Element* hit, const Vec2& pt, float delta, bool horizontal);
 
 // 键盘事件派发（UI/Event.cpp）：从焦点元素出发，双阶段路由（隧道 + 冒泡）。

@@ -204,7 +204,7 @@ protected:
             .JustifyContent(dui::Justify::Center)
             .AlignItems(dui::Align::Center));
         dui::Text* toggleLabel = toggle->AddChild<dui::Text>(L"点击切换：四边 16 / 宋体");
-        toggle->OnClick([toggle, toggleLabel](dui::ClickEvent&) {
+        toggle->OnClick([toggle, toggleLabel](dui::PointerEvent&) {
             const bool compact = dui::ResolveProperty(toggle, dui::Prop::CornerRadius).f < 10.f;
             if (compact) {
                 toggle->Set(dui::Prop::Padding, dui::Thickness(16.f));       // Thickness 值

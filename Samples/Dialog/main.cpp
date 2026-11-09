@@ -58,7 +58,7 @@ protected:
         // ① 打开文件（多选 + 过滤器）
         root->AddChild<dui::Button>(L"打开文件…", kButton)
             ->When(dui::State::Hover, kButtonHover)
-            .OnClick([this](dui::ClickEvent&) {
+            .OnClick([this](dui::PointerEvent&) {
                 auto r = OpenFile(dui::OpenFileOptions{
                     .title = L"选择文件",
                     .filters = kFilters,
@@ -75,7 +75,7 @@ protected:
         // ② 保存文件（只拿路径，不写文件）
         root->AddChild<dui::Button>(L"保存文件…", kButton)
             ->When(dui::State::Hover, kButtonHover)
-            .OnClick([this](dui::ClickEvent&) {
+            .OnClick([this](dui::PointerEvent&) {
                 auto r = SaveFile(dui::SaveFileOptions{
                     .title = L"保存为",
                     .filters = kFilters,
@@ -89,7 +89,7 @@ protected:
         // ③ 选择文件夹
         root->AddChild<dui::Button>(L"选择文件夹…", kButton)
             ->When(dui::State::Hover, kButtonHover)
-            .OnClick([this](dui::ClickEvent&) {
+            .OnClick([this](dui::PointerEvent&) {
                 auto r = OpenFolder(dui::OpenFolderOptions{ .title = L"选择目录" });
                 if (r.IsOk())              result_->SetText(L"目录：" + r.Value());
                 else if (!r.IsCancelled()) result_->SetText(r.Error());
@@ -98,7 +98,7 @@ protected:
         // ④ 警告 / 确认
         root->AddChild<dui::Button>(L"警告", kButton)
             ->When(dui::State::Hover, kButtonHover)
-            .OnClick([this](dui::ClickEvent&) {
+            .OnClick([this](dui::PointerEvent&) {
                 auto r = MessageBox(dui::MessageOptions{
                     .text = L"确定要删除所选内容吗？",
                     .title = L"警告",
@@ -112,12 +112,12 @@ protected:
         // 便捷糖：一行警告 / 一行确认
         root->AddChild<dui::Button>(L"简单警告", kButton)
             ->When(dui::State::Hover, kButtonHover)
-            .OnClick([this](dui::ClickEvent&) {
+            .OnClick([this](dui::PointerEvent&) {
                 Warn(L"操作已完成。");
             });
         root->AddChild<dui::Button>(L"简单确认", kButton)
             ->When(dui::State::Hover, kButtonHover)
-            .OnClick([this](dui::ClickEvent&) {
+            .OnClick([this](dui::PointerEvent&) {
                 result_->SetText(Confirm(L"要继续吗？") ? L"继续" : L"取消");
             });
     }

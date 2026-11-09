@@ -53,7 +53,7 @@ dui::Panel* MakeRow(dui::Panel* parent) {
 template <class F>
 void AddButton(dui::Panel* parent, const wchar_t* label, F fn) {
     dui::Button* b = parent->AddChild<dui::Button>(label, kButton);
-    b->OnClick([fn](dui::ClickEvent&) { fn(); });
+    b->OnClick([fn](dui::PointerEvent&) { fn(); });
     b->When(dui::State::Hover, kButtonHover);
 }
 

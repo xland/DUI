@@ -20,4 +20,5 @@
   <Project Path="Samples/Icon/Icon.vcxproj" Id="7a4e1c82-3b9d-4f60-8e15-2d6c0b9f4a73" />
   <Project Path="Samples/Dialog/Dialog.vcxproj" Id="e2b7c4d1-9a53-4f80-b26e-8d1c5a70f3b6" />
   <Project Path="Samples/CircleWindow/CircleWindow.vcxproj" Id="c1f8a2d4-3e6b-4a19-9c57-2d8e0b7f5a63" />
+  <Project Path="Samples/Menu/Menu.vcxproj" Id="d3f5a7c1-8e24-4b60-9a17-5c2e6b0f9d84" />
 </Solution>

@@ -2,7 +2,7 @@
 //  CustomFrame/main.cpp — 自定义窗口边框与标题栏（无边框窗口 + DWM 阴影）
 //
 //  演示：
-//    · Chrome::Borderless：无系统标题栏 / 边框，标题栏与边框全部自绘；
+//    · frameless = true：无系统标题栏 / 边框，标题栏与边框全部自绘；
 //    · 窗口阴影：DWM（Platform 层 DwmExtendFrameIntoClientArea + Win11 圆角）；
 //    · 拖拽标题栏移动窗口：OnNcHitTest 命中标题栏 → HTCAPTION，由系统接管移动；
 //    · 拖拽边框缩放窗口：OnNcHitTest 命中四边 / 四角 → HTTOP / HTLEFT /
@@ -31,7 +31,7 @@ namespace {
 
 // ---- 标题栏几何（DIP）----
 constexpr float kTitleBarHeight = 36.f;
-constexpr float kResizeBorder   = 8.f;   // 边框缩放热区厚度（四边通用，顶边压在标题栏上）
+constexpr float kResizeBorder   = 6.f;   // 边框缩放热区厚度（四边通用，顶边压在标题栏上）
 constexpr float kButtonWidth    = 46.f;  // 标题栏按钮宽度
 constexpr float kIconSize       = 12.f;  // 矢量图标尺寸（Style().Width/Height）
 
@@ -49,10 +49,10 @@ class CustomFrameWindow final : public dui::Window {
 public:
     CustomFrameWindow()
         : dui::Window(dui::WindowOptions{
-              .title  = L"DUI CustomFrame",
-              .width  = 900.f,
-              .height = 560.f,
-              .chrome = dui::Chrome::Borderless,
+              .title     = L"DUI CustomFrame",
+              .width     = 900.f,
+              .height    = 560.f,
+              .frameless = true,
           }) {}
 
 protected:
@@ -185,9 +185,9 @@ private:
     }
 
     // 点击沿祖先链冒泡（06-Events §5）：点在图标上（命中 Icon）也能触发按钮
-    void OnMinimizeClick(dui::ClickEvent&)   { Minimize(); }
-    void OnMaximizeClick(dui::ClickEvent&)   { MaximizeOrRestore(); }
-    void OnCloseClick(dui::ClickEvent&)      { Close(); }
+    void OnMinimizeClick(dui::PointerEvent&)   { Minimize(); }
+    void OnMaximizeClick(dui::PointerEvent&)   { MaximizeOrRestore(); }
+    void OnCloseClick(dui::PointerEvent&)      { Close(); }
 
     dui::Icon* maximizeIcon_ = nullptr;
 };

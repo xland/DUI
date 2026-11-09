@@ -33,15 +33,14 @@ enum class Kind : uint8_t { Node, Text, Scroller, Image };
 // ---------------------------------------------------------------------------
 enum class Phase : uint8_t { Bubble, Tunnel };
 
-struct ClickEvent {
-    Element* source = nullptr;   // 命中的目标元素（06-Events §4.3）
-    bool     handled = false;    // 置 true 终止冒泡
-};
-
-// 指针事件：移入/移出/移动/按下/弹起（坐标为客户区绝对 DIP）
+// 指针事件：移入/移出/移动/按下/弹起，以及合成的点击（坐标为客户区绝对 DIP）
+// Click 与指针事件共用同一事件对象（06-Events §4.3）：Click 时 button = Left、
+// pos = 抬起处坐标；控件内部 Handle* 钩子不参与 Click 派发。
 struct PointerEvent {
     Element* source = nullptr;   // 处理器宿主元素（冒泡中当前收到事件的元素）
     Vec2     pos{};               // 客户区绝对坐标（DIP）
+    // 触发事件的按键（按下/弹起有效；移动/移入/移出为 None）
+    PointerButton button = PointerButton::None;
     bool     handled = false;     // 置 true 终止冒泡（移入/移出不冒泡，该字段无意义）
 };
 
@@ -159,14 +158,16 @@ public:
     // 注：返回类型写全限定 —— 方法名 Lifetime 遮蔽同名类型
     dui::Lifetime Lifetime() const noexcept { return lifetime_; }
 
-    // 点击绑定（06-Events §4.1）：默认冒泡；Phase::Tunnel 时在隧道阶段先收到
+    // 点击绑定（06-Events §4.1）：默认冒泡；Phase::Tunnel 时在隧道阶段先收到。
+    // 事件对象与指针事件统一为 PointerEvent（button 恒为 Left，pos = 抬起处）。
     template <class Ctx>
-    void OnClick(Ctx* ctx, void (Ctx::*fn)(ClickEvent&), Phase phase = Phase::Bubble) {
-        (phase == Phase::Tunnel ? onTunnelClick_ : onClick_) =
-            [ctx, fn](ClickEvent& e) { (ctx->*fn)(e); };
+    void OnClick(Ctx* ctx, void (Ctx::*fn)(PointerEvent&), Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        BindMember(phase == Phase::Tunnel ? h.tunnelClick : h.click, ctx, fn);
     }
-    void OnClick(std::function<void(ClickEvent&)> fn, Phase phase = Phase::Bubble) {
-        (phase == Phase::Tunnel ? onTunnelClick_ : onClick_) = std::move(fn);
+    void OnClick(std::function<void(PointerEvent&)> fn, Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        (phase == Phase::Tunnel ? h.tunnelClick : h.click) = std::move(fn);
     }
 
     // ------------------------------------------------------------------
@@ -267,13 +268,13 @@ public:
         (phase == Phase::Tunnel ? h.tunnelChar : h.ch) = std::move(fn);
     }
 
-    // 指针/滚轮/键盘处理器集合：按需分配 —— 未绑定任何事件的元素不占这部分内存。
+    // 指针/点击/滚轮/键盘处理器集合：按需分配 —— 未绑定任何事件的元素不占这部分内存。
     // tunnel* 为隧道阶段专用槽，与冒泡槽互不覆盖（同一元素可两阶段各绑一个）。
     struct Handlers {
-        std::function<void(PointerEvent&)> enter, leave, move, down, up;
+        std::function<void(PointerEvent&)> enter, leave, move, down, up, click;
         std::function<void(WheelEvent&)>   wheel;
         std::function<void(KeyEvent&)>     keyDown, keyUp, ch;
-        std::function<void(PointerEvent&)> tunnelMove, tunnelDown, tunnelUp;
+        std::function<void(PointerEvent&)> tunnelMove, tunnelDown, tunnelUp, tunnelClick;
         std::function<void(WheelEvent&)>   tunnelWheel;
         std::function<void(KeyEvent&)>     tunnelKeyDown, tunnelKeyUp, tunnelChar;
     };
@@ -373,8 +374,6 @@ protected:
     std::vector<StyleValue>    animated_;     // 动画值（级联第 1 层，稀疏）
     uint32_t                   states_ = 0;
     dui::Lifetime              lifetime_;
-    std::function<void(ClickEvent&)> onClick_;
-    std::function<void(ClickEvent&)> onTunnelClick_;   // Click 的隧道阶段槽
 
 protected:
     Handlers& MutableHandlers() {
@@ -407,7 +406,6 @@ private:
     friend Vec2 MeasureElement(Element* e, const Vec2& avail, const StyleContext& parentCtx);
     friend void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx, unsigned depth);
     friend void ClearDirtyTree(Element* root);
-    friend void DispatchClick(Element* hit);
     friend void detail::TickAnimations(uint64_t nowMs);
     friend void detail::CancelAnimation(
         const std::shared_ptr<detail::AnimState>& state) noexcept;

@@ -2,11 +2,11 @@
 //  DUI/App/App.h — 应用运行时与窗口基类（01-Layering §2 App；12-Windowing）
 //
 //  窗口形态（已定案）：
-//    · 使用者继承 dui::Window，构造期只声明窗口形态（标题/尺寸/Chrome），
+//    · 使用者继承 dui::Window，构造期只声明窗口形态（标题/尺寸/是否无边框），
 //      不创建原生窗口；Application::Run(window) 接管创建 → OnCreate → Show
 //      → 消息循环 → 退出码。
 //    · OnCreate：原生窗口已建、尚未显示；Root() 可用，构建过程不可见。
-//    · 无边框/自定义标题栏 = 构造里换 Chrome + OnCreate 里加标题栏
+//    · 无边框/自定义标题栏 = 构造里设 frameless + OnCreate 里加标题栏
 //      （12-Windowing §6.1）。
 //
 //  M1 骨架已被 M2 替换：Platform.Window（HWND）+ 消息循环已落地；M5 落地
@@ -30,6 +30,7 @@
 #include "Core/Dispatcher.h"
 #include "UI/UI.h"
 #include "App/Dialog.h"
+#include "App/Menu.h"
 
 namespace dui {
 
@@ -39,12 +40,6 @@ class NativeWindow;      // App/Frame.cpp 组装层使用（避免依赖 Platfor
 namespace graphics {
 class Device;
 }
-
-// 窗口装饰（12-Windowing §6.1：无边框 + 自定义标题栏的同一扩展点）
-enum class Chrome : uint8_t {
-    System,       // 系统标题栏 + 边框
-    Borderless,   // 无边框，业务自绘标题栏（DWM 阴影 + 拖动移动 + 拖边框缩放）
-};
 
 // 非客户区命中码（对应 Win32 的 HT*；公共头不含 windows.h，故在此自定义）
 enum class HitTestCode : int {
@@ -70,7 +65,9 @@ struct WindowOptions {
     const wchar_t* title = L"";
     float width = 800.f;         // DIP
     float height = 600.f;        // DIP
-    Chrome chrome = Chrome::System;
+    // true → 无系统标题栏 / 边框，业务自绘标题栏（DWM 阴影 + 拖动移动 +
+    // 拖边框缩放，12-Windowing §6.1）；默认 false：系统标题栏 + 边框。
+    bool frameless = false;
     // true → 交换链按 PREMULTIPLIED 合成、清屏全透明，窗口背景可透视桌面
     // （DirectComposition 承载，ADR-010）。默认 false：IGNORE + 不透明清屏。
     bool transparent = false;
@@ -104,6 +101,14 @@ public:
     // 原生窗口句柄：OnCreate 起有效（此时 HWND 已建、窗口尚未显示）。
     HWND NativeHandle() const noexcept;
 
+    // ---- 系统原生弹出菜单（App/Menu.h）------------------------------------
+    // 同步模态：菜单弹出期间框架主消息循环挂起，返回后执行选中项回调。
+    // 不传位置 → 弹在当前鼠标位置；posDip 为客户区 DIP 坐标。
+    // 框架不自动挂钩右键：何时弹出由业务决定（如 OnPointerUp 里判断
+    // ev.button == PointerButton::Right）。
+    void ShowMenu(const Menu& menu);
+    void ShowMenu(const Menu& menu, Vec2 posDip);
+
     // ---- 系统对话框（17-Dialogs）：同步模态，UI 线程、Run 建好 HWND 后调用 ----
     // 结果三态：IsOk / IsCancelled / IsError；只返回路径，不读写文件。
     // 调用期间系统接管消息泵，框架主循环挂起（Dispatcher 回投延后但不丢）。
@@ -125,7 +130,7 @@ protected:
     virtual void OnDpiChanged(const DpiChanged&) {}
     virtual bool OnClosing() { return true; }   // 返回 false 阻止关闭（M2）
 
-    // 非客户区命中（仅 Chrome::Borderless 有意义）：ptDip = 客户区 DIP。
+    // 非客户区命中（仅 frameless 有意义）：ptDip = 客户区 DIP。
     // 返回 true → 采用 hit：Caption = 拖动可移动窗口；Left/Right/Top/Bottom/
     // 四个角 = 拖边框可缩放（由系统接管，业务不必自己处理鼠标与移动逻辑）。
     virtual bool OnNcHitTest(Vec2 ptDip, HitTestCode& hit) {

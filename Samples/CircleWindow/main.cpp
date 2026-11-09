@@ -33,7 +33,7 @@ public:
               .title       = L"CircleWindow · 圆形半透明窗口",
               .width       = kSize,
               .height      = kSize,
-              .chrome      = dui::Chrome::Borderless,
+              .frameless   = true,
               .transparent = true,
           }) {}
 

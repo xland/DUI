@@ -20,9 +20,9 @@ namespace {
 
 constexpr wchar_t kClassName[] = L"DUI_Window_v1";
 
-// Chrome::System：系统标题栏 + 边框
+// frameless = false：系统标题栏 + 边框
 constexpr DWORD kStyleSystem = WS_OVERLAPPEDWINDOW;
-// Chrome::Borderless：无系统边框（标题栏/边框自绘）。
+// frameless = true：无系统边框（标题栏/边框自绘）。
 //   · WS_THICKFRAME 保留 → 配合 WM_NCHITTEST 返回 HT* 可由系统接管缩放；
 //   · WS_POPUP 无标题栏 → 无系统标题栏可盖，客户区由 WM_NCCALCSIZE 扩到整窗；
 //   · 保留 SYSMENU/MINIMIZEBOX/MAXIMIZEBOX → 任务栏按钮与 Alt+F4 正常。
@@ -385,11 +385,15 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         case WM_LBUTTONDOWN:
             SetCapture(hwnd);               // 窗口外抬起也能收到（06-Events R6 的最小形态）
-            self->host_->OnPointerButton(self->DipFromLParam(lp), true);
+            self->host_->OnPointerButton(self->DipFromLParam(lp), PointerButton::Left, true);
             return 0;
         case WM_LBUTTONUP:
             ReleaseCapture();
-            self->host_->OnPointerButton(self->DipFromLParam(lp), false);
+            self->host_->OnPointerButton(self->DipFromLParam(lp), PointerButton::Left, false);
+            return 0;
+        case WM_RBUTTONUP:
+            // 右键抬起交给业务决定是否弹菜单（框架不自动挂钩 WM_CONTEXTMENU）
+            self->host_->OnPointerButton(self->DipFromLParam(lp), PointerButton::Right, false);
             return 0;
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {

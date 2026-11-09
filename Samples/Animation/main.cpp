@@ -26,7 +26,7 @@ static const dui::Style kButton = dui::Style()
 template <class F>
 void AddButton(dui::Panel* parent, const wchar_t* label, F fn) {
     parent->AddChild<dui::Button>(label, kButton)
-        ->OnClick([fn](dui::ClickEvent&) { fn(); });
+        ->OnClick([fn](dui::PointerEvent&) { fn(); });
 }
 
 // 一列 = 一个示例；返回的容器用来放卡片与按钮。

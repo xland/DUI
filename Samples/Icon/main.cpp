@@ -117,7 +117,7 @@ protected:
             .Width(24.f).Height(24.f).Color(0xFF2563EB));
         sw->SetIcon(dui::IconName::Check);
         dui::Text* hint = toggle->AddChild<dui::Text>(L"未选中");
-        toggle->OnClick([sw, hint](dui::ClickEvent&) {
+        toggle->OnClick([sw, hint](dui::PointerEvent&) {
             const bool checked = sw->Name() == dui::IconName::CheckChecked;
             sw->SetIcon(checked ? dui::IconName::Check : dui::IconName::CheckChecked);
             hint->SetText(checked ? L"未选中" : L"已选中");

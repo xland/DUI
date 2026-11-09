@@ -145,7 +145,7 @@ protected:
             if (z != 0) s.ZIndex(z);
             dui::Panel* p = stack->AddChild<dui::Panel>(s);
             p->AddChild<dui::Text>(label, dui::Style().Color(0xFFFFFFFF));
-            p->OnClick([hit, label](dui::ClickEvent&) { hit->SetText(label); });
+            p->OnClick([hit, label](dui::PointerEvent&) { hit->SetText(label); });
         };
         NewLayer(L"红 · zIndex 10",  0xFFC00000,  20.f, 16.f,  10);
         NewLayer(L"绿 · 默认 0",     0xFF70AD47,  90.f, 30.f,   0);
@@ -171,7 +171,7 @@ protected:
                 .JustifyContent(dui::Justify::Center)
                 .AlignItems(dui::Align::Center));
             p->AddChild<dui::Text>(label, dui::Style().Color(0xFFFFFFFF));
-            p->OnClick([anchorHit, label](dui::ClickEvent&) { anchorHit->SetText(label); });
+            p->OnClick([anchorHit, label](dui::PointerEvent&) { anchorHit->SetText(label); });
         };
         NewAnchored(mid1, L"mid1 · zIndex 10",  0xFFC00000, 30.f, 24.f,  10);
         NewAnchored(mid2, L"mid2 · zIndex -1",  0xFF2563EB, 120.f, 44.f, -1);

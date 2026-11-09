@@ -284,7 +284,7 @@ NativeMessageResult ShowMessageBox(void* owner, const wchar_t* text, const wchar
 ### 6.3 owner / 无边框窗口 / DPI
 
 - owner 直接取 `Window::NativeHandle()`（`App.h:121` 私有成员，成员函数实现可访问），**不新增公共 getter**，公共 API 不出现 `HWND`。
-- `Chrome::Borderless` 下同样能传 owner：系统对话框独立顶层窗口，不受自绘标题栏 / `WM_NCHITTEST` 影响；系统负责禁用宿主。
+- `frameless = true` 下同样能传 owner：系统对话框独立顶层窗口，不受自绘标题栏 / `WM_NCHITTEST` 影响；系统负责禁用宿主。
 - DPI：PMv2 下由系统缩放（12-Windowing §2），框架不换算、不传坐标；跨显示器拖动期间不弹窗（业务侧约束）。
 
 ### 6.4 线程
@@ -300,7 +300,7 @@ NativeMessageResult ShowMessageBox(void* owner, const wchar_t* text, const wchar
 | **D1 ✅** | 公共 API 落地：`App/Dialog.h`（`DialogResult` / `std::span` 选项 / 枚举 / `#undef MessageBox`）、`Window` 方法声明（含宏兼容别名）、`App.h` + `DUI.h` 聚合、`DUI.vcxproj` + `.filters` 登记 | Release x64 全解决方案编译通过，`/W4` 无新增警告；`DUI.h` 及 `App/Dialog.h` 不出现 `windows.h` / `HWND` / COM 类型；`DUI.props` 零改动；两种包含顺序的 TU 都能调用 `MessageBox(...)` 且链接通过 |
 | **D2 ✅** | Platform 实现 + App 装配：`Platform/Dialog.h/.cpp`（打开 / 保存 / 文件夹 / 消息框 + `#undef`）、`App/Dialog.cpp`、焦点抑制（§6.2） | 取消 / 成功 / 出错三态、过滤器默认项与 0-based 索引、多选、保存默认扩展名与覆盖确认、不创建文件、中文/空格路径、COM 接口与 `CoTaskMemFree` 成对（**编译验证已过，运行时逐项仍待人工实测**） |
 | **D3 ✅** | `Samples/Dialog` 示例（照抄 `Samples/HelloWorld/HelloWorld.vcxproj`，OutDir/IntDir 指 `Build\`，挂 `DUI.slnx` + `.filters`） | 四个能力按钮（+ 两个便捷糖按钮）+ 结果文本，演示多选（`std::span` 数组直传）、保存、取消、错误、警告/确认；另有 `MacroCompat.cpp` 宏兼容守卫 |
-| **D4 ⏳** | 编译 ✅ + 自动化点击 ✅ + 人工验证待做 | 编译：Debug/Release x64 全解决方案通过、`/W4` 无新增警告 ✅。自动化点击（M7.1）：四类弹窗均出现 `#32770`、关闭后主循环恢复、进程响应正常、15 个示例启动无回归 ✅。人工：① 100% / 150% / 200% DPI；② `Chrome::Borderless` 弹窗；③ 文本框聚焦 → 弹窗 → 取消 → 焦点/选区保留；④ 对话框期间后台任务完成，关闭后回投不丢；⑤ 空闲 CPU 归零；⑥ 多选 20+ 文件、长路径、无效初始路径、空 `filters`、越界 `filterIndex` 均不崩；⑦ 实际选文件 / 另存结果文本符合预期 |
+| **D4 ⏳** | 编译 ✅ + 自动化点击 ✅ + 人工验证待做 | 编译：Debug/Release x64 全解决方案通过、`/W4` 无新增警告 ✅。自动化点击（M7.1）：四类弹窗均出现 `#32770`、关闭后主循环恢复、进程响应正常、15 个示例启动无回归 ✅。人工：① 100% / 150% / 200% DPI；② `frameless = true` 弹窗；③ 文本框聚焦 → 弹窗 → 取消 → 焦点/选区保留；④ 对话框期间后台任务完成，关闭后回投不丢；⑤ 空闲 CPU 归零；⑥ 多选 20+ 文件、长路径、无效初始路径、空 `filters`、越界 `filterIndex` 均不崩；⑦ 实际选文件 / 另存结果文本符合预期 |
 
 实现备注：
 

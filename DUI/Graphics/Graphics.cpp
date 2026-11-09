@@ -434,18 +434,22 @@ void Painter::StrokeRoundRect(const Rect& dipRect, float radiusDip, float widthD
 void Painter::ShadowRoundRect(const Rect& dipRect, float radiusDip, float blurDip,
                               Color color, float scale) {
     if (blurDip <= 0.f) return;
-    const float ox = (dipRect.x + originDipX_) * scale;
-    const float oy = (dipRect.y + originDipY_) * scale;
-    const float w = dipRect.w * scale;
-    const float h = dipRect.h * scale;
+    // 盒边界对齐到整数物理像素：DPI 缩放会让 d=0 边界落在任意小数相位，
+    // 上下（左右）像素中心到边界的距离相差 2×小数部分 → 四边投影浓度不等。
+    const float x0 = std::round((dipRect.x + originDipX_) * scale);
+    const float y0 = std::round((dipRect.y + originDipY_) * scale);
+    const float x1 = std::round((dipRect.x + originDipX_ + dipRect.w) * scale);
+    const float y1 = std::round((dipRect.y + originDipY_ + dipRect.h) * scale);
+    const float w = x1 - x0;
+    const float h = y1 - y0;
     if (w <= 0.f || h <= 0.f) return;
     float radius = radiusDip * scale;
     if (radius < 1.f) radius = 0.f;
     if (radius > w * 0.5f) radius = w * 0.5f;
     if (radius > h * 0.5f) radius = h * 0.5f;
     const float blur = blurDip * scale;
-    const float cx = ox + w * 0.5f;
-    const float cy = oy + h * 0.5f;
+    const float cx = (x0 + x1) * 0.5f;
+    const float cy = (y0 + y1) * 0.5f;
     const float hw = w * 0.5f;
     const float hh = h * 0.5f;
     PushShapeQuad(cx, cy, hw + blur, hh + blur, hw, hh, 0.f, 0.f, radius, blur, color, 3);
@@ -853,14 +857,18 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
 
             uint8_t* out = dst + written;
             if (c.op == static_cast<uint32_t>(PaintOp::Rect)) {
-                const float x = (c.p[0] + st.originDipX) * scale;
-                const float y = (c.p[1] + st.originDipY) * scale;
-                const float w = c.p[2] * scale, h = c.p[3] * scale;
+                // 与 ShadowRoundRect 同规则：边界取整到整数物理像素，背景与投影
+                // 共用同一条 d=0 边界，四边采样相位一致。
+                const float x0 = std::round((c.p[0] + st.originDipX) * scale);
+                const float y0 = std::round((c.p[1] + st.originDipY) * scale);
+                const float x1 = std::round((c.p[0] + st.originDipX + c.p[2]) * scale);
+                const float y1 = std::round((c.p[1] + st.originDipY + c.p[3]) * scale);
+                const float w = x1 - x0, h = y1 - y0;
                 float radius = c.p[4] * scale;
                 if (radius < 1.f) radius = 0.f;
                 if (radius > w * 0.5f) radius = w * 0.5f;
                 if (radius > h * 0.5f) radius = h * 0.5f;
-                const float cx = x + w * 0.5f, cy = y + h * 0.5f;
+                const float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
                 const float hw = w * 0.5f, hh = h * 0.5f;
                 Vertex* v = reinterpret_cast<Vertex*>(out);
                 for (int i = 0; i < 4; ++i) {

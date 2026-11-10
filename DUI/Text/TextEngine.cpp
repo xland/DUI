@@ -25,8 +25,7 @@ namespace {
 //     DWRITE_TEXTURE_CLEARTYPE_3x1（每像素 3 字节 = 左/中/右子像素覆盖率）。
 //     灰度 AA（ALIASED_1x1）只有整像素覆盖，横向分辨率是子像素的 1/3，
 //     小字号汉字观感发虚；ClearType 把横向三倍的覆盖率交给渲染端逐通道混合。
-//     代价：字形 x 必须整像素对齐（子像素相位已由覆盖率承载，不能再平移），
-//     所以相位固定 1 档；图集页升级为 RGBA8（R/G/B 覆盖，A = 最大值）。
+//     图集页为 RGBA8（R/G/B 覆盖，A = 最大值）。
 //
 //  ② 渲染模式：统一用 DWRITE_RENDERING_MODE_NATURAL（不做
 //     symmetrization）。
@@ -41,9 +40,11 @@ namespace {
 //     S 曲线增强；Skia 的 pre-blend 是方向相反的线性化表，且仅在 sRGB surface
 //     生效。自造 S 曲线会把 AA 过渡带压窄 → 观感发虚且颗粒。
 
-// 亚像素相位：ClearType 下恒 1 档（整像素对齐）。若哪天回退灰度 AA，
-// 可改回 4 相位并把 RasterCb 里的 antialias/纹理类型换回 ALIASED_1x1。
-constexpr float kSubPixelScale = 1.f;
+// 亚像素相位：4 相位（1/4 像素 = DWrite NATURAL 模式的内部量化粒度，对齐
+// Qt 6.11 的 4 相位定位 / Skia subX）。相位按 x 的小数部分量化进图集键，
+// 各相位分别光栅（相位烘焙进覆盖率位图），quad 落回整数像素供 POINT 采样。
+// 代价：图集内存 ×4（LRU 预算兜底）。
+constexpr float kSubPixelScale = 4.f;
 constexpr float kSubPixelStep  = 1.f / kSubPixelScale;
 constexpr int   kSubPixelPhases = static_cast<int>(kSubPixelScale);
 
@@ -195,7 +196,7 @@ public:
             pen += run->glyphAdvances[i];
 
             // 相位量化：q = round(gx * 相位分母)，相位 = q mod 分母，整数部分 = floor(q/分母)。
-            // 1 相位时 q 即整像素、phase 恒 0（grid fit 已把字形贴到整像素网格）。
+            // 4 相位 = DWrite NATURAL 的 1/4 像素内部量化粒度；取整误差 ≤ 1/8 像素。
             const int q4 = static_cast<int>(std::lround(gx * kSubPixelScale));
             const uint32_t phase =
                 static_cast<uint32_t>((q4 % kSubPixelPhases + kSubPixelPhases) % kSubPixelPhases);
@@ -670,13 +671,12 @@ const GlyphUV& Engine::GetGlyph(const void* face, uint32_t glyphIndex, uint32_t 
 
 bool Engine::RasterCb(void* ctx, const void* face, uint32_t glyphIndex, uint32_t pixelSize,
                       uint32_t phase, std::vector<uint8_t>& out, int& left, int& top, int& w, int& h) {
-    (void)phase;   // ClearType：子像素信息在覆盖率里，x 必须整像素对齐，无相位
     Engine& en = *static_cast<Engine*>(ctx);
     if (en.gdi_ == nullptr || en.renderParams_ == nullptr) return false;
 
-    // 光栅走 IDWriteBitmapRenderTarget：内部就是 GDI 的 ClearType DrawGlyphRun，
-    // hinting、gamma 与对比度增强全部来自系统渲染参数 —— 与记事本逐像素同源。
-    // （GlyphRunAnalysis 即使指定 CLEARTYPE_GDI_CLASSIC 也不做 gamma/对比度，
+    // 光栅走 IDWriteBitmapRenderTarget：内部就是 DWrite 的 ClearType 渲染器
+    // （"GDI" 只指输出是 GDI DIB 内存），gamma 与对比度增强来自系统渲染参数。
+    // （GlyphRunAnalysis 即使指定 CLEARTYPE 模式也不做 gamma/对比度，
     //   小字号汉字因此明显偏细偏灰。）
     // 位图按字号档位缓存：边长 = 3 倍字高，容得下上下伸展与降部。
     const uint32_t need = pixelSize * 3 + 16;
@@ -736,8 +736,11 @@ bool Engine::RasterCb(void* ctx, const void* face, uint32_t glyphIndex, uint32_t
     run.glyphAdvances = &adv;
     run.bidiLevel = 0;
 
-    // 原点放在位图上部：基线取 3/4 高度处，整数定位（ClearType 要求整像素 x）
-    const FLOAT originX = static_cast<FLOAT>(en.bmpSize_ / 2);
+    // 原点放在位图上部：基线取 3/4 高度处；x 加上相位小数偏移（1/4 像素粒度），
+    // 子像素相位由 DWrite NATURAL 光栅烘焙进覆盖率位图（图集键含相位，各相位
+    // 分别缓存）。绘制端 quad 取整像素（gxFloor + left），相位随位图一起还原。
+    const FLOAT originX = static_cast<FLOAT>(en.bmpSize_ / 2) +
+                          static_cast<FLOAT>(phase) / kSubPixelScale;
     const FLOAT originY = static_cast<FLOAT>(en.bmpSize_ * 3 / 4);
     RECT bb{};
     // NATURAL 测量 → CLEARTYPE_NATURAL 渲染：不做 GDI 网格拟合（笔画纤细锐利，

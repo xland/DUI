@@ -18,10 +18,13 @@
 #include <utility>
 
 #include "Graphics/Graphics.h"
+#include "Graphics/ImageCodec.h"
 #include "RichText/RichDocEdit.h"
 #include "Text/TextEngine.h"
 #include "UI/Scroller.h"
 #include "UI/UI.h"
+
+#include <unordered_map>
 
 namespace dui {
 namespace {
@@ -42,7 +45,7 @@ constexpr float kRuleGap = 14.f;
 constexpr float kCodeScale = 0.9f;
 constexpr float kCodePadding = 10.f;
 constexpr float kLineNumberWidth = 30.f;
-constexpr float kImageRatio = 0.5625f;   // 未给尺寸时的占位宽高比（16:9）
+constexpr float kImageRatio = 0.5625f;   // 图片无尺寸且解码失败时占位框的宽高比（16:9）
 constexpr float kNoWrapWidth = 1e6f;     // 不折行（DWrite 需要有限宽）
 
 constexpr Color kCodeBackground = 0xFFF6F7F8;
@@ -51,7 +54,8 @@ constexpr Color kRuleColor = 0xFFD8DCE2;
 constexpr Color kImageFill = 0xFFF2F3F5;
 constexpr Color kImageStroke = 0xFFC9CED6;
 constexpr Color kImageTextColor = 0xFF8A9099;
-constexpr Color kQuoteBorderDefault = 0xFF007BFF;
+constexpr Color kQuoteBorderDefault = 0xFF555555;   // 深灰（原蓝色，引用边框默认色）
+constexpr float kQuotePadY = 6.f;                   // 引用块上下内边距：文字不贴盒沿
 
 constexpr size_t kNoEditable = static_cast<size_t>(-1);
 constexpr size_t kMaxUndo = 100;
@@ -97,10 +101,42 @@ Rect OffsetRect(const Rect& r, Vec2 offset) noexcept {
     return Rect{r.x + offset.x, r.y + offset.y, r.w, r.h};
 }
 
+// base64 解码（RFC 4648 标准字母表；'=' 与空白跳过）—— data URI 图片用
+size_t DecodeBase64(const wchar_t* s, size_t count, std::vector<uint8_t>& out) {
+    auto Digit = [](wchar_t ch) -> int {
+        if (ch >= L'A' && ch <= L'Z') return ch - L'A';
+        if (ch >= L'a' && ch <= L'z') return ch - L'a' + 26;
+        if (ch >= L'0' && ch <= L'9') return ch - L'0' + 52;
+        if (ch == L'+') return 62;
+        if (ch == L'/') return 63;
+        return -1;
+    };
+    out.reserve(count / 4 * 3 + 3);
+    uint32_t acc = 0;
+    int bits = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const int v = Digit(s[i]);
+        if (v < 0) continue;
+        acc = (acc << 6) | static_cast<uint32_t>(v);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<uint8_t>((acc >> bits) & 0xFF));
+        }
+    }
+    return out.size();
+}
+
 // 文本块（可编辑）：段落 / 标题 / 引用 / 列表项；代码块只读
 bool IsEditableKind(BlockKind kind) noexcept {
     return kind == BlockKind::Paragraph || kind == BlockKind::Heading ||
            kind == BlockKind::Quote || kind == BlockKind::ListItem;
+}
+
+// 光标可落的块 = 可编辑文本块 + 图片块。图片注册成零长度定位点：光标停在
+// 图片左缘（与图片等高），Backspace / Delete 删除图片本身
+bool IsCaretKind(BlockKind kind) noexcept {
+    return IsEditableKind(kind) || kind == BlockKind::Image;
 }
 
 bool IsHighSurrogate(wchar_t c) noexcept { return c >= 0xD800 && c <= 0xDBFF; }
@@ -140,6 +176,7 @@ struct RichEdit::Impl {
         Color     color = 0;
         Thickness padding{};
         float     radius = 0.f;
+        float     fontSize = 0.f;   // run 有效字号（DIP）：文字带高度按它缩放
     };
 
     // 一个可视块（列表项 / 段落 / 代码块 / 图片 / 分割线各一条；嵌套列表按序摊平）
@@ -251,9 +288,18 @@ struct RichEdit::Impl {
     std::vector<text::Paragraph*> poolAux;
     std::vector<text::Paragraph*> poolMarker;
 
+    // 图片纹理缓存：src → 纹理（File 路径 / data URI）；空句柄 = 解码失败的
+    // 负缓存，避免每个布局/绘制帧重试解码。绘制是 const 路径，惰性解码走 mutable
+    mutable std::unordered_map<String, std::shared_ptr<graphics::ImageTexture>> images;
+
     void Discard(bool recycle);
     void FlushPool();
     text::Paragraph* Take(std::vector<text::Paragraph*>& pool, const wchar_t* text);
+    const graphics::ImageTexture* ImageOf(const Block& block) const;
+
+    bool IsImageAt(size_t index) const;
+    bool EraseImageAt(size_t index);
+    bool LeaveImageToText();
 
     void EnsureLayout(const StyleContext& ctx, float width);
     void Build(const StyleContext& ctx, float base, float line, const wchar_t* family);
@@ -520,7 +566,9 @@ void RichEdit::Impl::BuildItem(const Block& block, const String& marker, int dep
                 overrides = true;
             }
             if ((s.background >> 24) != 0u) {
-                it.highlights.push_back(Highlight{start, length, s.background, s.padding, s.radius});
+                it.highlights.push_back(Highlight{start, length, s.background, s.padding,
+                                                  s.radius,
+                                                  s.fontSize > 0.f ? s.fontSize : fontSize});
             }
             start += length;
         }
@@ -529,7 +577,7 @@ void RichEdit::Impl::BuildItem(const Block& block, const String& marker, int dep
 
     it.para = Take(poolMain, it.text.c_str());
 
-    if (!code && IsEditableKind(block.kind)) {
+    if (!code && IsCaretKind(block.kind)) {
         it.editableIndex = editables.size();
         editables.push_back(Editable{const_cast<Block*>(&block), owned.get()});
     }
@@ -583,11 +631,25 @@ void RichEdit::Impl::PlaceItem(Item& it, float width, float& y) {
     const float left = st.margin.left;
     const float availW = wrap ? std::max(0.f, width - st.margin.left - st.margin.right) : 0.f;
 
-    // ---- 图片：占位框 + altText（P2 不解码）----
+    // ---- 图片：解码纹理按自然尺寸定盒；无纹理（无 src / 解码失败）退回占位 ----
     if (block.kind == BlockKind::Image) {
-        float imageW = block.width > 0.f ? block.width : (wrap ? availW : 200.f);
+        const graphics::ImageTexture* tex = ImageOf(block);
+        const float dpiScale = lastCtx.scale > 0.f ? lastCtx.scale : 1.f;
+
+        float imageW;
+        if (block.width > 0.f) {
+            imageW = block.width;
+        } else if (tex != nullptr) {
+            imageW = static_cast<float>(tex->width) / dpiScale;   // 像素 → DIP
+        } else {
+            imageW = wrap ? availW : 200.f;
+        }
         if (wrap && imageW > availW) imageW = availW;
-        const float imageH = block.height > 0.f ? block.height : imageW * kImageRatio;
+
+        const float imageH = block.height > 0.f ? block.height
+            : imageW * (tex != nullptr && tex->width > 0
+                            ? static_cast<float>(tex->height) / static_cast<float>(tex->width)
+                            : kImageRatio);
 
         float imageX = left;
         if (block.imageAlign == richtext::Align::Center) {
@@ -598,7 +660,7 @@ void RichEdit::Impl::PlaceItem(Item& it, float width, float& y) {
 
         it.blockBox = {imageX, y, imageW, imageH};
         it.textBox = it.blockBox;
-        if (!block.altText.empty()) {
+        if (tex == nullptr && !block.altText.empty()) {
             if (it.auxPara == nullptr) it.auxPara = Take(poolAux, block.altText.c_str());
             it.auxPara = MakePara(it.auxPara, block.altText.c_str(), baseSize * 0.85f, 400u,
                                   it.lineHeight, it.family.c_str(), kNoWrapWidth, nullptr);
@@ -653,9 +715,11 @@ void RichEdit::Impl::PlaceItem(Item& it, float width, float& y) {
     const float textH = it.para != nullptr ? it.para->size.y : it.fontSize * it.lineHeight;
     const float textW = it.para != nullptr ? it.para->size.x : 0.f;
     const float boxW = wrap ? availW : std::max(textW + gutter, 1.f);
+    // 引用块上下留内边距，文字不贴盒沿（盒随排版增高，文字垂直居中）
+    const float padY = (block.kind == BlockKind::Quote) ? kQuotePadY : 0.f;
 
-    it.blockBox = {left, y, boxW, textH};
-    it.textBox = {left + gutter, y, std::max(0.f, boxW - gutter), textH};
+    it.blockBox = {left, y, boxW, textH + 2.f * padY};
+    it.textBox = {left + gutter, y + padY, std::max(0.f, boxW - gutter), textH};
 
     if (!it.marker.empty()) {
         if (it.markerPara == nullptr) it.markerPara = Take(poolMarker, it.marker.c_str());
@@ -665,7 +729,7 @@ void RichEdit::Impl::PlaceItem(Item& it, float width, float& y) {
         it.markerX = it.textBox.x - kMarkerGapRight - markerW;
     }
 
-    y += textH + (hasMargin ? st.margin.bottom : DefaultGapBelow(block.kind));
+    y += textH + 2.f * padY + (hasMargin ? st.margin.bottom : DefaultGapBelow(block.kind));
 }
 
 // ---------------------------------------------------------------------------
@@ -687,6 +751,10 @@ Vec2 RichEdit::Impl::TextOriginDoc(const Item& it) const {
 bool RichEdit::Impl::CaretRectOf(Cursor c, Rect& out) const {
     if (c.block >= editables.size()) return false;
     const Item& it = *editables[c.block].item;
+    if (it.block->kind == BlockKind::Image) {
+        out = Rect{it.blockBox.x, it.blockBox.y, 1.f, it.blockBox.h};   // 贴图片左缘、等高
+        return true;
+    }
     if (it.para == nullptr) return false;
     Rect r;
     if (!text::Engine::Get().CaretRect(it.para, c.offset, r)) return false;
@@ -700,6 +768,16 @@ void RichEdit::Impl::EnsureLines() const {
     lines.clear();
     for (size_t i = 0; i < editables.size(); ++i) {
         const Item& it = *editables[i].item;
+        if (it.block->kind == BlockKind::Image) {
+            // 图片块补一条伪视觉行（占满图片盒）：上下移动 / 行首行尾能穿过图片
+            VisLine line;
+            line.editable = i;
+            line.start = line.end = 0;
+            line.top = it.blockBox.y;
+            line.bottom = it.blockBox.Bottom();
+            lines.push_back(line);
+            continue;
+        }
         if (it.para == nullptr) continue;
         text::Engine::Get().LineInfos(it.para, lineScratch);
         const Vec2 o = TextOriginDoc(it);
@@ -765,7 +843,7 @@ RichEdit::Impl::Cursor RichEdit::Impl::HitTestDoc(Vec2 pt) const {
         if (pt.y < box.y) {
             if (i == 0) return Cursor{0, 0};
             const Rect& prev = editables[i - 1].item->blockBox;
-            // 两点之间按距离取近的一侧（图片/代码块区点击会落到相邻文本块）
+            // 两点之间按距离取近的一侧（间隙 / 代码块区点击落到相邻文本块）
             return (pt.y - prev.Bottom() < box.y - pt.y) ? EndCursor(i - 1) : Cursor{i, 0};
         }
         if (pt.y <= box.Bottom()) {
@@ -842,6 +920,12 @@ void RichEdit::Impl::PaintItem(const Item& it, graphics::Painter& p, const Style
     }
 
     if (block.kind == BlockKind::Image) {
+        const graphics::ImageTexture* tex = ImageOf(block);
+        if (tex != nullptr) {
+            // 颜色约定与 Image::OnPaint 一致：RGB 取白，alpha = 不透明度
+            p.AddImageQuad(tex->id, OffsetRect(it.blockBox, origin), 0xFFFFFFFF, scale);
+            return;
+        }
         const Rect box = OffsetRect(it.blockBox, origin);
         p.FillRoundedRect(box, 4.f, kImageFill, 1.f, scale);
         p.StrokeRoundRect(box, 4.f, 1.f, kImageStroke, scale);
@@ -862,15 +946,32 @@ void RichEdit::Impl::PaintItem(const Item& it, graphics::Painter& p, const Style
     const Vec2 textOrigin{origin.x + it.textBox.x + AlignDx(it), origin.y + it.textBox.y};
 
     if (it.para != nullptr) {
-        // run 高亮盒
+        // run 高亮盒：垂直收紧到基线附近的**文字带**（上 0.94em / 下 0.20em，含拉丁
+        // 降部余量，总高 1.14em），不再用整行高 —— 行高含行距 leading，盒子会远
+        // 高于文字且文字不居中。宽度仍用逐行 hit-test 矩形 + padding。
+        std::vector<text::LineInfo> lineInfos;
+        if (!it.highlights.empty()) {
+            text::Engine::Get().LineInfos(it.para, lineInfos);
+        }
         for (const Highlight& hl : it.highlights) {
             if (hl.color == 0) continue;
             text::Engine::Get().SelectionRects(it.para, hl.start, hl.start + hl.length, scratch);
             for (const Rect& r : scratch) {
+                // 该矩形所在行的基线（HitTestTextRange 的 top 即行顶，与 LineInfos 同源；
+                // 找不到行时按行内 80% 处兜底）
+                float baseline = r.y + r.h * 0.8f;
+                for (const text::LineInfo& li : lineInfos) {
+                    if (r.y >= li.top && r.y < li.top + li.height) {
+                        baseline = li.top + li.baseline;
+                        break;
+                    }
+                }
+                const float bandTop = baseline - hl.fontSize * 0.94f;
+                const float bandBottom = baseline + hl.fontSize * 0.20f;
                 const Rect box{textOrigin.x + r.x - hl.padding.left,
-                               textOrigin.y + r.y - hl.padding.top,
+                               textOrigin.y + bandTop - hl.padding.top,
                                r.w + hl.padding.left + hl.padding.right,
-                               r.h + hl.padding.top + hl.padding.bottom};
+                               (bandBottom - bandTop) + hl.padding.top + hl.padding.bottom};
                 p.FillRoundedRect(box, hl.radius, hl.color, 1.f, scale);
             }
         }
@@ -939,6 +1040,82 @@ void RichEdit::Impl::RebuildAt(float width) {
     EnsureLayout(lastCtx, width);
     caret = ClampToDoc(caret);
     anchor = ClampToDoc(anchor);
+}
+
+// ---------------------------------------------------------------------------
+// 图片：src → 纹理（RichEditor.md §3.5 D5）
+//
+//  File 路径走 WIC 文件解码；`data:image/...;base64,` 走 base64 → 内存解码。
+//  结果按 src 缓存（同一张图多次出现只解码一次，纹理进 TextureStore 由
+//  App 层每帧同步上传）。失败记空句柄负缓存，绘制退回占位框。
+// ---------------------------------------------------------------------------
+
+const graphics::ImageTexture* RichEdit::Impl::ImageOf(const Block& block) const {
+    const String& src = block.src;
+    if (src.empty()) return nullptr;
+
+    auto [entry, inserted] = images.try_emplace(src);
+    if (inserted) {
+        graphics::DecodedImage img;
+        String err;
+        constexpr const wchar_t* kDataUri = L"data:image/";
+        constexpr size_t kDataUriLen = 11;
+        bool ok = false;
+        if (src.compare(0, kDataUriLen, kDataUri) == 0) {
+            const size_t sep = src.find(L";base64,");
+            if (sep != String::npos) {
+                std::vector<uint8_t> bytes;
+                DecodeBase64(src.c_str() + sep + 8, src.size() - sep - 8, bytes);
+                ok = graphics::DecodeImageMemory(bytes.data(),
+                                                 static_cast<uint32_t>(bytes.size()), img, &err);
+            } else {
+                err = L"data URI 只支持 base64 编码";
+            }
+        } else {
+            ok = graphics::DecodeImageFile(src.c_str(), img, &err);
+        }
+        if (ok) {
+            entry->second = graphics::TextureStore::Instance().Register(
+                img.width, img.height, std::move(img.pixels));
+        }
+    }
+    return entry->second.get();
+}
+
+// ---------------------------------------------------------------------------
+// 图片定位点：光标可停在图片上，Del/Backspace 删除图片
+// ---------------------------------------------------------------------------
+
+bool RichEdit::Impl::IsImageAt(size_t index) const {
+    return index < editables.size() && editables[index].block->kind == BlockKind::Image;
+}
+
+// 删除指定下标的图片块。光标落回原下标：重建后即图片原位置的下一个块起点，
+// 图片在末尾时 clamp 成前一个块末尾
+bool RichEdit::Impl::EraseImageAt(size_t index) {
+    Block* image = editables[index].block;
+    Spot spot{};
+    if (!FindSpot(image, spot)) return false;
+    PushUndo(false);
+    spot.container->erase(spot.container->begin() + static_cast<ptrdiff_t>(spot.index));
+    ++version;
+    Rebuild();
+    caret = anchor = ClampToDoc(Cursor{index, 0});
+    caretVisible = true;
+    return true;
+}
+
+// 光标在图片上而后续操作需要文本块（输入 / 回车 / 粘贴）时，把光标挪到最近的
+// 文本块（先向后找起点，再向前找末尾）；找不到返回 false
+bool RichEdit::Impl::LeaveImageToText() {
+    if (!IsImageAt(caret.block)) return true;
+    for (size_t i = caret.block + 1; i < editables.size(); ++i) {
+        if (!IsImageAt(i)) { caret = anchor = Cursor{i, 0}; return true; }
+    }
+    for (size_t i = caret.block; i-- > 0;) {
+        if (!IsImageAt(i)) { caret = anchor = EndCursor(i); return true; }
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1123,6 +1300,7 @@ bool RichEdit::Impl::InsertTyped(const String& typed) {
     PushUndo(true);
     if (HasSelection()) DeleteSelectionNoUndo();
     if (editables.empty()) return false;
+    if (!LeaveImageToText()) return false;
 
     const Cursor c = ClampToDoc(caret);
     Block& block = *editables[c.block].block;
@@ -1148,6 +1326,7 @@ bool RichEdit::Impl::DeleteBackward() {
     }
 
     Cursor c = ClampToDoc(caret);
+    if (IsImageAt(c.block)) return EraseImageAt(c.block);
     if (c.offset > 0) {
         const String text = editables[c.block].item->text;
         const uint32_t from = NextIndex(text, c.offset, -1);
@@ -1161,6 +1340,7 @@ bool RichEdit::Impl::DeleteBackward() {
     }
 
     if (c.block == 0) return false;
+    if (IsImageAt(c.block - 1)) return EraseImageAt(c.block - 1);   // 段首退格删前邻图片
 
     // 段首：与上一块合并（要求同容器且相邻）
     Block* current = editables[c.block].block;
@@ -1193,6 +1373,7 @@ bool RichEdit::Impl::DeleteForward() {
     }
 
     const Cursor c = ClampToDoc(caret);
+    if (IsImageAt(c.block)) return EraseImageAt(c.block);
     const String text = editables[c.block].item->text;
     if (c.offset < text.size()) {
         const uint32_t to = NextIndex(text, c.offset, 1);
@@ -1206,6 +1387,7 @@ bool RichEdit::Impl::DeleteForward() {
     }
 
     if (c.block + 1 >= editables.size()) return false;
+    if (IsImageAt(c.block + 1)) return EraseImageAt(c.block + 1);   // 段尾 Del 删后邻图片
 
     Block* current = editables[c.block].block;
     Block* next = editables[c.block + 1].block;
@@ -1241,6 +1423,7 @@ bool RichEdit::Impl::InsertNewline() {
     PushUndo(false);
     if (HasSelection()) DeleteSelectionNoUndo();
     if (editables.empty()) return false;
+    if (!LeaveImageToText()) return false;
 
     const Cursor c = ClampToDoc(caret);
     Block* block = editables[c.block].block;
@@ -1342,7 +1525,75 @@ bool RichEdit::Impl::InsertNewline() {
         return true;
     }
 
-    // 其余：分裂（列表项 → 同级新项；段落/标题/引用 → 同类型新块）
+    // 引用块：回车 = 块内换行（在光标处插入 '\n'，quote 是多行块）；只有光标处在
+    // **空行**上时才跳出引用 —— 空行合拢后按光标位置分裂，空行处变成普通段落
+    // （光标落这里），前后内容仍各为引用；整块为空的引用原地变普通段落。
+    if (block->kind == BlockKind::Quote) {
+        const String text = richtext::BlockText(*block);
+        const size_t off = c.offset;
+        const size_t prevNl = (off > 0) ? text.rfind(L'\n', off - 1) : String::npos;
+        const size_t lineStart = (prevNl == String::npos) ? 0 : prevNl + 1;
+        const size_t nextNl = text.find(L'\n', off);
+        const bool emptyLine = (lineStart == off) && (nextNl == off || nextNl == String::npos);
+
+        if (!emptyLine) {
+            richtext::InsertText(*block, static_cast<uint32_t>(off), L"\n",
+                                 richtext::StyleAt(*block, static_cast<uint32_t>(off)));
+            ++version;
+            Rebuild();
+            const size_t index = IndexOf(block);
+            caret = anchor =
+                (index == kNoEditable ? ClampToDoc(Cursor{c.block, static_cast<uint32_t>(off) + 1})
+                                      : Cursor{index, static_cast<uint32_t>(off) + 1});
+            caretVisible = true;
+            return true;
+        }
+
+        // 空行 → 跳出：合拢空行（删掉一侧的 '\n'），按光标位置分裂
+        if (nextNl != String::npos) {
+            richtext::DeleteRange(*block, static_cast<uint32_t>(off),
+                                  static_cast<uint32_t>(off) + 1);
+        } else if (off > 0) {
+            richtext::DeleteRange(*block, static_cast<uint32_t>(off) - 1,
+                                  static_cast<uint32_t>(off));
+        }
+
+        Block tail = richtext::SplitBlock(*block, static_cast<uint32_t>(off));
+        const bool headEmpty = richtext::BlockText(*block).empty();
+        const bool tailEmpty = richtext::BlockText(tail).empty();
+
+        std::vector<Block>* container = spot.container;
+        const size_t at = spot.index;
+        Block para;
+        para.kind = BlockKind::Paragraph;
+
+        if (headEmpty) {
+            // 空行在引用开头：原引用位让给段落（光标），其余内容仍为引用
+            block->kind = BlockKind::Paragraph;
+            block->style = BlockStyle{};
+            if (!tailEmpty) {
+                container->insert(container->begin() + static_cast<ptrdiff_t>(at + 1),
+                                  std::move(tail));
+            }
+        } else {
+            if (!tailEmpty) {
+                container->insert(container->begin() + static_cast<ptrdiff_t>(at + 2),
+                                  std::move(tail));
+            }
+            container->insert(container->begin() + static_cast<ptrdiff_t>(at + 1),
+                              std::move(para));
+        }
+        ++version;
+        Rebuild();
+        const size_t paraAt = headEmpty ? at : at + 1;
+        Block* focus = &(*container)[paraAt];
+        const size_t index = IndexOf(focus);
+        caret = anchor = (index == kNoEditable ? ClampToDoc(Cursor{c.block, 0}) : Cursor{index, 0});
+        caretVisible = true;
+        return true;
+    }
+
+    // 其余：分裂（列表项 → 同级新项；段落/标题 → 同类型新块）
 
     Block tail = richtext::SplitBlock(*block, c.offset);
     std::vector<Block>* container = spot.container;
@@ -1364,6 +1615,9 @@ bool RichEdit::Impl::DeleteSelectionNoUndo() {
     Cursor a = ClampToDoc(caret);
     Cursor b = ClampToDoc(anchor);
     if (BlockLess(b, a)) std::swap(a, b);
+
+    // 选区起点落在图片块上：图片只有零长度定位点，从下一块开始算（起点图片保留）
+    if (a.block < b.block && IsImageAt(a.block)) a = Cursor{a.block + 1, 0};
 
     const bool sameBlock = (a.block == b.block);
 
@@ -1395,15 +1649,22 @@ bool RichEdit::Impl::DeleteSelectionNoUndo() {
         }
     }
 
-    // 4) 相邻两块同容器 → 合并（跨块删除的常见形态）
+    // 4) 相邻两块同容器 → 合并（跨块删除的常见形态）。图片不参与合并：
+    //    首块是图片（被选区完整覆盖）→ 直接删除；末块是图片（选区终点在其前）→ 保留
     if (!sameBlock && b.block == a.block + 1) {
         Block* first = editables[a.block].block;
         Block* second = editables[b.block].block;
         Spot firstSpot{};
         Spot secondSpot{};
-        if (FindSpot(first, firstSpot) && FindSpot(second, secondSpot) &&
-            firstSpot.container == secondSpot.container &&
-            secondSpot.index == firstSpot.index + 1) {
+        if (first->kind == BlockKind::Image) {
+            if (FindSpot(first, firstSpot)) {
+                firstSpot.container->erase(firstSpot.container->begin() +
+                                           static_cast<ptrdiff_t>(firstSpot.index));
+            }
+        } else if (second->kind != BlockKind::Image &&
+                   FindSpot(first, firstSpot) && FindSpot(second, secondSpot) &&
+                   firstSpot.container == secondSpot.container &&
+                   secondSpot.index == firstSpot.index + 1) {
             richtext::AppendRuns(*first, *second);
             firstSpot.container->erase(firstSpot.container->begin() +
                                        static_cast<ptrdiff_t>(secondSpot.index));
@@ -1482,6 +1743,7 @@ bool RichEdit::Impl::PasteClipboard() {
         caret = anchor = Cursor{0, 0};
     }
     if (editables.empty()) return false;
+    if (!LeaveImageToText()) return false;
 
     const Cursor c = ClampToDoc(caret);
     const RunStyle style = richtext::StyleAt(*editables[c.block].block, c.offset);

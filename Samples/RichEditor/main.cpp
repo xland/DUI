@@ -1,8 +1,7 @@
 // ============================================================================
 //  RichEditor/main.cpp — P1 + P2 验收示例：JSON → RichDoc → RichEdit 渲染
 //
-//  左侧：Scroller > 白纸 Panel > RichEdit（块级排版 + 行内 run；图片为占位框）
-//  右侧：解析大纲（块 / run 计数、Report 诊断、逐块预览）—— P1 的验收信息
+//  Scroller > 白纸 Panel > RichEdit（块级排版 + 行内 run；图片为占位框）
 //  样本 JSON 内嵌在下方，覆盖 RichEditor.md §2 的全部块与行内形态。
 // ============================================================================
 
@@ -14,9 +13,6 @@ namespace {
 
 namespace rt = dui::richtext;
 
-// 样本文档（UTF-8）。末尾两处是故意放的坏数据，用来验证 Report 计数：
-//   · "table" 块          → unknownBlocks
-//   · "letterSpacing"     → unknownStyles，"fontSize": "big" → invalidValues
 const char* kSampleDocJson = R"json({
   "settings": {
     "defaultFont": "Microsoft YaHei, sans-serif",
@@ -89,7 +85,7 @@ const char* kSampleDocJson = R"json({
       "type": "quote",
       "content": [ { "type": "text", "text": "左边框与背景都来自块级 styles。" } ],
       "attribution": "— DUI",
-      "styles": { "borderLeft": "4px solid #007bff", "backgroundColor": "#f8f9fa",
+      "styles": { "borderLeft": "4px solid #555555", "backgroundColor": "#f8f9fa",
                   "margin": "0 0 12px", "indent": "12px" }
     },
     {
@@ -100,8 +96,8 @@ const char* kSampleDocJson = R"json({
     },
     {
       "type": "image",
-      "src": "preview.png",
-      "altText": "占位图",
+      "src": "data:image/png;base64,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",
+      "altText": "示例图（base64 data URI，解码失败时显示本文字）",
       "width": "320px",
       "height": "auto",
       "alignment": "center",
@@ -110,116 +106,15 @@ const char* kSampleDocJson = R"json({
     {
       "type": "horizontalRule",
       "styles": { "margin": "16px 0", "backgroundColor": "#dee2e6" }
-    },
-    { "type": "table", "rows": [] },
-    {
-      "type": "paragraph",
-      "content": [
-        { "type": "text", "text": "坏值示范：fontSize 写成 big、letterSpacing 不在白名单",
-          "styles": { "fontSize": "big", "letterSpacing": "1px" } }
-      ]
     }
   ]
 })json";
-
-const wchar_t* KindName(rt::BlockKind kind) {
-    switch (kind) {
-    case rt::BlockKind::Paragraph: return L"paragraph";
-    case rt::BlockKind::Heading:   return L"heading";
-    case rt::BlockKind::List:      return L"list";
-    case rt::BlockKind::ListItem:  return L"listItem";
-    case rt::BlockKind::Quote:     return L"quote";
-    case rt::BlockKind::Code:      return L"codeBlock";
-    case rt::BlockKind::Image:     return L"image";
-    case rt::BlockKind::Rule:      return L"horizontalRule";
-    }
-    return L"?";
-}
-
-size_t CountRuns(const rt::Block& block) {
-    size_t count = block.runs.size();
-    for (const rt::Block& child : block.children) count += CountRuns(child);
-    return count;
-}
-
-// 单块一行：缩进 + 类型 + 计数 + 文字预览（换行压成空格）
-void AppendOutline(const rt::Block& block, int depth, dui::String& out) {
-    out.append(static_cast<size_t>(depth) * 2, L' ');
-    out += KindName(block.kind);
-
-    if (block.kind == rt::BlockKind::Heading) {
-        out += L" L" + std::to_wstring(block.level);
-    } else if (block.kind == rt::BlockKind::List) {
-        out += (block.listType == rt::ListType::Ordered) ? L" ordered" : L" unordered";
-    } else if (block.kind == rt::BlockKind::Image) {
-        out += L" src=" + block.src;
-    }
-
-    out += L"  runs=" + std::to_wstring(CountRuns(block));
-    if (!block.children.empty()) out += L" children=" + std::to_wstring(block.children.size());
-
-    dui::String preview;
-    for (const rt::Run& run : block.runs) preview += run.text;
-    for (wchar_t& ch : preview) {
-        if (ch == L'\n' || ch == L'\r') ch = L' ';
-    }
-    if (!preview.empty()) {
-        if (preview.size() > 24) preview = preview.substr(0, 24) + L"…";
-        out += L"  " + preview;
-    }
-
-    out += L"\n";
-    for (const rt::Block& child : block.children) AppendOutline(child, depth + 1, out);
-}
-
-dui::String BuildSummary(const rt::RichDoc& doc, bool ok) {
-    dui::String out = ok ? L"文档：解析成功" : L"文档：解析失败";
-
-    out += L"\n默认字体：";
-    out += doc.defaultFont.empty() ? L"（引擎默认）" : doc.defaultFont;
-    out += L"    默认字号：";
-    out += std::to_wstring(static_cast<int>(doc.defaultFontSize + 0.5f));
-
-    size_t runs = 0;
-    for (const rt::Block& block : doc.blocks) runs += CountRuns(block);
-    out += L"\n块：" + std::to_wstring(doc.blocks.size()) + L"    runs：" + std::to_wstring(runs);
-
-    const rt::Report& report = doc.report;
-    out += L"\n\n诊断：未知块 " + std::to_wstring(report.unknownBlocks);
-    out += L"    未知行内 " + std::to_wstring(report.unknownInlines);
-    out += L"    未知样式 " + std::to_wstring(report.unknownStyles);
-    out += L"    非法值 " + std::to_wstring(report.invalidValues);
-    if (report.firstIssue.empty()) out += L"\n（无问题）";
-    else out += L"\n首条问题：" + report.firstIssue;
-
-    out += L"\n\n—— 块大纲 ——\n";
-    for (const rt::Block& block : doc.blocks) AppendOutline(block, 0, out);
-    return out;
-}
-
-// 顶栏一行：块 / run 计数 + 四类诊断 + 文档默认字体
-dui::String StatusLine(const rt::RichDoc& doc, bool ok) {
-    size_t runs = 0;
-    for (const rt::Block& block : doc.blocks) runs += CountRuns(block);
-
-    dui::String out = ok ? L"解析成功" : L"解析失败";
-    out += L" · 块 " + std::to_wstring(doc.blocks.size());
-    out += L" · runs " + std::to_wstring(runs);
-    out += L" · 未知块 " + std::to_wstring(doc.report.unknownBlocks);
-    out += L" · 未知行内 " + std::to_wstring(doc.report.unknownInlines);
-    out += L" · 未知样式 " + std::to_wstring(doc.report.unknownStyles);
-    out += L" · 非法值 " + std::to_wstring(doc.report.invalidValues);
-    out += L" · 默认 ";
-    out += doc.defaultFont.empty() ? dui::String(L"引擎默认") : doc.defaultFont;
-    out += L" " + std::to_wstring(static_cast<int>(doc.defaultFontSize + 0.5f));
-    return out;
-}
 
 class RichEditorWindow final : public dui::Window {
 public:
     RichEditorWindow()
         : dui::Window(dui::WindowOptions{
-              .title  = L"RichEditor — P2 只读渲染",
+              .title  = L"RichEditor",
               .width  = 1120.f,
               .height = 780.f,
           }) {}
@@ -230,28 +125,9 @@ protected:
         root->SetStyle(dui::Style().Background(0xFFF5F6F8));
 
         rt::RichDoc doc;
-        const bool ok = rt::ParseRichDoc(dui::Utf8ToWide(kSampleDocJson), doc);
+        rt::ParseRichDoc(dui::Utf8ToWide(kSampleDocJson), doc);
 
-        // 顶栏：标题 + 解析诊断一行
-        dui::Panel* header = root->AddChild<dui::Panel>(dui::Style()
-            .Padding(dui::Thickness(20.f, 18.f, 20.f, 12.f))
-            .Gap(4.f)
-            .Background(0xFFFFFFFF));
-        header->AddChild<dui::Text>(L"RichText P2 · JSON → RichDoc → RichEdit", dui::Style()
-            .FontSize(20.f)
-            .FontWeight(dui::FontWeight::Bold)
-            .Color(0xFF1A1A1A));
-        const dui::String status = StatusLine(doc, ok);
-        header->AddChild<dui::Text>(status.c_str(), dui::Style()
-            .FontSize(12.f)
-            .Color(0xFF8A8A8A));
-
-        // 主体：左 = 富文本渲染（Scroller > 白纸 > RichEdit），右 = 解析大纲
-        dui::Panel* body = root->AddChild<dui::Panel>(dui::Style()
-            .FlexDirection(dui::FlexDirection::Row)
-            .FlexGrow(1.f));
-
-        dui::Scroller* page = body->AddChild<dui::Scroller>(dui::Style()
+        dui::Scroller* page = root->AddChild<dui::Scroller>(dui::Style()
             .FlexGrow(1.f)
             .Background(0xFFF5F6F8));
         dui::Panel* sheet = page->AddChild<dui::Panel>(dui::Style()
@@ -259,16 +135,6 @@ protected:
             .Background(0xFFFFFFFF));
         dui::RichEdit* view = sheet->AddChild<dui::RichEdit>();
         view->SetDoc(doc);
-
-        dui::Scroller* side = body->AddChild<dui::Scroller>(dui::Style()
-            .Width(360.f)
-            .Background(0xFFFFFFFF));
-        const dui::String summary = BuildSummary(doc, ok);
-        side->AddChild<dui::Text>(summary.c_str(), dui::Style()
-            .Padding(dui::Thickness(14.f, 16.f, 14.f, 16.f))
-            .FontSize(12.f)
-            .LineHeight(1.6f)
-            .Color(0xFF333333));
     }
 };
 

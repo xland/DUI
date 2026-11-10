@@ -167,6 +167,7 @@ public:
     Painter& GetPainter() noexcept { return painter_; }
     // 清屏 + 按指令顺序发射顶点并提交（scale 用于 DIP → 物理像素换算）
     void Render(const DrawUnit* units, uint32_t unitCount, float scale);
+    // 全时立即提交（ADR-013，2026-11 修订）：不等 vblank，主循环不阻塞在 VSync 上。
     void Present();
 
     // 字形图集页（R8）：创建或全量更新；页被 LRU 整页释放后调 Release
@@ -204,6 +205,7 @@ private:
     ID3D11PixelShader*      psG_ = nullptr;
     ID3D11InputLayout*      layoutG_ = nullptr;
     ID3D11SamplerState*     sampler_ = nullptr;
+    ID3D11BlendState*       blendGlyph_ = nullptr;   // 字形专用：dst 因子取 1 - 覆盖率（逐通道）
     // 形状管线（SDF 图元批）
     ID3D11VertexShader*     vsS_ = nullptr;
     ID3D11PixelShader*      psS_ = nullptr;

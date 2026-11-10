@@ -90,6 +90,17 @@ enum class Position : uint8_t { Static, Relative, Absolute, Fixed };   // 04-Lay
 enum class Justify : uint8_t { Start, Center };             // 主轴对齐（04-Layout §4.1，MVP 子集）
 enum class Align : uint8_t { Stretch, Start, Center };      // 交叉轴对齐（默认 Stretch）
 enum class FontWeight : uint8_t { Normal, Medium, SemiBold, Bold };
+// dui::FontWeight（枚举序号 0-3）→ DWRITE_FONT_WEIGHT（100-1000）。
+// 传给文本引擎的字重一律先过此函数：直接把 1/2/3 塞给 DWrite 属非法值，
+// 就近匹配会选中家族里最细的 Light/Thin 面 → 文字全局偏细偏灰。
+inline uint32_t DWriteWeight(uint32_t fontWeight) {
+    switch (fontWeight) {
+    case 1:  return 500;   // Medium
+    case 2:  return 600;   // SemiBold
+    case 3:  return 700;   // Bold
+    default: return 400;   // Normal / 未设置
+    }
+}
 // 文本在内容盒内的水平对齐（15-Properties §4.1）；继承属性，默认 Start
 enum class TextAlign : uint8_t { Start, Center, End };
 enum class Easing : uint8_t { Linear, EaseIn, EaseOut, EaseInOut };   // AnimConfig::easing（05-Animation §4）

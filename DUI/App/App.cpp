@@ -463,7 +463,7 @@ int Application::Run(Window& window) {
         // 最小化期间直接阻塞等消息；恢复时由 WM_SIZE → OnResized 触发重排 + 重绘。
         if (!native.IsMinimized() && (framePending || window.Root()->SubtreeDirty())) {
             framePending = false;
-            RenderFrame(window, native, device);
+            RenderFrame(window, native, device);   // 呈现不等 vblank（ADR-013）
         } else {
             WaitMessage();
         }

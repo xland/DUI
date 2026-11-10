@@ -24,6 +24,36 @@ class Painter;
 
 namespace dui::text {
 
+// 行内样式片段（富文本）：只描述与段落默认值的**差异**，未设置的字段继承段落默认。
+//   start/length 为 UTF-16 区间；调用方保证区间不重叠，重叠时后者覆盖前者。
+struct TextRun {
+    uint32_t start = 0;
+    uint32_t length = 0;
+    float    fontSize = 0.f;         // <= 0 → 继承
+    uint32_t weight = 0;             // 0 → 继承（DWRITE_FONT_WEIGHT）
+    const wchar_t* family = nullptr; // nullptr / 空串 → 继承（生命周期同 Style::FontFamily）
+    Color    color = 0;              // A == 0 → 继承 Draw() 的 color 参数
+    bool     italic = false;
+    bool     underline = false;
+    bool     strike = false;
+};
+
+// Shape 入参：单样式只填前 6 项；富文本额外给 runs。
+struct ShapeInput {
+    const wchar_t* text = nullptr;
+    float    fontSize = 0.f;         // 段落默认（DIP）
+    uint32_t weight = 0;             // 段落默认
+    float    lineHeight = 0.f;       // 倍数（03-Style）
+    float    maxWidth = 0.f;         // 换行宽（DIP）
+    const wchar_t* family = nullptr; // nullptr / 空串 → 引擎默认（微软雅黑）
+    // runs == nullptr / runCount == 0 → 单样式快速路径（与 run 化前完全同路，零额外开销）
+    const TextRun* runs = nullptr;
+    uint32_t runCount = 0;
+    // run 内容变化时由调用方递增。Measure 每帧调用，run 数组不做深比较，
+    // 命中判定只看这个版本号（相同即视为未变）。
+    uint64_t runVersion = 0;
+};
+
 // 段落排版结果（Text 元素经 pimpl 持有；生命周期归元素）
 struct Paragraph {
     IDWriteTextLayout* layout = nullptr;
@@ -34,6 +64,10 @@ struct Paragraph {
     uint32_t weight = 0;         // DWRITE_FONT_WEIGHT
     float    lineHeight = 0.f;   // 倍数（03-Style）
     float    maxWidth = 0.f;     // 换行宽（DIP）
+    // 富文本：run 表**由调用方持有**（引擎不拷贝），配合 runVersion 判定是否重建
+    const TextRun* runs = nullptr;
+    uint32_t runCount = 0;
+    uint64_t runVersion = 0;
     Vec2     size;               // 排版结果（DIP）
 };
 
@@ -58,10 +92,12 @@ public:
     // ensure 语义：缓存键全等则复用（measure 每帧调用，命中零 COM 开销）。
     // family = nullptr / 空串 → 引擎默认（微软雅黑）；否则须为系统已安装字体族名，
     // 或经 LoadFontFile 装入的字体族名
-    Paragraph* Shape(Paragraph* cached, const wchar_t* text, float fontSize,
-                     uint32_t weight, float lineHeight, float maxWidth,
-                     const wchar_t* family);
+    Paragraph* Shape(Paragraph* cached, const ShapeInput& in);
     void Discard(Paragraph* p);
+
+    // 本机是否存在该字体族（系统集合，或经 LoadFontFile 装入的自定义集合）。
+    // 空串 / nullptr → false。用途：CSS fontFamily 列表取"第一个可用族名"。
+    bool HasFamily(const wchar_t* family) const noexcept;
 
     // 加载未安装的字体文件（ttf/otf）为进程内字体集合（DWrite FontCollectionBuilder，
     // Win10+）。成功后 familyOut 返回其字体族名（可用于 Shape/FontFamily）；
@@ -97,8 +133,17 @@ private:
                          std::vector<uint8_t>& out,
                          int& left, int& top, int& w, int& h);
 
+    // 逐 run 施加覆盖样式（字号/字重/族名/斜体/下划线/删除线/颜色）
+    void ApplyRuns(IDWriteTextLayout* layout, const ShapeInput& in, uint32_t textLen);
+
     IDWriteFactory*        factory_ = nullptr;
-    IDWriteFactory2*       factory2_ = nullptr;   // 灰度 AA + 1/4 像素相位（CreateGlyphRunAnalysis 带 antialiasMode）
+    IDWriteFactory2*       factory2_ = nullptr;   // GlyphRunAnalysis（墨迹测量 / ClearType 位图不可用时的兜底）
+    IDWriteGdiInterop*     gdi_ = nullptr;        // 创建 GDI 位图渲染目标
+    IDWriteBitmapRenderTarget* bmpRT_ = nullptr;  // ClearType 光栅目标（GDI 同一条路径）
+    IDWriteRenderingParams*    renderParams_ = nullptr;   // 系统渲染参数（ClearType gamma / 对比度）
+    uint8_t*               bmpBits_ = nullptr;    // bmpRT_ 的 DIB 像素（随目标重建）
+    uint32_t               bmpStride_ = 0;
+    uint32_t               bmpSize_ = 0;          // 位图边长（按字号档位缓存）
     IDWriteFontCollection* fonts_ = nullptr;
     IDWriteTextFormat*     baseFormat_ = nullptr;   // 家族/风格基座；字号字重由 layout 覆盖
     IDWriteFontCollection* customFonts_ = nullptr;  // LoadFontFile 装入的字体集合

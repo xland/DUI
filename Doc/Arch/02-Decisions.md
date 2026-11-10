@@ -182,15 +182,22 @@
 
 ---
 
-## ADR-013 呈现策略（草案，待拍板）
+## ADR-013 呈现策略（已定）
 
-| 项 | 草案建议 |
+| 项 | 结论 |
 | --- | --- |
 | 交换链 | Flip Model（`DXGI_SWAP_EFFECT_FLIP_DISCARD`） |
-| 同步 | 默认 VSync（Present 间隔 1）；高刷/低延迟场景启用 `DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING` + `Present(0, DXGI_PRESENT_ALLOW_TEARING)` |
+| 同步 | **全时 `Present(0, 0)`**：不等 vblank 立即提交（2026-11 修订，推翻原「默认 VSync」草案，见下） |
 | 触发 | **按需呈现**：只有在有脏区或动画运行时才进入绘制流程，空闲不 Present |
 | 后台缓冲格式 | **已定：`B8G8R8A8_UNORM`（gamma 空间混合）** | 与 DWM/截图/远程桌面惯例及 D2D 互操作一致；详见 [10-Rendering.md](./10-Rendering.md) §5、§6.2 |
 | 混合 | 全程 **预乘 Alpha**（premultiplied），避免半透明边缘错误 |
+
+### 补充（2026-11）：同步策略改为全时 `Present(0, 0)`
+
+- **动机**：`Present(1, 0)` 会阻塞到下一个 vblank（平均 8 ms、最多 16.7 ms），这期间到达的 `WM_MOUSEMOVE` 只能等下一轮消息循环 —— 拖动/滑块跟手延迟稳定多出一帧（"排空消息 → 渲染 → 等 VSync"的结构性积压，靠渲染前补读一次光标救不到）。立即提交后实测滑块跟手明显改善。
+- **不撕裂**：内容经 `CreateSwapChainForComposition` 交给 DWM 合成，上屏时机由 DWM 的合成节拍决定，不走扫描输出直连，因此不等 vblank 也不会撕裂（该链本身也不支持 `ALLOW_TEARING`）。
+- **代价一：节奏可预测性**。逻辑节拍 20 ms（50 Hz，ADR-020 统一 ticker）与 60 Hz 合成本就是非整倍数，judder 原本就存在；VSync 的**锁相**作用消失后，"多停一帧"从固定模式变成随相位漂移的随机分布，长距离**线性**位移动画更容易被看出来。补间按 `GetTickCount64()` 的真实毫秒推进，轨迹、时长、终值都不受影响（见 [05-Animation.md](./05-Animation.md) §7）。
+- **代价二：功耗**。空闲不进帧、20 ms 定时器驱动的动画帧数不变 —— 这两类场景功耗不变；只有输入驱动的高频刷新（拖动/滚动）渲染量上升（2 缓冲背压下上限约 2×），且是短时增量。
 
 ---
 

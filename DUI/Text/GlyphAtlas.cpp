@@ -11,8 +11,10 @@ namespace dui::text {
 
 namespace {
 
-constexpr uint32_t kPageSize = 1024;        // R8 灰度页：1MB/页
-constexpr size_t   kBudgetBytes = 4 << 20;  // 4MB 上限，超出淘汰最久未用（ADR-003）
+// RGBA8 页：512×512 = 1MB/页（与原来 R8 1024×1024 的页尺寸一致）；
+// ClearType 每像素 3 个覆盖率通道，同一页面能放的字形数不变。
+constexpr uint32_t kPageSize = 512;
+constexpr size_t   kBudgetBytes = 8 << 20;  // 8MB 上限，超出淘汰最久未用（ADR-003）
 
 }  // namespace
 
@@ -57,7 +59,7 @@ GlyphUV GlyphAtlas::Place(const std::vector<uint8_t>& bits, int left, int top, i
     // 预算口径：按**页占用**统计（字节加在开页时、减在整页释放时）。
     // 早前按字形字节加、按整页字节减，bytes_ 会变成负数 → 预算永不触发 → 图集
     // 无上限增长；DPI 换档会批量产生新 pixelSize 的字形，更容易暴露。
-    const size_t pageBytes = static_cast<size_t>(kPageSize) * kPageSize;
+    const size_t pageBytes = static_cast<size_t>(kPageSize) * kPageSize * 4;
     while (bytes_ + pageBytes > kBudgetBytes && !lru_.empty()) EvictBack();
 
     // 首个放得下的页（shelf 游标试推进）；无则开新页。
@@ -73,16 +75,20 @@ GlyphUV GlyphAtlas::Place(const std::vector<uint8_t>& bits, int left, int top, i
         AtlasPage np;
         np.id = nextId_++;
         np.w = np.h = kPageSize;
-        np.bits.assign(static_cast<size_t>(kPageSize) * kPageSize, 0);
+        np.bits.assign(static_cast<size_t>(kPageSize) * kPageSize * 4, 0);
         pages_.push_back(np);
         page = &pages_.back();
         bytes_ += pageBytes;   // 开页才计占用
     }
 
+    // RGBA8 行拷贝：源/目标都按 4 字节/像素步进
+    const size_t pageStride = static_cast<size_t>(page->w) * 4;
+    const size_t glyphStride = static_cast<size_t>(w) * 4;
     for (int row = 0; row < h; ++row) {
-        const auto dst = page->bits.begin() + static_cast<ptrdiff_t>(cy + row) * kPageSize + cx;
-        const auto src = bits.begin() + static_cast<ptrdiff_t>(row) * w;
-        std::copy(src, src + w, dst);
+        const auto dst = page->bits.begin() +
+                         static_cast<ptrdiff_t>(static_cast<size_t>(cy + row) * pageStride + cx * 4);
+        const auto src = bits.begin() + static_cast<ptrdiff_t>(static_cast<size_t>(row) * glyphStride);
+        std::copy(src, src + static_cast<ptrdiff_t>(glyphStride), dst);
     }
 
     GlyphUV uv;

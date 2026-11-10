@@ -12,6 +12,7 @@
 //    UI/Gif.h      动画图像控件（Pause / Play / Stop / SetLoopCount）
 //    UI/Animation.h 命令式属性动画（属性标签 / AnimConfig / AnimationHandle）
 //    UI/Focus.h    焦点服务与 Tab 链
+//    UI/RichEdit.h 只读富文本控件（richtext::RichDoc 的块级排版与绘制）
 //  本头聚合以上全部并声明跨模块入口（布局 / 命中测试），业务代码仍只
 //  include "DUI/DUI.h"。
 // ============================================================================
@@ -28,6 +29,7 @@
 #include "UI/Gif.h"
 #include "UI/Animation.h"
 #include "UI/Focus.h"
+#include "UI/RichEdit.h"
 
 namespace dui {
 
@@ -75,5 +77,8 @@ Element* FindFocusable(Element* e);
 using ClipboardReadFn = bool (*)(String& out);
 using ClipboardWriteFn = bool (*)(const String& text);
 void SetClipboardService(ClipboardReadFn read, ClipboardWriteFn write);
+// 控件层便捷入口（走上面注入的服务；未注入时返回 false）
+bool ReadClipboardText(String& out);
+bool WriteClipboardText(const String& text);
 
 }  // namespace dui

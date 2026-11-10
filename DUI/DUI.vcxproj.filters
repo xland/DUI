@@ -12,6 +12,9 @@
     <Filter Include="头文件\Core">
       <UniqueIdentifier>{a1b2c3d4-0001-4c8d-9e6a-2b5d8f10a3c8}</UniqueIdentifier>
     </Filter>
+    <Filter Include="源文件\Core">
+      <UniqueIdentifier>{a1b2c3d4-000c-4c8d-9e6a-2b5d8f10a3d3}</UniqueIdentifier>
+    </Filter>
     <Filter Include="头文件\UI">
       <UniqueIdentifier>{a1b2c3d4-0002-4c8d-9e6a-2b5d8f10a3c9}</UniqueIdentifier>
     </Filter>
@@ -42,6 +45,12 @@
     <Filter Include="源文件\Text">
       <UniqueIdentifier>{a1b2c3d4-000b-4c8d-9e6a-2b5d8f10a3d2}</UniqueIdentifier>
     </Filter>
+    <Filter Include="头文件\RichText">
+      <UniqueIdentifier>{a1b2c3d4-000d-4c8d-9e6a-2b5d8f10a3d4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\RichText">
+      <UniqueIdentifier>{a1b2c3d4-000e-4c8d-9e6a-2b5d8f10a3d5}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DUI.h">
@@ -54,6 +63,12 @@
       <Filter>头文件\Core</Filter>
     </ClInclude>
     <ClInclude Include="Core\Threading.h">
+      <Filter>头文件\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Utf8.h">
+      <Filter>头文件\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Json.h">
       <Filter>头文件\Core</Filter>
     </ClInclude>
     <ClInclude Include="UI\UI.h">
@@ -92,6 +107,9 @@
     <ClInclude Include="UI\Svg.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
+    <ClInclude Include="UI\RichEdit.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
     <ClInclude Include="App\App.h">
       <Filter>头文件\App</Filter>
     </ClInclude>
@@ -119,9 +137,24 @@
     <ClInclude Include="Text\TextEngine.h">
       <Filter>头文件\Text</Filter>
     </ClInclude>
+    <ClInclude Include="RichText\RichDoc.h">
+      <Filter>头文件\RichText</Filter>
+    </ClInclude>
+    <ClInclude Include="RichText\CssValue.h">
+      <Filter>头文件\RichText</Filter>
+    </ClInclude>
+    <ClInclude Include="RichText\RichDocJson.h">
+      <Filter>头文件\RichText</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Core\Dispatcher.cpp">
+      <Filter>源文件\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Utf8.cpp">
+      <Filter>源文件\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Json.cpp">
       <Filter>源文件\Core</Filter>
     </ClCompile>
     <ClCompile Include="Text\GlyphAtlas.cpp">
@@ -160,6 +193,9 @@
     <ClCompile Include="UI\Svg.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
+    <ClCompile Include="UI\RichEdit.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
     <ClCompile Include="UI\StyleResolve.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
@@ -195,6 +231,12 @@
     </ClCompile>
     <ClCompile Include="Graphics\SvgRaster.cpp">
       <Filter>源文件\Graphics</Filter>
+    </ClCompile>
+    <ClCompile Include="RichText\CssValue.cpp">
+      <Filter>源文件\RichText</Filter>
+    </ClCompile>
+    <ClCompile Include="RichText\RichDocJson.cpp">
+      <Filter>源文件\RichText</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

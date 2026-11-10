@@ -21,4 +21,5 @@
   <Project Path="Samples/Dialog/Dialog.vcxproj" Id="e2b7c4d1-9a53-4f80-b26e-8d1c5a70f3b6" />
   <Project Path="Samples/CircleWindow/CircleWindow.vcxproj" Id="c1f8a2d4-3e6b-4a19-9c57-2d8e0b7f5a63" />
   <Project Path="Samples/Menu/Menu.vcxproj" Id="d3f5a7c1-8e24-4b60-9a17-5c2e6b0f9d84" />
+  <Project Path="Samples/RichEditor/RichEditor.vcxproj" Id="a7d3f8c2-5b64-4e19-8d02-4f7c1b93e6a5" />
 </Solution>

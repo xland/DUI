@@ -78,6 +78,14 @@ void SetClipboardService(ClipboardReadFn read, ClipboardWriteFn write) {
     g_clipWrite = write;
 }
 
+bool ReadClipboardText(String& out) {
+    return g_clipRead != nullptr && g_clipRead(out);
+}
+
+bool WriteClipboardText(const String& text) {
+    return g_clipWrite != nullptr && g_clipWrite(text);
+}
+
 // ---------------------------------------------------------------------------
 // 构造 / 析构
 // ---------------------------------------------------------------------------
@@ -494,7 +502,7 @@ void TextBox::EnsureCaretVisible() {
 
 Vec2 TextBox::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) const {
     text::Engine& en = text::Engine::Get();
-    const uint32_t weight = ResolveProperty(this, Prop::FontWeight, ctx).u;
+    const uint32_t weight = dui::DWriteWeight(ResolveProperty(this, Prop::FontWeight, ctx).u);
     // 换行宽：多行按内容宽（显式 Width 优先），单行不限宽
     float wrapW = 1e6f;
     if (multiline_) {
@@ -508,8 +516,14 @@ Vec2 TextBox::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) 
         }
         if (wrapW <= 0.f) wrapW = 1.f;
     }
-    para_ = en.Shape(ParaOf(para_), display_.c_str(), ctx.fontSize, weight,
-                     ctx.lineHeight, wrapW, ctx.family);
+    text::ShapeInput in;
+    in.text = display_.c_str();
+    in.fontSize = ctx.fontSize;
+    in.weight = weight;
+    in.lineHeight = ctx.lineHeight;
+    in.maxWidth = wrapW;
+    in.family = ctx.family;
+    para_ = en.Shape(ParaOf(para_), in);
     UpdateMaskOffset();
     Vec2 size = ParaOf(para_) != nullptr ? ParaOf(para_)->size : Vec2{};
     if (!multiline_) {

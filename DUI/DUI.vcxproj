@@ -74,8 +74,14 @@
     <ClInclude Include="Core\Core.h" />
     <ClInclude Include="Core\Dispatcher.h" />
     <ClInclude Include="Core\Threading.h" />
+    <ClInclude Include="Core\Utf8.h" />
+    <ClInclude Include="Core\Json.h" />
     <ClInclude Include="Text\GlyphAtlas.h" />
     <ClInclude Include="Text\TextEngine.h" />
+    <ClInclude Include="RichText\RichDoc.h" />
+    <ClInclude Include="RichText\RichDocEdit.h" />
+    <ClInclude Include="RichText\CssValue.h" />
+    <ClInclude Include="RichText\RichDocJson.h" />
     <ClInclude Include="UI\UI.h" />
     <ClInclude Include="UI\Style.h" />
     <ClInclude Include="UI\Element.h" />
@@ -90,6 +96,7 @@
     <ClInclude Include="UI\Canvas.h" />
     <ClInclude Include="UI\Scroller.h" />
     <ClInclude Include="UI\Svg.h" />
+    <ClInclude Include="UI\RichEdit.h" />
     <ClInclude Include="App\App.h" />
     <ClInclude Include="App\Dialog.h" />
     <ClInclude Include="App\Menu.h" />
@@ -100,6 +107,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Core\Dispatcher.cpp" />
+    <ClCompile Include="Core\Utf8.cpp" />
+    <ClCompile Include="Core\Json.cpp" />
     <ClCompile Include="Text\GlyphAtlas.cpp" />
     <ClCompile Include="Text\TextEngine.cpp" />
     <ClCompile Include="UI\Style.cpp" />
@@ -114,6 +123,7 @@
     <ClCompile Include="UI\Canvas.cpp" />
     <ClCompile Include="UI\Scroller.cpp" />
     <ClCompile Include="UI\Svg.cpp" />
+    <ClCompile Include="UI\RichEdit.cpp" />
     <ClCompile Include="UI\StyleResolve.cpp" />
     <ClCompile Include="UI\Layout.cpp" />
     <ClCompile Include="UI\Event.cpp" />
@@ -129,6 +139,9 @@
     <ClCompile Include="Graphics\Graphics.cpp" />
     <ClCompile Include="Graphics\ImageCodec.cpp" />
     <ClCompile Include="Graphics\SvgRaster.cpp" />
+    <ClCompile Include="RichText\CssValue.cpp" />
+    <ClCompile Include="RichText\RichDocEdit.cpp" />
+    <ClCompile Include="RichText\RichDocJson.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

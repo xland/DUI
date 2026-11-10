@@ -4,8 +4,8 @@
 //  旧档位 LRU 淘汰；不做跨尺度复用采样）
 //
 //  本模块只管 CPU 侧位图与页管理，不依赖 D3D/DWrite：
-//    · 光栅化由 TextEngine 注入回调（灰度 AA + 1/4 像素相位，10-Rendering §6.2）
-//    · 页位图由 App 层（Frame）同步到 Device 的 R8 纹理
+//    · 光栅化由 TextEngine 注入回调（ClearType 子像素覆盖，10-Rendering §6.2）
+//    · 页位图由 App 层（Frame）同步到 Device 的 RGBA8 纹理
 // ============================================================================
 #pragma once
 
@@ -17,12 +17,13 @@
 
 namespace dui::text {
 
-// 图集页：pageSize × pageSize 的 R8 灰度位图，shelf（行式）打包。
+// 图集页：pageSize × pageSize 的 RGBA8 位图（R/G/B = 三个子像素的覆盖率，
+// A = 三者的最大值，供预乘 alpha 混合使用），shelf（行式）打包。
 // 页内字形全部被淘汰后整页释放，id 经 FreedPages 通知 Device 释放纹理。
 struct AtlasPage {
     uint32_t id = 0;
     uint32_t w = 0, h = 0;
-    std::vector<uint8_t> bits;                       // w*h，每字节 = 覆盖率
+    std::vector<uint8_t> bits;                       // w*h*4，每像素 = R/G/B 子像素 + A
     uint32_t cursorX = 0, cursorY = 0, rowH = 0;     // shelf 游标
     bool dirty = false;                              // 待上传（Frame 消费后清零）
     int  live = 0;                                   // 存活字形数
@@ -37,8 +38,8 @@ struct GlyphUV {
 
 class GlyphAtlas {
 public:
-    // 光栅回调：out = w*h 灰度覆盖率（1 字节/像素）；光栅失败返回 false
-    // phase = 水平亚像素相位（0..3，每相位 1/4 像素，对齐 Qt 的 4 相位定位）
+    // 光栅回调：out = w*h*4 的 RGBA8（R/G/B = 子像素覆盖率，A = 最大覆盖率）；
+    // 光栅失败返回 false。phase 保留给灰度 AA 的 4 相位定位，ClearType 下恒 0。
     using RasterFn = bool (*)(void* ctx, const void* fontFace, uint32_t glyphIndex,
                               uint32_t pixelSize, uint32_t phase,
                               std::vector<uint8_t>& out,

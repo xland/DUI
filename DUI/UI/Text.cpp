@@ -17,9 +17,14 @@ Vec2 Text::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) con
         return {units * ctx.fontSize, ctx.fontSize * ctx.lineHeight};
     }
     const float maxW = contentAvail.x > 0.f ? contentAvail.x : 1e6f;   // 不限宽
-    const uint32_t weight = ResolveProperty(this, Prop::FontWeight, ctx).u;
-    para_ = en.Shape(static_cast<text::Paragraph*>(para_), text_.c_str(),
-                     ctx.fontSize, weight, ctx.lineHeight, maxW, ctx.family);
+    text::ShapeInput in;
+    in.text = text_.c_str();
+    in.fontSize = ctx.fontSize;
+    in.weight = dui::DWriteWeight(ResolveProperty(this, Prop::FontWeight, ctx).u);
+    in.lineHeight = ctx.lineHeight;
+    in.maxWidth = maxW;
+    in.family = ctx.family;
+    para_ = en.Shape(static_cast<text::Paragraph*>(para_), in);
     return para_ != nullptr ? static_cast<text::Paragraph*>(para_)->size : Vec2{};
 }
 

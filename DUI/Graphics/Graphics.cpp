@@ -108,10 +108,16 @@ struct PSInG {
     float2 uv    : TEXCOORD0;
     float4 color : COLOR;
 };
-float4 PSMain(PSInG i) : SV_Target {
-    float cov = g_atlas.Sample(g_sampler, i.uv).r;   // 灰度 AA 覆盖率（DWrite 直出，无后处理）
-    float a = i.color.a * cov;
-    return float4(i.color.rgb * a, a);               // straight → 预乘（ADR-013）
+struct PSOutG {
+    float4 color : SV_Target0;   // 预乘文字色（逐子像素覆盖）
+    float4 cov   : SV_Target1;   // 覆盖率：混合的 dst 因子取 1 - cov（dual-source）
+};
+PSOutG PSMain(PSInG i) {
+    const float4 t = g_atlas.Sample(g_sampler, i.uv);   // R/G/B = 左/中/右子像素覆盖率，A = 最大值
+    PSOutG o;
+    o.color = float4(i.color.rgb * i.color.a * t.rgb, i.color.a * t.a);
+    o.cov   = float4(t.rgb, t.a);
+    return o;
 }
 )";
 
@@ -478,6 +484,7 @@ Device::~Device() {
                                    reinterpret_cast<ID3D11DeviceChild*>(ib_),
                                    reinterpret_cast<ID3D11DeviceChild*>(cb_),
                                    reinterpret_cast<ID3D11DeviceChild*>(blend_),
+                                   reinterpret_cast<ID3D11DeviceChild*>(blendGlyph_),
                                    reinterpret_cast<ID3D11DeviceChild*>(raster_),
                                    reinterpret_cast<ID3D11DeviceChild*>(vsG_),
                                    reinterpret_cast<ID3D11DeviceChild*>(psG_),
@@ -735,6 +742,21 @@ bool Device::Init(HWND hwnd, bool transparent, String& error) {
         return false;
     }
 
+    // 字形专用混合（ClearType 子像素）：dst 因子取 1 − 覆盖率，逐通道 —— 也就是
+    // dst = 文字色×cov + dst×(1−cov)，这才是真正的子像素抗锯齿。
+    // 需要 dual-source blending：PS 的 SV_Target1（覆盖率）只作为混合因子来源，
+    // 不写入 RT。设备不支持时 blendGlyph_ 留空，渲染期回退统一 alpha 混合。
+    D3D11_BLEND_DESC bg{};
+    bg.RenderTarget[0].BlendEnable = TRUE;
+    bg.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+    bg.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC1_COLOR;
+    bg.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    bg.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    bg.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC1_ALPHA;
+    bg.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    bg.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    if (FAILED(dev_->CreateBlendState(&bg, &blendGlyph_))) blendGlyph_ = nullptr;
+
     D3D11_RASTERIZER_DESC rd{};
     rd.FillMode = D3D11_FILL_SOLID;
     rd.CullMode = D3D11_CULL_NONE;
@@ -876,7 +898,12 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
                     v[i] = Vertex{q.x, q.y, kSx[i] * hw, kSy[i] * hh, hw, hh, radius, c.color};
                 }
             } else if (c.op == static_cast<uint32_t>(PaintOp::Glyph)) {
-                const float x = c.p[0] + opx, y = c.p[1] + opy;
+                // 字形位图按整像素 hinting 光栅，quad 必须落在整像素网格上：
+                // origin（DIP×scale）几乎必然带小数，不取整会让 POINT 采样错位，
+                // 覆盖率被相邻 texel 稀释 → 笔画变细、整体发灰（与抗锯齿模式无关）。
+                // c.p[0]/p[1] 本身恒为整数（相位/取整在发射期完成），floor 只抹 origin 小数。
+                const float x = std::floor(c.p[0] + opx);
+                const float y = std::floor(c.p[1] + opy);
                 const float w = c.p[2], h = c.p[3];
                 const float us[4] = {c.p[4], c.p[6], c.p[6], c.p[4]};
                 const float vs[4] = {c.p[5], c.p[5], c.p[7], c.p[7]};
@@ -987,6 +1014,10 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
                     ctx_->PSSetSamplers(0, 1, &samplerI_);
                     break;
                 }
+                // 字形批走 dual-source 混合（逐通道覆盖率），其余照旧预乘 alpha
+                ID3D11BlendState* bs =
+                    (seg.op == 1 && blendGlyph_ != nullptr) ? blendGlyph_ : blend_;
+                ctx_->OMSetBlendState(bs, nullptr, 0xFFFFFFFFu);
                 lastOp = seg.op;
                 lastRes = 0xFFFFFFFFu;
             }
@@ -1026,14 +1057,14 @@ void Device::UploadGlyphPage(uint32_t id, uint32_t w, uint32_t h, const uint8_t*
         td.Height = h;
         td.MipLevels = 1;
         td.ArraySize = 1;
-        td.Format = DXGI_FORMAT_R8_UNORM;
+        td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;   // 字形页：R/G/B = 子像素覆盖率，A = 最大值
         td.SampleDesc.Count = 1;
         td.Usage = D3D11_USAGE_DEFAULT;
         td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         ID3D11Texture2D* tex = nullptr;
         if (FAILED(dev_->CreateTexture2D(&td, nullptr, &tex))) return;
         D3D11_SHADER_RESOURCE_VIEW_DESC srvd{};
-        srvd.Format = DXGI_FORMAT_R8_UNORM;
+        srvd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         srvd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
         srvd.Texture2D.MipLevels = 1;
         ID3D11ShaderResourceView* srv = nullptr;
@@ -1049,7 +1080,7 @@ void Device::UploadGlyphPage(uint32_t id, uint32_t w, uint32_t h, const uint8_t*
         pt = &pages_.back();
     }
     const D3D11_BOX box{0, 0, 0, w, h, 1};
-    ctx_->UpdateSubresource(pt->tex, 0, &box, bits, w, 0);
+    ctx_->UpdateSubresource(pt->tex, 0, &box, bits, w * 4, 0);   // 行跨按 RGBA8 计
 }
 
 void Device::ReleaseGlyphPage(uint32_t id) {
@@ -1064,7 +1095,11 @@ void Device::ReleaseGlyphPage(uint32_t id) {
 }
 
 void Device::Present() {
-    if (swap_ != nullptr) swap_->Present(1, 0);   // VSync 默认开（ADR-013）
+    // 全时 Present(0, 0)（ADR-013，2026-11 修订）：不等 vblank 立即提交，主循环不被
+    // VSync 阻塞 —— 原来 Present(1, 0) 要等最多 16.7ms，这期间到达的 WM_MOUSEMOVE
+    // 只能等下一轮消息循环，拖动/滑块跟手延迟稳定多出一帧。内容经 composition 交换
+    // 链交给 DWM 合成，上屏时机由合成节拍决定、不走扫描输出直连，因此不会撕裂。
+    if (swap_ != nullptr) swap_->Present(0, 0);
 }
 
 // ---------------------------------------------------------------------------

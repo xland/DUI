@@ -1,5 +1,5 @@
 // ============================================================================
-//  DUI/RichText/RichDocJson.cpp — JSON 文档 → RichDoc（RichEditor.md §2 形态）
+//  DUI/UI/RichDocJson.cpp — JSON 文档 → RichDoc（RichEditor.md §2 形态）
 //
 //  形态不一致（§2.2）都在这里抹平：
 //    · content 是 string 或 Inline[]  → 都落成 run 序列
@@ -8,10 +8,10 @@
 //  未知键 / 坏值只计数，文档继续解析（Report）。
 // ============================================================================
 
-#include "RichText/RichDocJson.h"
+#include "UI/RichDocJson.h"
 
 #include "Core/Json.h"
-#include "RichText/CssValue.h"
+#include "UI/CssValue.h"
 
 namespace dui::richtext {
 namespace {

@@ -1,17 +1,23 @@
 // ============================================================================
-//  DUI/RichText/RichDocEdit.h — 文档模型编辑原语（纯函数，无排版 / UI 依赖）
+//  DUI/UI/RichDocEditor.h — 文档模型编辑原语（纯函数，无排版 / UI 依赖）
+//
+//  模型层模块，不是控件：命名空间 dui::richtext。这里只管"文档数据怎么改"，
+//  光标 / 命中 / 排版 / 绘制全在控件那边（UI/RichEditor.* → dui::RichEditor）。
 //
 //  编辑的核心难点在"段内 run 序列"上：插入一个字符要落进正确的 run、跨 run 的
 //  删除要拆段，且相邻同样式 run 必须合并（否则每次输入都会多一个 run）。
-//  这些操作与光标、几何无关，放在模型层做纯函数，RichEdit 只负责交互与坐标。
+//  这些操作与光标、几何无关，放在模型层做纯函数，RichEditor 只负责交互与坐标。
 //
 //  偏移一律是段内 UTF-16 码元偏移（与 String 下标一致）。
+//
+//  代码块（BlockKind::Code）是特例：内容在 block.code（整段字符串，含 '\n'），
+//  与 runs 分离。下面各原语按 kind 分流：代码块直接改 block.code，其余走 runs。
 // ============================================================================
 
 #pragma once
 
 #include "Core/Core.h"
-#include "RichText/RichDoc.h"
+#include "UI/RichDoc.h"
 
 namespace dui {
 namespace richtext {

@@ -1,5 +1,5 @@
 // ============================================================================
-//  DUI/UI/RichEdit.h — 富文本控件（RichEditor.md §3.1 D1；P2 只读 + P3 编辑）
+//  DUI/UI/RichEditor.h — 富文本控件（RichEditor.md §3.1 D1；P2 只读 + P3 编辑）
 //
 //  数据是 richtext::RichDoc（纯模型），本控件只做「块级堆叠 + 行内 run 排版」：
 //    · MeasureContent 返回文档总高 —— 外层 Scroller 据此出滚动条
@@ -9,7 +9,10 @@
 //
 //  P3 编辑（与 TextBox 同构的做法）：
 //    · 光标/选区 = 两个 {可编辑文本块序号, 段内 UTF-16 偏移}
-//    · 可编辑块 = 段落 / 标题 / 引用 / 列表项；代码块、图片、分割线只读
+//    · 可编辑块 = 段落 / 标题 / 引用 / 列表项 / 代码块；分割线只读；
+//      代码块的内容在 block.code，可进入编辑（回车 = 块内换行，不拆块）；
+//      图片不是可编辑文本，但可作为光标定位点：图前（offset 0）/ 图后（offset 1），
+//      点图像右侧落在图后，此时 Backspace 删除该图
 //    · 回车分裂块（D6）；段首退格与上一块合并；列表内回车新增同级项，
 //      空列表项上再回车退出列表
 //    · Ctrl+A/C/X/V/Z/Y；撤销为整文档快照（连续输入合并成一步）
@@ -20,15 +23,15 @@
 
 #include <memory>
 
-#include "RichText/RichDoc.h"
+#include "UI/RichDoc.h"
 #include "UI/Panel.h"
 
 namespace dui {
 
-class RichEdit : public Panel {
+class RichEditor : public Panel {
 public:
-    RichEdit();
-    ~RichEdit() override;
+    RichEditor();
+    ~RichEditor() override;
 
     // ---- 文档 ----
     void SetDoc(const richtext::RichDoc& doc);   // 值语义持有；清空撤销栈

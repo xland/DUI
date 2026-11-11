@@ -9,8 +9,9 @@
 #include <vector>
 
 #include "Graphics/Graphics.h"
-#include "Core/Window.h"
-#include "Text/TextEngine.h"
+#include "Graphics/Device.h"
+#include "App/Window.h"
+#include "Graphics/TextEngine.h"
 #include "UI/Scroller.h"
 
 namespace dui {

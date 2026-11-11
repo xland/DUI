@@ -7,7 +7,7 @@
 //  Window::ShowMenu 成员方法（owner 句柄 / dialogDepth_）在 App/Dialog.cpp。
 // ============================================================================
 
-#include "Core/Menu.h"
+#include "App/Menu.h"
 
 #include <windows.h>
 

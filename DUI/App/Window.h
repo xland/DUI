@@ -1,9 +1,8 @@
 // ============================================================================
-//  DUI/Core/Window.h — 窗口壳服务（内部头，不进 DUI.h）
+//  DUI/App/Window.h — 窗口壳服务（内部头，不进 DUI.h）
 //
-//  分层（01-Layering §1）：Core 不得反向依赖 App/UI —— 窗口事件经
-//  NativeWindowHost 抽象上抛，由 App 层适配到 dui::Window
-//  （适配器在 App/App.cpp）。
+//  HWND 封装 + 窗口过程：事件经 NativeWindowHost 抽象上抛，由本层的
+//  WindowHostAdapter（App/App.cpp）适配到 dui::Window。
 //
 //  窗口每实例状态（含 this）存 GWLP_USERDATA（12-Windowing：单窗口单缩放）。
 // ============================================================================

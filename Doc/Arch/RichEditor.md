@@ -61,14 +61,14 @@ Inline.type ∈ text | bold | italic | underline | strikethrough | hyperlink | t
 
 > 以下每条都标了状态；`待确认` 的条目定稿后才能开工对应模块。
 
-### 3.1 D1 渲染架构：RichEdit 自绘（建议，待确认）
+### 3.1 D1 渲染架构：RichEditor 自绘（建议，待确认）
 
-**结论**：`Scroller > RichEdit`，RichEdit 内部自带块级排版器与行内排版器，**不为每个 block 生成 Element 子树**。
+**结论**：`Scroller > RichEditor`，RichEditor 内部自带块级排版器与行内排版器，**不为每个 block 生成 Element 子树**。
 
 理由：编辑器的命脉是**统一坐标系** —— 光标、命中、选区、复制区间必须落在同一套偏移上。若段落 / 列表项各自是 Element，跨块光标要在元素边界间反复换算，复杂度远高于自己写一遍块级垂直堆叠。
 
-- RichEdit 只做排版 + 绘制 + 编辑，自身不画滚动条；视口与滚动条由外层 `Scroller` 提供（`MeasureContent` 返回文档总高）。
-- 不生成元素子树 ⇒ 不能白拿 `Flex` / `Grid` / 样式级联；块级样式在 RichEdit 内部按 `BlockStyle` 直接参与排版（不值当为此搭一套级联）。
+- RichEditor 只做排版 + 绘制 + 编辑，自身不画滚动条；视口与滚动条由外层 `Scroller` 提供（`MeasureContent` 返回文档总高）。
+- 不生成元素子树 ⇒ 不能白拿 `Flex` / `Grid` / 样式级联；块级样式在 RichEditor 内部按 `BlockStyle` 直接参与排版（不值当为此搭一套级联）。
 
 ### 3.2 D2 行内树展平为 run 序列（已定）
 
@@ -99,7 +99,7 @@ struct Run { std::wstring text; RunStyle style; };
 
 ### 3.4 D4 JSON：复用框架级 `Core/Json`（已定，已落地）
 
-原计划在 RichEdit 内自写解析器，实际**提升为框架级通用能力**：`DUI/Core/Json.h`（配套 `Core/Utf8.h` 转码工具）。RichEdit 直接复用，不再自带任何解析代码。
+原计划在 RichEditor 内自写解析器，实际**提升为框架级通用能力**：`DUI/Core/Json.h`（配套 `Core/Utf8.h` 转码工具）。RichEditor 直接复用，不再自带任何解析代码。
 
 选型依据 —— 排除 WinRT `Windows.Data.Json`（原生 Win32 没有别的内置 JSON）：
 
@@ -174,8 +174,14 @@ struct ImageRef {
 ### 3.6 D6 编辑语义（已定）
 
 - **回车 = 分裂新段落**。有选区先删选区，再在光标处切分：切分点之前的 run 留在原块、之后的进新块；新块继承原块的块级样式与切分点处的字符样式。列表内的回车走"新增列表项"（P4）。
-- **块内不留 `\n`**：换行即块边界，段落是纯单行文本。好处是 `Cursor{blockIndex, offset}` 的 offset 永远是段内偏移，不会与自动折行混淆；代价是粘贴多行文本时要拆块（P3）。
+- **块内不留 `\n`**：换行即块边界，段落是纯单行文本。好处是 `Cursor{blockIndex, offset}` 的 offset 永远是段内偏移，不会与自动折行混淆；代价是粘贴多行文本时要拆块（P3）。**例外：引用块与代码块**（见下两条），它们的 `\n` 留在块内。
 - 段首退格 = 与上一段合并（P4）；空段落退格 = 删除该块。
+- **图片块的光标位（已定，2026-11-11）**：图片不是可编辑文本，但是一个光标定位点，有两个位置 —— `offset 0` = 图前（贴图片左缘）、`offset 1` = 图后（贴图片右缘）。命中测试按图片盒中点分：点在图片右半（含图片右侧的空白）落图后，点左半落图前。因此"点击图像后面的空白 → 光标出现在图像右侧"，此时 Backspace 删除该图；Del 则在图前删图、图后删下一块。方向键在图前 ↔ 图后之间移动，End 落图后。**删图后光标落在图片原来的位置**：后面还有可编辑块 → 该块开头；图片是最后一个可编辑块 → 前一个可编辑块的**末尾**（示例文档里图片紧跟代码块之后，删图后光标停在代码最后一行末，而不是被拽回代码块行首）。**命中带**：图片的命中带 = 图片盒 + 上一块内容底到图片盒之间那一条（上一块的下内边距 / 间隙归「图片这一行」）—— 代码块盒底紧贴图片顶边（图片 `margin.top = 0`），中间那条淡灰内边距若归代码块，点图片右上方的空白光标就会跳进代码块；文本块的命中带则是**文字区**（不含内边距），点在内边距里不算落在该块。
+- **代码块可编辑（已定，2026-11-11）**：代码块不再是只读块 —— 光标可进入、可增删字符。代码内容存放在 `Block::code`（整段字符串，与 `runs` 分离），因此模型层编辑原语（`BlockText` / `InsertText` / `DeleteRange` / `StyleAt` / `SplitBlock` / `AppendRuns`）按 `kind` 分流：代码块直接改 `code`，其余走 `runs`。
+  - **回车 = 块内换行**：在光标处往 `code` 里插 `\n`，不分裂成两个块（代码块的换行是代码的一部分）。
+  - **粘贴 = 整段插入**：多行文本原样进 `code`（保留换行），不拆成段落。
+  - **块边界不跨块合并**：代码块与相邻块之间的 Backspace / Del 不合并、不吞字（代码不与正文混排）；跨块选区删除时两块各自清空内容、保持独立。
+  - **不折行**：代码块按 `kNoWrapWidth` 排版，`\n` 由 DWrite 强制换行，多行各自成"视觉行"，上下方向键 / Home / End 在行内生效。
 
 ## 4. 数据模型（草案）
 
@@ -207,13 +213,13 @@ struct RichDoc { Settings settings; std::vector<Block> blocks; };
 
 ## 5. 分期路线
 
-> 已落地（2026-11）：`Core/Json` + `Core/Utf8`（框架级 JSON 与转码）、**P0 文本 run 化**。下表 P1 起为 RichEdit 本体。
+> 已落地（2026-11）：`Core/Json` + `Core/Utf8`（框架级 JSON 与转码）、**P0 文本 run 化**。下表 P1 起为 RichEditor 本体。
 
 | 期 | 内容 | 验收 | 状态 |
 | --- | --- | --- | --- |
 | P0 | `TextEngine` run 化：`TextRun` / `ShapeInput`、分段字号/字重/族名/斜体、按 run 取色（drawing effect）、下划线/删除线（DWrite 回调） | `runCount == 0` 走原单样式路径，零额外分配与 COM 开销 | ✅ 已落地 |
-| P1 | 文档模型 + CSS 白名单（JSON 复用 `Core/Json`） | 示例 JSON 完整解析，坏字段进 Diagnostics | ✅ 已落地（2026-11，`RichText/RichDocJson`） |
-| P2 | 只读渲染：heading/paragraph/list/quote/code/image/hr | 静态截图逐块对得上 | ✅ 已落地（2026-11，`UI/RichEdit`；图片为占位框） |
+| P1 | 文档模型 + CSS 白名单（JSON 复用 `Core/Json`） | 示例 JSON 完整解析，坏字段进 Diagnostics | ✅ 已落地（2026-11，`UI/RichDocJson`） |
+| P2 | 只读渲染：heading/paragraph/list/quote/code/image/hr | 静态截图逐块对得上 | ✅ 已落地（2026-11，`UI/RichEditor`；图片为占位框） |
 | P3 | 编辑：光标/选区/拖选/输入/删除/回车/复制粘贴/撤销/IME preedit | 中英文混录、段内编辑正确 | 待确认 |
 | P4 | 跨段选择与删除、列表回车续项、样式继承 | 往返一致、跨段删除不崩 | 待确认 |
 | P5 | 序列化回 JSON | 与输入结构往返一致 | 待确认 |

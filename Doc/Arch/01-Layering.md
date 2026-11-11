@@ -5,12 +5,14 @@
 ## 1. 依赖规则
 
 ```
-App ──→ UI ──→ Text ──→ Graphics ──→ Core
+App ──→ UI ──→ Graphics ──→ Core
 ```
 
 - **单向依赖**，下层不得引用上层，禁止跨层调用。
-- **Core 是功能服务层**：与界面无关的功能能力（窗口壳、系统对话框、任务队列、剪贴板、JSON、转码…）都在 Core，允许直接使用系统 API（Win32）——2026-11-11 取消「Core 不依赖 Win32」约束，同日原 Platform 层并入 Core（原「Platform 不依赖 App/UI」改为「Core 不依赖 App/UI」，窗口事件仍经 `NativeWindowHost` 抽象上抛）。可裁剪性由静态库按未引用裁剪保证（ADR-016），不依赖分层纯度。
-- 只有 App 层做组装。
+- **Core 是基础与通用服务层**：与界面无关的基础能力与通用服务（结果 / 字符串 / 数学 / 容器 / JSON / 转码、线程池与任务队列、剪贴板）都在 Core，允许直接使用系统 API（Win32）——2026-11-11 取消「Core 不依赖 Win32」约束，同日原 Platform 层并入 Core。可裁剪性由静态库按未引用裁剪保证（ADR-016），不依赖分层纯度。
+- **Graphics 是渲染与文字排版层**：D3D11 设备与有序绘制指令收集（`Painter`）、图像解码（WIC、Direct2D SVG 光栅）、DirectWrite 排版与字形图集都在这一层——原独立的 `Text` 层 2026-11 并入（它只依赖 Graphics，不反向依赖）。
+- **UI 是控件层**：元素树、样式、布局、事件与具体控件都在这里；富文本文档模型（原 `RichText` 层）2026-11 并入 UI。
+- **App 是应用运行时层**：窗口壳（HWND / 消息过程）、系统对话框与原生菜单、应用主循环、渲染管线编排都在 App——它们都是「窗口模态的应用级交互」。
 
 ## 2. 模块清单
 
@@ -27,33 +29,24 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Core
 | Time | 时间戳、计时器、动画时钟基础 |
 | Dispatcher / Threading | UI 任务队列 + 后台线程池（含 PostMessage 唤醒） |
 | Clipboard | 系统剪贴板：文本（CF_UNICODETEXT）、图像（CF_DIB ↔ BGRA8）+ 任意格式（mime + 字节） |
-| Window | 窗口壳服务：RegisterClass / CreateWindowExW、消息过程、DPI 换算、IME 插入点 caret（事件经 `NativeWindowHost` 抽象上抛，App 层适配） |
-| Dialog | 系统对话框公共服务：公共类型（选项 / `DialogResult`）+ Win32/COM 实现（IFileDialog / MessageBoxW）；`Window::OpenFile` 等成员方法只是薄封装（UI 层） |
-| Menu | 系统原生弹出菜单（TrackPopupMenuEx，链式构造）；`Window::ShowMenu` 是薄封装（UI 层） |
-| DragDrop | 拖放（远期；随窗口壳落 Core） |
+| DragDrop | 拖放（远期；随窗口壳落 App） |
 
-### Graphics（Direct3D 11 + DXGI）
+### Graphics（Direct3D 11 + DXGI）+ 文字排版（DirectWrite）
 
 | 模块 | 职责 |
 | --- | --- |
-| Device | D3D11 设备/上下文、DXGI 工厂、适配器选择、设备丢失恢复 |
+| Device | D3D11 设备/上下文、DXGI 工厂、适配器选择、设备丢失恢复（内部头 `Graphics/Device.h`，不进公共头） |
 | SwapChain | Flip Model 交换链、尺寸变更、Present 策略 |
 | Resource | Texture2D、Buffer、Shader、Sampler、状态对象 |
 | Batcher | 顶点/实例环形缓冲、批合并、Draw Call 提交 |
 | Painter | 绘制指令收集（显示列表） |
 | Atlas | 通用纹理图集（字形/图标共用） |
 | Clip | 矩形/圆角矩形裁剪栈 |
-
-### Text（DirectWrite）
-
-| 模块 | 职责 |
-| --- | --- |
 | FontCollection | 系统字体枚举 + 内嵌字体加载 |
 | Shaping | 基于 `IDWriteTextAnalyzer` 的成形、换行、双向文本 |
 | Layout | 段落排版、度量、命中测试（文本坐标 ↔ 字符索引） |
 | Raster | 字形光栅化（方案见 ADR-003） |
 | GlyphAtlas | 字形缓存与淘汰策略 |
-| RichText | 富文本文档模型：属性区间、内联对象、序列化（见 [11-Text.md](./11-Text.md)） |
 
 ### UI
 
@@ -66,14 +59,17 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Core
 | Invalidate | 脏区标记与合并、重绘调度 |
 | Animation | 命令式属性动画（标签 / `AnimConfig` / 句柄）、缓动、动画值槽；与帧动画和光标闪烁共用统一 ticker（见 [05-Animation.md](./05-Animation.md)） |
 | Widgets | 具体控件实现（可裁剪） |
+| RichText | 富文本文档模型：属性区间、内联对象、序列化（见 [11-Text.md](./11-Text.md)）；落地于 `UI/RichDoc*`；编辑器控件 `UI/RichEditor.*`（见 [RichEditor.md](./RichEditor.md)） |
 
 ### App
 
 | 模块 | 职责 |
 | --- | --- |
-| Application | 进程级初始化、全局资源、退出流程 |
+| Application | 进程级初始化、全局资源、退出流程；`Application::Run` 消息循环（Dispatcher 排空 / 统一节拍） |
+| Window | 窗口壳：`NativeWindow`（HWND 封装、消息过程、DPI 换算、IME 插入点 caret）+ `dui::Window` 公共基类（`OnCreate` / `OnDpiChanged` / `OnClosing` / `OnNcHitTest`，见 [12-Windowing.md](./12-Windowing.md) §6） |
+| Dialog / Menu | 系统对话框（IFileDialog / MessageBoxW）与原生弹出菜单（TrackPopupMenuEx）；公共类型 + 实现 + `Window` 成员方法薄封装 |
+| Frame | 渲染管线编排：`Collector`（元素树 → 绘制指令）+ `Application::RenderFrame`（排版 → 收集 → 光栅 → Present） |
 | Theme | 默认主题与资源（颜色、字号、图标），属性默认值兜底（见 [03-Style.md](./03-Style.md)） |
-| HighWindow | 高层窗口基类（组合 Core.Window + UI + Graphics；派生类重写 `OnCreate` / `OnDpiChanged`，见 [12-Windowing.md](./12-Windowing.md) §6） |
 
 ## 3. 一帧的生命周期
 

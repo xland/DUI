@@ -1,5 +1,5 @@
 // ============================================================================
-//  DUI/Text/TextEngine.h — DirectWrite 排版与字形绘制（内部头，不进 DUI.h）
+//  DUI/Graphics/TextEngine.h — DirectWrite 排版与字形绘制（内部头，不进 DUI.h）
 //
 //  排版基座（11-Text §3 已定）：IDWriteTextLayout 段落级直接用，自排
 //  （IDWriteTextAnalyzer）为瓶颈后备，不预做。一个 Text 元素 = 一个段落 =
@@ -10,13 +10,14 @@
 // ============================================================================
 #pragma once
 
-#include <dwrite_2.h>
+#include <dwrite_3.h>
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "Core/Core.h"
-#include "Text/GlyphAtlas.h"
+#include "Graphics/GlyphAtlas.h"
 
 namespace dui::graphics {
 class Painter;
@@ -99,10 +100,15 @@ public:
     // 空串 / nullptr → false。用途：CSS fontFamily 列表取"第一个可用族名"。
     bool HasFamily(const wchar_t* family) const noexcept;
 
-    // 加载未安装的字体文件（ttf/otf）为进程内字体集合（DWrite FontCollectionBuilder，
-    // Win10+）。成功后 familyOut 返回其字体族名（可用于 Shape/FontFamily）；
-    // 引擎生命周期内只装一个文件，重复调用直接返回已装族名。
+    // 加载未安装的字体文件（ttf/otf）为进程内字体集合（DWrite FontSet，
+    // Win10+）。成功后 familyOut 返回其字体族名（可用于 Shape/FontFamily）。
+    // 可多次调用装入不同字体：每个字体自带一个集合，族名各自独立。
     bool LoadFontFile(const wchar_t* path, String& familyOut);
+
+    // 从内存加载字体（把字体文件作为资源嵌入 exe 的场景）：data 指向完整的
+    // SFNT 字节、size 为其长度。引擎内部经 DirectWrite 的 in-memory loader
+    // 拷贝一份，调用返回后源缓冲可立即释放。其余约定同 LoadFontFile。
+    bool LoadFontData(const void* data, size_t size, String& familyOut);
 
     // 收集字形 quad。originDip = 文本原点（元素 bounds + padding）的 DIP 坐标
     void Draw(Paragraph* p, graphics::Painter& painter, float scale, Vec2 originDip, Color color);
@@ -136,6 +142,11 @@ private:
     // 逐 run 施加覆盖样式（字号/字重/族名/斜体/下划线/删除线/颜色）
     void ApplyRuns(IDWriteTextLayout* layout, const ShapeInput& in, uint32_t textLen);
 
+    // 装入一个字体文件（DWrite 字体文件 → 字体面引用 → 单字体集合 → 族名）
+    bool AddCustomFont(IDWriteFactory3* f3, IDWriteFontFile* file, String& familyOut);
+    // 族名 → 已装入字体的集合（未装入返回 nullptr）
+    IDWriteFontCollection1* CustomCollectionOf(const wchar_t* family) const noexcept;
+
     IDWriteFactory*        factory_ = nullptr;
     IDWriteFactory2*       factory2_ = nullptr;   // GlyphRunAnalysis（墨迹测量 / ClearType 位图不可用时的兜底）
     IDWriteGdiInterop*     gdi_ = nullptr;        // 创建 GDI 位图渲染目标
@@ -146,8 +157,22 @@ private:
     uint32_t               bmpSize_ = 0;          // 位图边长（按字号档位缓存）
     IDWriteFontCollection* fonts_ = nullptr;
     IDWriteTextFormat*     baseFormat_ = nullptr;   // 家族/风格基座；字号字重由 layout 覆盖
-    IDWriteFontCollection* customFonts_ = nullptr;  // LoadFontFile 装入的字体集合
-    String                 customFamily_;          // 集合内首字体的族名（空 = 未装入）
+    // 一个已装入的自定义字体（文件或内存）：字体面引用 + 只含它的字体集合 +
+    // 族名。排版时按族名挑对应集合挂到 layout 上——layout 默认挂在系统集合，
+    // 不换集合则自定义族名命中不到 → DWrite 静默回退默认字体。
+    struct LoadedFont {
+        IDWriteFontFaceReference* faceRef = nullptr;   // 字体面引用（归引擎）
+        IDWriteFontCollection1*  collection = nullptr;  // 只含该字体的集合（归引擎）
+        String                    family;               // 字体族名
+        ~LoadedFont() {
+            if (faceRef != nullptr) faceRef->Release();
+            if (collection != nullptr) collection->Release();
+        }
+    };
+    std::vector<std::unique_ptr<LoadedFont>> loadedFonts_;  // 已装入的自定义字体
+    // 内存字体加载器（IDWriteFactory5 的 in-memory loader）：字体文件引用在
+    // 装载器注册期间有效，故引擎持有并注册它。
+    IDWriteInMemoryFontFileLoader* memLoader_ = nullptr;
     GlyphAtlas             atlas_;
 };
 

@@ -51,7 +51,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `fontFamily` | StringId | ✓ | Layout·Text | ✗ | 系统 UI 字体 | 排版缓存键 |
 | `fontSize` | Length | ✓ | Layout·Text | ✓ | 14 dip | 排版缓存键；动画慎用 |
 | `fontWeight` | Enum | ✓ | Layout·Text | ✗ | Normal | 排版缓存键 |
-| `fontFamily` | String（`const wchar_t*` 指针） | ✓ | Layout·Text | ✓ | Microsoft YaHei | 框架默认微软雅黑；开发者可指定系统已安装任意字体族，指针生命周期由调用方保证（建议字面量）；未安装时 DWrite 自动回退默认。未安装字体经 `dui::LoadFontFamily` 装入，仅支持 ttf/otf/ttc（DWrite 只认 SFNT，woff2 不支持，需先转换） |
+| `fontFamily` | String（`const wchar_t*` 指针） | ✓ | Layout·Text | ✓ | Microsoft YaHei | 框架默认微软雅黑；开发者可指定系统已安装任意字体族，指针生命周期由调用方保证（建议字面量）；未安装时 DWrite 自动回退默认。未安装字体经 `dui::LoadFontFamily`（文件）或 `dui::LoadFontFamilyFromMemory`（资源嵌入 exe 的内存字节）装入，可装多个、各自独立生效；仅支持 ttf/otf/ttc（DWrite 只认 SFNT，woff2 不支持，需先转换） |
 | `fontStyle` | Enum | ✓ | Layout·Text | ✗ | Normal | 排版缓存键 |
 | `textAlign` | Enum | ✓ | **Paint** | ✗ | Start | 运行时已接入；`dui::TextAlign::Start/Center/End` + `Style::TextAlign()`；静态 `Text` 在内容盒内对齐（绘制期平移，不改 DWrite 排版，故标 Paint），`TextBox` 不参与；多行按最长行整体对齐 |
 | `lineHeight` | Length（倍数） | ✓ | Layout·Text | ✓ | 1.2 | |

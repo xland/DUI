@@ -1,14 +1,14 @@
 // ============================================================================
-//  DUI/RichText/CssValue.cpp — CSS 值白名单解析（文档数据 → 强类型）
+//  DUI/UI/CssValue.cpp — CSS 值白名单解析（文档数据 → 强类型）
 //
 //  只用无状态的小工具函数：不依赖 locale（自己走数字），不抛错、不写日志。
 //  唯一的外部查询是族名可用性（Text::Engine::HasFamily），这也是 CSS
 //  fontFamily 列表"取第一个本机可用"的唯一实现途径。
 // ============================================================================
 
-#include "RichText/CssValue.h"
+#include "UI/CssValue.h"
 
-#include "Text/TextEngine.h"
+#include "Graphics/TextEngine.h"
 
 #include <cmath>
 

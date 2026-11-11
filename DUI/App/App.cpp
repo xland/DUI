@@ -8,7 +8,8 @@
 #include "App/App.h"
 
 #include "Graphics/Graphics.h"
-#include "Core/Window.h"
+#include "Graphics/Device.h"
+#include "App/Window.h"
 #include "UI/Scroller.h"
 
 #include <ole2.h>

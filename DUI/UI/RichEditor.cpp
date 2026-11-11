@@ -1,5 +1,5 @@
 // ============================================================================
-//  DUI/UI/RichEdit.cpp — 富文本控件的排版、绘制与编辑（RichEditor.md §3.1 / §4）
+//  DUI/UI/RichEditor.cpp — 富文本控件的排版、绘制与编辑（RichEditor.md §3.1 / §4）
 //
 //  排版两块状态：
 //    · Build：文档结构 → Item 列表（字体、run 表、标记文字、高亮区间），
@@ -9,10 +9,10 @@
 //  编辑后重建时段落按文本从池中复用，未改动的块不重建 layout。
 //
 //  编辑（P3）：光标/选区是两个 {可编辑块序号, 段内偏移}；段内文本改动走
-//  richtext::RichDocEdit 的纯函数，结构改动（分裂/合并/入列表）在这里做。
+//  richtext::RichDocEditor 的纯函数，结构改动（分裂/合并/入列表）在这里做。
 // ============================================================================
 
-#include "UI/RichEdit.h"
+#include "UI/RichEditor.h"
 
 #include <algorithm>
 #include <utility>
@@ -20,8 +20,8 @@
 #include "Core/Clipboard.h"
 #include "Graphics/Graphics.h"
 #include "Graphics/ImageCodec.h"
-#include "RichText/RichDocEdit.h"
-#include "Text/TextEngine.h"
+#include "UI/RichDocEditor.h"
+#include "Graphics/TextEngine.h"
 #include "UI/Scroller.h"
 #include "UI/UI.h"
 
@@ -128,16 +128,19 @@ size_t DecodeBase64(const wchar_t* s, size_t count, std::vector<uint8_t>& out) {
     return out.size();
 }
 
-// 文本块（可编辑）：段落 / 标题 / 引用 / 列表项；代码块只读
+// 文本块（可编辑）：段落 / 标题 / 引用 / 列表项；代码块单独处理（内容在 block.code）
 bool IsEditableKind(BlockKind kind) noexcept {
     return kind == BlockKind::Paragraph || kind == BlockKind::Heading ||
            kind == BlockKind::Quote || kind == BlockKind::ListItem;
 }
 
-// 光标可落的块 = 可编辑文本块 + 图片块。图片注册成零长度定位点：光标停在
-// 图片左缘（与图片等高），Backspace / Delete 删除图片本身
+// 光标可落的块 = 可编辑文本块 + 代码块 + 图片块。
+// 代码块：内容在 block.code，可进入、可编辑（回车 = 块内换行，不拆块）。
+// 图片块：注册成定位点，有两个光标位：
+// offset 0 = 图前（贴图片左缘）、offset 1 = 图后（贴图片右缘）；
+// Backspace / Delete 删除图片本身
 bool IsCaretKind(BlockKind kind) noexcept {
-    return IsEditableKind(kind) || kind == BlockKind::Image;
+    return IsEditableKind(kind) || kind == BlockKind::Code || kind == BlockKind::Image;
 }
 
 bool IsHighSurrogate(wchar_t c) noexcept { return c >= 0xD800 && c <= 0xDBFF; }
@@ -162,7 +165,7 @@ uint32_t NextIndex(const String& s, uint32_t i, int dir) {
 // ---------------------------------------------------------------------------
 // Impl：文档副本 + 排版结果 + 编辑状态
 // ---------------------------------------------------------------------------
-struct RichEdit::Impl {
+struct RichEditor::Impl {
     enum class KeyResult { None, Handled, Content };
 
     struct Cursor {
@@ -336,7 +339,10 @@ struct RichEdit::Impl {
 
     // ---- 光标 / 选区 ----
     bool   HasSelection() const noexcept {
-        return caret.block != anchor.block || caret.offset != anchor.offset;
+        if (caret.block != anchor.block) return true;
+        if (caret.offset == anchor.offset) return false;
+        // 图片块内（图前 ↔ 图后）之间没有可选的文字
+        return !IsImageAt(caret.block);
     }
     static bool BlockLess(Cursor a, Cursor b) noexcept {
         return a.block != b.block ? a.block < b.block : a.offset < b.offset;
@@ -385,7 +391,7 @@ struct RichEdit::Impl {
 // 段落池
 // ---------------------------------------------------------------------------
 
-void RichEdit::Impl::Discard(bool recycle) {
+void RichEditor::Impl::Discard(bool recycle) {
     if (recycle) {
         poolMain.clear();
         poolAux.clear();
@@ -415,7 +421,7 @@ void RichEdit::Impl::Discard(bool recycle) {
     layoutWidth = -1.f;
 }
 
-void RichEdit::Impl::FlushPool() {
+void RichEditor::Impl::FlushPool() {
     for (text::Paragraph* p : poolMain) text::Engine::Get().Discard(p);
     for (text::Paragraph* p : poolAux) text::Engine::Get().Discard(p);
     for (text::Paragraph* p : poolMarker) text::Engine::Get().Discard(p);
@@ -424,7 +430,7 @@ void RichEdit::Impl::FlushPool() {
     poolMarker.clear();
 }
 
-text::Paragraph* RichEdit::Impl::Take(std::vector<text::Paragraph*>& pool, const wchar_t* text) {
+text::Paragraph* RichEditor::Impl::Take(std::vector<text::Paragraph*>& pool, const wchar_t* text) {
     if (text == nullptr) return nullptr;
     for (size_t i = 0; i < pool.size(); ++i) {
         text::Paragraph* p = pool[i];
@@ -440,7 +446,7 @@ text::Paragraph* RichEdit::Impl::Take(std::vector<text::Paragraph*>& pool, const
 // Build：结构 → Item（与宽度无关）
 // ---------------------------------------------------------------------------
 
-void RichEdit::Impl::Build(const StyleContext& ctx, float base, float line, const wchar_t* family) {
+void RichEditor::Impl::Build(const StyleContext& ctx, float base, float line, const wchar_t* family) {
     baseSize = base;
     const uint32_t baseWeight = dui::DWriteWeight(ctx.fontWeight);
 
@@ -465,7 +471,7 @@ void RichEdit::Impl::Build(const StyleContext& ctx, float base, float line, cons
     }
 }
 
-void RichEdit::Impl::BuildList(const Block& list, int depth, float base, uint32_t weight,
+void RichEditor::Impl::BuildList(const Block& list, int depth, float base, uint32_t weight,
                                float line, const wchar_t* family) {
     for (size_t i = 0; i < list.children.size(); ++i) {
         const Block& item = list.children[i];
@@ -484,7 +490,7 @@ void RichEdit::Impl::BuildList(const Block& list, int depth, float base, uint32_
     }
 }
 
-void RichEdit::Impl::BuildChildBlocks(const Block& parent, int depth, float base, uint32_t weight,
+void RichEditor::Impl::BuildChildBlocks(const Block& parent, int depth, float base, uint32_t weight,
                                       float line, const wchar_t* family) {
     for (size_t i = 0; i < parent.children.size(); ++i) {
         const Block& child = parent.children[i];
@@ -511,7 +517,7 @@ void RichEdit::Impl::BuildChildBlocks(const Block& parent, int depth, float base
     }
 }
 
-void RichEdit::Impl::BuildItem(const Block& block, const String& marker, int depth, float fontSize,
+void RichEditor::Impl::BuildItem(const Block& block, const String& marker, int depth, float fontSize,
                                uint32_t weight, float line, const wchar_t* family, bool code,
                                const Block* parentList, size_t indexInContainer) {
     auto owned = std::make_unique<Item>();
@@ -578,7 +584,7 @@ void RichEdit::Impl::BuildItem(const Block& block, const String& marker, int dep
 
     it.para = Take(poolMain, it.text.c_str());
 
-    if (!code && IsCaretKind(block.kind)) {
+    if (IsCaretKind(block.kind)) {
         it.editableIndex = editables.size();
         editables.push_back(Editable{const_cast<Block*>(&block), owned.get()});
     }
@@ -590,7 +596,7 @@ void RichEdit::Impl::BuildItem(const Block& block, const String& marker, int dep
 // Place：给每个 Item 排盒 + 调引擎排版
 // ---------------------------------------------------------------------------
 
-text::Paragraph* RichEdit::Impl::MakePara(text::Paragraph*& slot, const wchar_t* text, float size,
+text::Paragraph* RichEditor::Impl::MakePara(text::Paragraph*& slot, const wchar_t* text, float size,
                                           uint32_t weight, float line, const wchar_t* family,
                                           float maxWidth, const std::vector<text::TextRun>* runs) {
     text::ShapeInput in;
@@ -609,7 +615,7 @@ text::Paragraph* RichEdit::Impl::MakePara(text::Paragraph*& slot, const wchar_t*
     return slot;
 }
 
-void RichEdit::Impl::Place(float width) {
+void RichEditor::Impl::Place(float width) {
     float y = 0.f;
     float maxRight = 0.f;
     for (const std::unique_ptr<Item>& up : items) {
@@ -621,7 +627,7 @@ void RichEdit::Impl::Place(float width) {
     linesDirty = true;
 }
 
-void RichEdit::Impl::PlaceItem(Item& it, float width, float& y) {
+void RichEditor::Impl::PlaceItem(Item& it, float width, float& y) {
     const Block& block = *it.block;
     const BlockStyle& st = it.style;
     const bool hasMargin = HasAnyMargin(st.margin);
@@ -737,7 +743,7 @@ void RichEdit::Impl::PlaceItem(Item& it, float width, float& y) {
 // 几何
 // ---------------------------------------------------------------------------
 
-float RichEdit::Impl::AlignDx(const Item& it) const {
+float RichEditor::Impl::AlignDx(const Item& it) const {
     const float natural = it.para != nullptr ? it.para->size.x : 0.f;
     if (it.textBox.w <= natural) return 0.f;
     if (it.style.align == richtext::Align::Center) return (it.textBox.w - natural) * 0.5f;
@@ -745,15 +751,17 @@ float RichEdit::Impl::AlignDx(const Item& it) const {
     return 0.f;
 }
 
-Vec2 RichEdit::Impl::TextOriginDoc(const Item& it) const {
+Vec2 RichEditor::Impl::TextOriginDoc(const Item& it) const {
     return Vec2{it.textBox.x + AlignDx(it), it.textBox.y};
 }
 
-bool RichEdit::Impl::CaretRectOf(Cursor c, Rect& out) const {
+bool RichEditor::Impl::CaretRectOf(Cursor c, Rect& out) const {
     if (c.block >= editables.size()) return false;
     const Item& it = *editables[c.block].item;
     if (it.block->kind == BlockKind::Image) {
-        out = Rect{it.blockBox.x, it.blockBox.y, 1.f, it.blockBox.h};   // 贴图片左缘、等高
+        // 图片两个光标位：0 = 图前（贴左缘）、1 = 图后（贴右缘）；都与图片等高
+        const float x = (c.offset > 0) ? it.blockBox.Right() : it.blockBox.x;
+        out = Rect{x, it.blockBox.y, 1.f, it.blockBox.h};
         return true;
     }
     if (it.para == nullptr) return false;
@@ -764,16 +772,18 @@ bool RichEdit::Impl::CaretRectOf(Cursor c, Rect& out) const {
     return true;
 }
 
-void RichEdit::Impl::EnsureLines() const {
+void RichEditor::Impl::EnsureLines() const {
     if (!linesDirty) return;
     lines.clear();
     for (size_t i = 0; i < editables.size(); ++i) {
         const Item& it = *editables[i].item;
         if (it.block->kind == BlockKind::Image) {
-            // 图片块补一条伪视觉行（占满图片盒）：上下移动 / 行首行尾能穿过图片
+            // 图片块补一条伪视觉行（占满图片盒）：上下移动 / 行首行尾能穿过图片。
+            // end = 1：End 键落在图后（图前 = 0）
             VisLine line;
             line.editable = i;
-            line.start = line.end = 0;
+            line.start = 0;
+            line.end = 1;
             line.top = it.blockBox.y;
             line.bottom = it.blockBox.Bottom();
             lines.push_back(line);
@@ -795,7 +805,7 @@ void RichEdit::Impl::EnsureLines() const {
     linesDirty = false;
 }
 
-int RichEdit::Impl::LineIndexOf(Cursor c) const {
+int RichEditor::Impl::LineIndexOf(Cursor c) const {
     int found = -1;
     for (size_t i = 0; i < lines.size(); ++i) {
         if (lines[i].editable != c.block) continue;
@@ -805,22 +815,25 @@ int RichEdit::Impl::LineIndexOf(Cursor c) const {
     return found;
 }
 
-float RichEdit::Impl::CaretXDoc() const {
+float RichEditor::Impl::CaretXDoc() const {
     Rect r;
     if (!CaretRectOf(caret, r)) return 0.f;
     return r.x;
 }
 
-uint32_t RichEdit::Impl::TextLenOf(size_t block) const {
+uint32_t RichEditor::Impl::TextLenOf(size_t block) const {
     if (block >= editables.size()) return 0;
-    return static_cast<uint32_t>(editables[block].item->text.size());
+    const Item& it = *editables[block].item;
+    // 图片占一个光标位宽：offset 0 = 图前、offset 1 = 图后（ClampToDoc 据此放行）
+    if (it.block->kind == BlockKind::Image) return 1;
+    return static_cast<uint32_t>(it.text.size());
 }
 
-RichEdit::Impl::Cursor RichEdit::Impl::EndCursor(size_t block) const {
+RichEditor::Impl::Cursor RichEditor::Impl::EndCursor(size_t block) const {
     return Cursor{block, TextLenOf(block)};
 }
 
-RichEdit::Impl::Cursor RichEdit::Impl::ClampToDoc(Cursor c) const {
+RichEditor::Impl::Cursor RichEditor::Impl::ClampToDoc(Cursor c) const {
     if (editables.empty()) return Cursor{};
     if (c.block >= editables.size()) c.block = editables.size() - 1;
     const uint32_t length = TextLenOf(c.block);
@@ -828,7 +841,7 @@ RichEdit::Impl::Cursor RichEdit::Impl::ClampToDoc(Cursor c) const {
     return c;
 }
 
-size_t RichEdit::Impl::IndexOf(const Block* block) const {
+size_t RichEditor::Impl::IndexOf(const Block* block) const {
     if (block == nullptr) return kNoEditable;
     for (size_t i = 0; i < editables.size(); ++i) {
         if (editables[i].block == block) return i;
@@ -836,18 +849,35 @@ size_t RichEdit::Impl::IndexOf(const Block* block) const {
     return kNoEditable;
 }
 
-RichEdit::Impl::Cursor RichEdit::Impl::HitTestDoc(Vec2 pt) const {
+RichEditor::Impl::Cursor RichEditor::Impl::HitTestDoc(Vec2 pt) const {
     if (editables.empty()) return Cursor{};
+    // 命中带（竖直方向）：
+    //   · 文本块 = 文字区（不含内边距）—— 点在内边距里不算落在这个块
+    //   · 图片块 = 图片盒 + 上一块内容底到图片盒之间那一条（上一块的下内边距 /
+    //     间隙算图片这一行）。否则点图片右上方的空白会落进上一块：代码块盒底
+    //     紧贴图片顶边（图片 margin.top = 0），中间那条淡灰内边距会被代码块抢走，
+    //     光标跳进代码块而不是落到图后。
+    float prevBottom = 0.f;   // 上一块的命中带底
+    bool hasPrev = false;
+
     for (size_t i = 0; i < editables.size(); ++i) {
         const Item& it = *editables[i].item;
-        const Rect& box = it.blockBox;
-        if (pt.y < box.y) {
+        const bool image = (it.block->kind == BlockKind::Image);
+        Rect band = image ? it.blockBox : it.textBox;
+        if (image && hasPrev) band.y = std::min(band.y, prevBottom);
+
+        if (pt.y < band.y) {
             if (i == 0) return Cursor{0, 0};
-            const Rect& prev = editables[i - 1].item->blockBox;
-            // 两点之间按距离取近的一侧（间隙 / 代码块区点击落到相邻文本块）
-            return (pt.y - prev.Bottom() < box.y - pt.y) ? EndCursor(i - 1) : Cursor{i, 0};
+            // 两点之间按距离取近的一侧（间隙）
+            return (pt.y - prevBottom < band.y - pt.y) ? EndCursor(i - 1) : Cursor{i, 0};
         }
-        if (pt.y <= box.Bottom()) {
+        if (pt.y <= band.Bottom()) {
+            if (image) {
+                // 点在图片右半（含图片右侧的空白）→ 光标落图后；左半 → 图前。
+                // 这样"点击图像后面"能把光标放到图像右侧，Backspace 即删该图。
+                const float mid = band.x + band.w * 0.5f;
+                return Cursor{i, pt.x >= mid ? 1u : 0u};
+            }
             const Vec2 o = TextOriginDoc(it);
             uint32_t index = 0;
             if (it.para != nullptr) {
@@ -856,11 +886,13 @@ RichEdit::Impl::Cursor RichEdit::Impl::HitTestDoc(Vec2 pt) const {
             index = richtext::SnapBoundary(it.text, index);
             return Cursor{i, index};
         }
+        prevBottom = band.Bottom();
+        hasPrev = true;
     }
     return EndCursor(editables.size() - 1);
 }
 
-bool RichEdit::Impl::SelectionRange(const Item& it, const SelectionInfo& sel,
+bool RichEditor::Impl::SelectionRange(const Item& it, const SelectionInfo& sel,
                                    uint32_t& s, uint32_t& e) const {
     if (!sel.active || it.editableIndex == kNoEditable) return false;
     const size_t b = it.editableIndex;
@@ -875,7 +907,7 @@ bool RichEdit::Impl::SelectionRange(const Item& it, const SelectionInfo& sel,
 // Paint
 // ---------------------------------------------------------------------------
 
-void RichEdit::Impl::Paint(graphics::Painter& p, const StyleContext& ctx, float scale, Vec2 origin,
+void RichEditor::Impl::Paint(graphics::Painter& p, const StyleContext& ctx, float scale, Vec2 origin,
                           bool showCaret, Color caretColor, Color selectionColor) const {
     SelectionInfo sel;
     sel.active = HasSelection();
@@ -901,7 +933,7 @@ void RichEdit::Impl::Paint(graphics::Painter& p, const StyleContext& ctx, float 
     }
 }
 
-void RichEdit::Impl::PaintItem(const Item& it, graphics::Painter& p, const StyleContext& ctx,
+void RichEditor::Impl::PaintItem(const Item& it, graphics::Painter& p, const StyleContext& ctx,
                               float scale, Vec2 origin, const SelectionInfo& sel,
                               Color selectionColor) const {
     const Block& block = *it.block;
@@ -1006,7 +1038,7 @@ void RichEdit::Impl::PaintItem(const Item& it, graphics::Painter& p, const Style
 // 缓存调度
 // ---------------------------------------------------------------------------
 
-void RichEdit::Impl::EnsureLayout(const StyleContext& ctx, float width) {
+void RichEditor::Impl::EnsureLayout(const StyleContext& ctx, float width) {
     lastCtx = ctx;
 
     const float base = doc.defaultFontSize > 0.f ? doc.defaultFontSize : ctx.fontSize;
@@ -1031,11 +1063,11 @@ void RichEdit::Impl::EnsureLayout(const StyleContext& ctx, float width) {
     laidOut = true;
 }
 
-void RichEdit::Impl::Rebuild() {
+void RichEditor::Impl::Rebuild() {
     RebuildAt(layoutWidth);
 }
 
-void RichEdit::Impl::RebuildAt(float width) {
+void RichEditor::Impl::RebuildAt(float width) {
     laidOut = false;
     linesDirty = true;
     EnsureLayout(lastCtx, width);
@@ -1051,7 +1083,7 @@ void RichEdit::Impl::RebuildAt(float width) {
 //  App 层每帧同步上传）。失败记空句柄负缓存，绘制退回占位框。
 // ---------------------------------------------------------------------------
 
-const graphics::ImageTexture* RichEdit::Impl::ImageOf(const Block& block) const {
+const graphics::ImageTexture* RichEditor::Impl::ImageOf(const Block& block) const {
     const String& src = block.src;
     if (src.empty()) return nullptr;
 
@@ -1087,13 +1119,16 @@ const graphics::ImageTexture* RichEdit::Impl::ImageOf(const Block& block) const 
 // 图片定位点：光标可停在图片上，Del/Backspace 删除图片
 // ---------------------------------------------------------------------------
 
-bool RichEdit::Impl::IsImageAt(size_t index) const {
+bool RichEditor::Impl::IsImageAt(size_t index) const {
     return index < editables.size() && editables[index].block->kind == BlockKind::Image;
 }
 
-// 删除指定下标的图片块。光标落回原下标：重建后即图片原位置的下一个块起点，
-// 图片在末尾时 clamp 成前一个块末尾
-bool RichEdit::Impl::EraseImageAt(size_t index) {
+// 删除指定下标的图片块。光标落在图片原来的位置：
+//   · 后面还有可编辑块 → 该块开头（图片就在它前面）
+//   · 后面没有（图片是最后一个可编辑块）→ 前一个可编辑块的**末尾**
+//     不能落前一块开头：那会把光标从图片处拽回上一块行首，多行代码块尤其突兀
+//     （示例文档里图片紧跟在代码块之后，删图后光标应停在代码最后一行末）
+bool RichEditor::Impl::EraseImageAt(size_t index) {
     Block* image = editables[index].block;
     Spot spot{};
     if (!FindSpot(image, spot)) return false;
@@ -1101,20 +1136,36 @@ bool RichEdit::Impl::EraseImageAt(size_t index) {
     spot.container->erase(spot.container->begin() + static_cast<ptrdiff_t>(spot.index));
     ++version;
     Rebuild();
-    caret = anchor = ClampToDoc(Cursor{index, 0});
+    if (index < editables.size()) {
+        caret = anchor = ClampToDoc(Cursor{index, 0});
+    } else if (index > 0) {
+        caret = anchor = EndCursor(index - 1);
+    } else {
+        caret = anchor = ClampToDoc(Cursor{0, 0});
+    }
     caretVisible = true;
     return true;
 }
 
-// 光标在图片上而后续操作需要文本块（输入 / 回车 / 粘贴）时，把光标挪到最近的
-// 文本块（先向后找起点，再向前找末尾）；找不到返回 false
-bool RichEdit::Impl::LeaveImageToText() {
+// 光标在图片上而后续操作需要文本块（输入 / 回车 / 粘贴）时，把光标挪到文本块：
+// 图后 → 后面最近的文本块开头（没有则退到前面文本块末尾）；
+// 图前 → 前面最近的文本块末尾（没有则落到后面文本块开头）。
+bool RichEditor::Impl::LeaveImageToText() {
     if (!IsImageAt(caret.block)) return true;
-    for (size_t i = caret.block + 1; i < editables.size(); ++i) {
-        if (!IsImageAt(i)) { caret = anchor = Cursor{i, 0}; return true; }
+    if (caret.offset > 0) {
+        for (size_t i = caret.block + 1; i < editables.size(); ++i) {
+            if (!IsImageAt(i)) { caret = anchor = Cursor{i, 0}; return true; }
+        }
+        for (size_t i = caret.block; i-- > 0;) {
+            if (!IsImageAt(i)) { caret = anchor = EndCursor(i); return true; }
+        }
+        return false;
     }
     for (size_t i = caret.block; i-- > 0;) {
         if (!IsImageAt(i)) { caret = anchor = EndCursor(i); return true; }
+    }
+    for (size_t i = caret.block + 1; i < editables.size(); ++i) {
+        if (!IsImageAt(i)) { caret = anchor = Cursor{i, 0}; return true; }
     }
     return false;
 }
@@ -1123,7 +1174,7 @@ bool RichEdit::Impl::LeaveImageToText() {
 // 光标 / 选区
 // ---------------------------------------------------------------------------
 
-void RichEdit::Impl::SetCaret(Cursor c, bool extend) {
+void RichEditor::Impl::SetCaret(Cursor c, bool extend) {
     caret = ClampToDoc(c);
     if (!extend) anchor = caret;
     caretVisible = true;
@@ -1131,19 +1182,37 @@ void RichEdit::Impl::SetCaret(Cursor c, bool extend) {
     lastEditTyping = false;
 }
 
-void RichEdit::Impl::MoveHorz(int dir, bool extend) {
+void RichEditor::Impl::MoveHorz(int dir, bool extend) {
     if (editables.empty()) return;
     Cursor c = ClampToDoc(caret);
+    const bool image = IsImageAt(c.block);
     const String& text = editables[c.block].item->text;
     if (dir < 0) {
-        if (c.offset == 0) {
+        if (image) {
+            // 图片两个光标位：图后 → 图前；图前 → 上一块末尾（上一块是图片则落在图后）
+            if (c.offset > 0) {
+                c.offset = 0;
+            } else {
+                if (c.block == 0) return;
+                c = EndCursor(c.block - 1);
+            }
+        } else if (c.offset == 0) {
             if (c.block == 0) return;
             c = EndCursor(c.block - 1);
         } else {
             c.offset = NextIndex(text, c.offset, -1);
         }
     } else {
-        if (c.offset >= text.size()) {
+        if (image) {
+            // 图前 → 图后；图后 → 下一块开头
+            if (c.offset == 0) {
+                c.offset = 1;
+            } else {
+                if (c.block + 1 >= editables.size()) return;
+                c.block += 1;
+                c.offset = 0;
+            }
+        } else if (c.offset >= text.size()) {
             if (c.block + 1 >= editables.size()) return;
             c.block += 1;
             c.offset = 0;
@@ -1154,7 +1223,7 @@ void RichEdit::Impl::MoveHorz(int dir, bool extend) {
     SetCaret(c, extend);
 }
 
-void RichEdit::Impl::MoveVertical(int dir, bool extend) {
+void RichEditor::Impl::MoveVertical(int dir, bool extend) {
     EnsureLines();
     if (lines.empty()) return;
 
@@ -1194,7 +1263,7 @@ void RichEdit::Impl::MoveVertical(int dir, bool extend) {
     lastEditTyping = false;
 }
 
-void RichEdit::Impl::MoveLineEdge(bool toEnd, bool extend, bool whole) {
+void RichEditor::Impl::MoveLineEdge(bool toEnd, bool extend, bool whole) {
     Cursor c;
     if (editables.empty()) {
         c = Cursor{};
@@ -1214,7 +1283,7 @@ void RichEdit::Impl::MoveLineEdge(bool toEnd, bool extend, bool whole) {
     SetCaret(c, extend);
 }
 
-void RichEdit::Impl::SelectAll() {
+void RichEditor::Impl::SelectAll() {
     if (editables.empty()) {
         caret = Cursor{};
         anchor = caret;
@@ -1230,7 +1299,7 @@ void RichEdit::Impl::SelectAll() {
 // 编辑：文本增删
 // ---------------------------------------------------------------------------
 
-void RichEdit::Impl::PushUndo(bool typing) {
+void RichEditor::Impl::PushUndo(bool typing) {
     // 连续输入合并成一步：上一条也是输入且栈非空时不重复快照
     if (typing && lastEditTyping && !undo.empty()) return;
 
@@ -1244,7 +1313,7 @@ void RichEdit::Impl::PushUndo(bool typing) {
     lastEditTyping = typing;
 }
 
-bool RichEdit::Impl::Undo() {
+bool RichEditor::Impl::Undo() {
     if (undo.empty()) return false;
     Snapshot current;
     current.doc = doc;
@@ -1259,7 +1328,7 @@ bool RichEdit::Impl::Undo() {
     return true;
 }
 
-bool RichEdit::Impl::Redo() {
+bool RichEditor::Impl::Redo() {
     if (redo.empty()) return false;
     Snapshot current;
     current.doc = doc;
@@ -1274,7 +1343,7 @@ bool RichEdit::Impl::Redo() {
     return true;
 }
 
-void RichEdit::Impl::Restore(const Snapshot& s) {
+void RichEditor::Impl::Restore(const Snapshot& s) {
     const float width = layoutWidth;
     Discard(false);           // 文本全变，段落不可复用
     doc = s.doc;
@@ -1285,7 +1354,7 @@ void RichEdit::Impl::Restore(const Snapshot& s) {
     caretVisible = true;
 }
 
-bool RichEdit::Impl::InsertTyped(const String& typed) {
+bool RichEditor::Impl::InsertTyped(const String& typed) {
     if (typed.empty()) return false;
 
     if (editables.empty()) {   // 空文档：先造一个空段落
@@ -1317,7 +1386,7 @@ bool RichEdit::Impl::InsertTyped(const String& typed) {
     return true;
 }
 
-bool RichEdit::Impl::DeleteBackward() {
+bool RichEditor::Impl::DeleteBackward() {
     if (editables.empty()) return false;
 
     if (HasSelection()) {
@@ -1343,6 +1412,10 @@ bool RichEdit::Impl::DeleteBackward() {
     if (c.block == 0) return false;
     if (IsImageAt(c.block - 1)) return EraseImageAt(c.block - 1);   // 段首退格删前邻图片
 
+    // 代码块：块边界不与邻块合并（代码不与正文混排）
+    if (editables[c.block].block->kind == BlockKind::Code) return false;
+    if (editables[c.block - 1].block->kind == BlockKind::Code) return false;
+
     // 段首：与上一块合并（要求同容器且相邻）
     Block* current = editables[c.block].block;
     Block* previous = editables[c.block - 1].block;
@@ -1364,7 +1437,7 @@ bool RichEdit::Impl::DeleteBackward() {
     return true;
 }
 
-bool RichEdit::Impl::DeleteForward() {
+bool RichEditor::Impl::DeleteForward() {
     if (editables.empty()) return false;
 
     if (HasSelection()) {
@@ -1374,7 +1447,8 @@ bool RichEdit::Impl::DeleteForward() {
     }
 
     const Cursor c = ClampToDoc(caret);
-    if (IsImageAt(c.block)) return EraseImageAt(c.block);
+    // 图前（offset 0）：Del 删掉身后的图片；图后（offset 1）：图片已在身后，改删下一块
+    if (IsImageAt(c.block) && c.offset == 0) return EraseImageAt(c.block);
     const String text = editables[c.block].item->text;
     if (c.offset < text.size()) {
         const uint32_t to = NextIndex(text, c.offset, 1);
@@ -1389,6 +1463,10 @@ bool RichEdit::Impl::DeleteForward() {
 
     if (c.block + 1 >= editables.size()) return false;
     if (IsImageAt(c.block + 1)) return EraseImageAt(c.block + 1);   // 段尾 Del 删后邻图片
+
+    // 代码块：块边界不与邻块合并（代码不与正文混排）
+    if (editables[c.block].block->kind == BlockKind::Code) return false;
+    if (editables[c.block + 1].block->kind == BlockKind::Code) return false;
 
     Block* current = editables[c.block].block;
     Block* next = editables[c.block + 1].block;
@@ -1409,7 +1487,7 @@ bool RichEdit::Impl::DeleteForward() {
     return true;
 }
 
-bool RichEdit::Impl::InsertNewline() {
+bool RichEditor::Impl::InsertNewline() {
     if (editables.empty()) {
         PushUndo(false);
         Block paragraph;
@@ -1428,6 +1506,17 @@ bool RichEdit::Impl::InsertNewline() {
 
     const Cursor c = ClampToDoc(caret);
     Block* block = editables[c.block].block;
+
+    // 代码块：回车 = 块内换行（代码保留原始换行，不拆块）
+    if (block->kind == BlockKind::Code) {
+        richtext::InsertText(*block, c.offset, L"\n", RunStyle{});
+        ++version;
+        Rebuild();
+        caret = anchor = ClampToDoc(Cursor{c.block, c.offset + 1});
+        caretVisible = true;
+        return true;
+    }
+
     Spot spot{};
     if (!FindSpot(block, spot)) return false;
 
@@ -1610,7 +1699,7 @@ bool RichEdit::Impl::InsertNewline() {
     return true;
 }
 
-bool RichEdit::Impl::DeleteSelectionNoUndo() {
+bool RichEditor::Impl::DeleteSelectionNoUndo() {
     if (!HasSelection() || editables.empty()) return false;
 
     Cursor a = ClampToDoc(caret);
@@ -1652,6 +1741,7 @@ bool RichEdit::Impl::DeleteSelectionNoUndo() {
 
     // 4) 相邻两块同容器 → 合并（跨块删除的常见形态）。图片不参与合并：
     //    首块是图片（被选区完整覆盖）→ 直接删除；末块是图片（选区终点在其前）→ 保留
+    //    代码块也不参与合并（代码不与正文混排，各块内容各自清空）
     if (!sameBlock && b.block == a.block + 1) {
         Block* first = editables[a.block].block;
         Block* second = editables[b.block].block;
@@ -1663,6 +1753,7 @@ bool RichEdit::Impl::DeleteSelectionNoUndo() {
                                            static_cast<ptrdiff_t>(firstSpot.index));
             }
         } else if (second->kind != BlockKind::Image &&
+                   first->kind != BlockKind::Code && second->kind != BlockKind::Code &&
                    FindSpot(first, firstSpot) && FindSpot(second, secondSpot) &&
                    firstSpot.container == secondSpot.container &&
                    secondSpot.index == firstSpot.index + 1) {
@@ -1683,7 +1774,7 @@ bool RichEdit::Impl::DeleteSelectionNoUndo() {
 // 编辑：剪贴板
 // ---------------------------------------------------------------------------
 
-String RichEdit::Impl::SelectedText() const {
+String RichEditor::Impl::SelectedText() const {
     if (!HasSelection() || editables.empty()) return String();
 
     Cursor a = ClampToDoc(caret);
@@ -1702,12 +1793,12 @@ String RichEdit::Impl::SelectedText() const {
     return out;
 }
 
-void RichEdit::Impl::CopySelection() const {
+void RichEditor::Impl::CopySelection() const {
     if (!HasSelection()) return;
     Clipboard::WriteText(SelectedText());
 }
 
-bool RichEdit::Impl::CutSelection() {
+bool RichEditor::Impl::CutSelection() {
     if (!HasSelection()) return false;
     Clipboard::WriteText(SelectedText());
     PushUndo(false);
@@ -1715,7 +1806,7 @@ bool RichEdit::Impl::CutSelection() {
     return true;
 }
 
-bool RichEdit::Impl::PasteClipboard() {
+bool RichEditor::Impl::PasteClipboard() {
     String raw;
     if (!Clipboard::ReadText(raw) || raw.empty()) return false;
 
@@ -1747,6 +1838,17 @@ bool RichEdit::Impl::PasteClipboard() {
     if (!LeaveImageToText()) return false;
 
     const Cursor c = ClampToDoc(caret);
+
+    // 代码块：整段粘贴（保留换行），不拆成段落
+    if (editables[c.block].block->kind == BlockKind::Code) {
+        richtext::InsertText(*editables[c.block].block, c.offset, text, RunStyle{});
+        ++version;
+        Rebuild();
+        caret = anchor = ClampToDoc(Cursor{c.block, c.offset + static_cast<uint32_t>(text.size())});
+        caretVisible = true;
+        return true;
+    }
+
     const RunStyle style = richtext::StyleAt(*editables[c.block].block, c.offset);
 
     std::vector<String> segments;
@@ -1798,7 +1900,7 @@ bool RichEdit::Impl::PasteClipboard() {
 // 文档树定位
 // ---------------------------------------------------------------------------
 
-bool RichEdit::Impl::FindSpotRec(std::vector<Block>& vec, Block* target, Block* ownerList,
+bool RichEditor::Impl::FindSpotRec(std::vector<Block>& vec, Block* target, Block* ownerList,
                                  Spot& out) {
     for (size_t i = 0; i < vec.size(); ++i) {
         Block& block = vec[i];
@@ -1817,7 +1919,7 @@ bool RichEdit::Impl::FindSpotRec(std::vector<Block>& vec, Block* target, Block* 
     return false;
 }
 
-bool RichEdit::Impl::FindSpot(Block* target, Spot& out) {
+bool RichEditor::Impl::FindSpot(Block* target, Spot& out) {
     out = Spot{};
     return target != nullptr && FindSpotRec(doc.blocks, target, nullptr, out);
 }
@@ -1826,7 +1928,7 @@ bool RichEdit::Impl::FindSpot(Block* target, Spot& out) {
 // 按键分派
 // ---------------------------------------------------------------------------
 
-RichEdit::Impl::KeyResult RichEdit::Impl::HandleKey(int key, bool shift, bool ctrl) {
+RichEditor::Impl::KeyResult RichEditor::Impl::HandleKey(int key, bool shift, bool ctrl) {
     switch (key) {
     case VK_LEFT:   MoveHorz(-1, shift);       return KeyResult::Handled;
     case VK_RIGHT:  MoveHorz(1, shift);        return KeyResult::Handled;
@@ -1854,18 +1956,18 @@ RichEdit::Impl::KeyResult RichEdit::Impl::HandleKey(int key, bool shift, bool ct
 }
 
 // ---------------------------------------------------------------------------
-// RichEdit
+// RichEditor
 // ---------------------------------------------------------------------------
 
-RichEdit::RichEdit() : impl_(std::make_unique<Impl>()) {
+RichEditor::RichEditor() : impl_(std::make_unique<Impl>()) {
     SetFocusable(true);
 }
 
-RichEdit::~RichEdit() {
+RichEditor::~RichEditor() {
     if (impl_) impl_->Discard(false);
 }
 
-void RichEdit::SetDoc(const richtext::RichDoc& doc) {
+void RichEditor::SetDoc(const richtext::RichDoc& doc) {
     impl_->Discard(false);     // 旧 layout 先丢：Item 里的 Block* 随即失效
     impl_->doc = doc;
     impl_->undo.clear();
@@ -1877,15 +1979,15 @@ void RichEdit::SetDoc(const richtext::RichDoc& doc) {
     MarkDirty(kFlagLayout | kFlagPaint);
 }
 
-const richtext::RichDoc& RichEdit::Doc() const noexcept {
+const richtext::RichDoc& RichEditor::Doc() const noexcept {
     return impl_->doc;
 }
 
-float RichEdit::ContentHeight() const noexcept {
+float RichEditor::ContentHeight() const noexcept {
     return impl_->contentSize.y;
 }
 
-void RichEdit::SetEditable(bool on) {
+void RichEditor::SetEditable(bool on) {
     editable_ = on;
     SetFocusable(on);
     if (!on) {
@@ -1896,17 +1998,17 @@ void RichEdit::SetEditable(bool on) {
     MarkDirty(kFlagPaint);
 }
 
-bool RichEdit::HasSelection() const noexcept {
+bool RichEditor::HasSelection() const noexcept {
     return impl_->HasSelection();
 }
 
-Vec2 RichEdit::ContentOrigin() const {
+Vec2 RichEditor::ContentOrigin() const {
     const Thickness pad = ValueAsThickness(ResolveProperty(this, Prop::Padding));
     const Rect box = Bounds();
     return Vec2{box.x + pad.left, box.y + pad.top};
 }
 
-Vec2 RichEdit::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) const {
+Vec2 RichEditor::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) const {
     float width = contentAvail.x;
     if (width <= 0.f) {
         // 无宽度约束（Row 里的自适应）：沿用上次排好的宽度，其次用实际盒宽
@@ -1917,7 +2019,7 @@ Vec2 RichEdit::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail)
     return impl_->contentSize;
 }
 
-void RichEdit::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) {
+void RichEditor::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) {
     const Thickness pad = ValueAsThickness(ResolveProperty(this, Prop::Padding, ctx));
     const Rect box = Bounds();
     const float width = box.w - pad.left - pad.right;
@@ -1933,7 +2035,7 @@ void RichEdit::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scal
                  selectionColor);
 }
 
-bool RichEdit::ContentClipRect(Rect& out) const {
+bool RichEditor::ContentClipRect(Rect& out) const {
     if (!impl_->overflowX) return false;   // 常规情况不加裁剪单元（省一次绘制切换）
     const Thickness pad = ValueAsThickness(ResolveProperty(this, Prop::Padding));
     out = Rect{ContentOrigin().x, ContentOrigin().y,
@@ -1942,14 +2044,14 @@ bool RichEdit::ContentClipRect(Rect& out) const {
     return true;
 }
 
-void RichEdit::OnFocusChanged(bool focused) {
+void RichEditor::OnFocusChanged(bool focused) {
     (void)focused;
     impl_->caretVisible = true;
     if (!focused) impl_->dragging = false;
     MarkDirty(kFlagPaint);
 }
 
-bool RichEdit::OnBlink() {
+bool RichEditor::OnBlink() {
     if (!HasFocus()) {
         impl_->caretVisible = true;
         return false;
@@ -1959,7 +2061,7 @@ bool RichEdit::OnBlink() {
     return true;
 }
 
-bool RichEdit::InsertionPoint(Rect& outRect) const {
+bool RichEditor::InsertionPoint(Rect& outRect) const {
     Rect doc;
     if (!impl_->CaretRectOf(impl_->caret, doc)) return false;
 
@@ -1978,7 +2080,7 @@ bool RichEdit::InsertionPoint(Rect& outRect) const {
     return true;
 }
 
-bool RichEdit::HandlePointerDown(PointerEvent& ev) {
+bool RichEditor::HandlePointerDown(PointerEvent& ev) {
     if (!editable_) return false;
     Focus();
     const Vec2 origin = ContentOrigin();
@@ -1989,7 +2091,7 @@ bool RichEdit::HandlePointerDown(PointerEvent& ev) {
     return true;
 }
 
-bool RichEdit::HandlePointerMove(PointerEvent& ev) {
+bool RichEditor::HandlePointerMove(PointerEvent& ev) {
     if (!editable_ || !impl_->dragging) return false;
     const Vec2 origin = ContentOrigin();
     impl_->SetCaret(impl_->HitTestDoc(Vec2{ev.pos.x - origin.x, ev.pos.y - origin.y}), true);
@@ -1997,7 +2099,7 @@ bool RichEdit::HandlePointerMove(PointerEvent& ev) {
     return true;
 }
 
-bool RichEdit::HandlePointerUp(PointerEvent& ev) {
+bool RichEditor::HandlePointerUp(PointerEvent& ev) {
     (void)ev;
     if (!impl_->dragging) return false;
     impl_->dragging = false;
@@ -2005,7 +2107,7 @@ bool RichEdit::HandlePointerUp(PointerEvent& ev) {
     return false;
 }
 
-bool RichEdit::HandleKeyDown(KeyEvent& ev) {
+bool RichEditor::HandleKeyDown(KeyEvent& ev) {
     if (!editable_) return false;
 
     const Impl::KeyResult result = impl_->HandleKey(ev.key, ev.shift, ev.ctrl);
@@ -2019,7 +2121,7 @@ bool RichEdit::HandleKeyDown(KeyEvent& ev) {
     return true;
 }
 
-bool RichEdit::HandleChar(KeyEvent& ev) {
+bool RichEditor::HandleChar(KeyEvent& ev) {
     if (!editable_ || ev.ctrl || ev.alt) return false;
 
     const wchar_t ch = ev.ch;
@@ -2033,7 +2135,7 @@ bool RichEdit::HandleChar(KeyEvent& ev) {
     return true;
 }
 
-void RichEdit::RevealCaret() {
+void RichEditor::RevealCaret() {
     Scroller* scroller = FindScroller(this);
     if (scroller == nullptr) return;
 

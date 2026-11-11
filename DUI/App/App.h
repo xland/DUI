@@ -22,19 +22,19 @@
 
 // winuser.h 在 UNICODE 下把 MessageBox 定义成 MessageBoxW；公共头引入 Win32 头后
 // 必须清掉该宏，否则 Window::MessageBox 声明会被替换成 MessageBoxW，与下面的
-// 兼容别名重复。App/Dialog.h 里另有一处同样的兜底（应对业务先包含 windows.h）。
+// 兼容别名重复。App/Dialog.h 末尾另有一处同样的兜底（应对业务先包含 windows.h）。
 #ifdef MessageBox
 #undef MessageBox
 #endif
 
 #include "Core/Dispatcher.h"
-#include "Core/Dialog.h"
-#include "Core/Menu.h"
+#include "App/Dialog.h"
+#include "App/Menu.h"
 #include "UI/UI.h"
 
 namespace dui {
 
-class NativeWindow;          // Core/Window.h：App/Frame.cpp 组装层使用（避免依赖内部头）
+class NativeWindow;          // App/Window.h：App/Frame.cpp 组装层使用（避免依赖内部头）
 namespace graphics {
 class Device;
 }
@@ -99,7 +99,7 @@ public:
     // 原生窗口句柄：OnCreate 起有效（此时 HWND 已建、窗口尚未显示）。
     HWND NativeHandle() const noexcept;
 
-    // ---- 系统原生弹出菜单（Core/Menu.h）------------------------------------
+    // ---- 系统原生弹出菜单（App/Menu.h）------------------------------------
     // 同步模态：菜单弹出期间框架主消息循环挂起，返回后执行选中项回调。
     // 不传位置 → 弹在当前鼠标位置；posDip 为客户区 DIP 坐标。
     // 框架不自动挂钩右键：何时弹出由业务决定（如 OnPointerUp 里判断
@@ -146,7 +146,7 @@ private:
 
     WindowOptions options_;
     float scale_ = 1.f;
-    void* native_ = nullptr;           // NativeWindow*（Core 窗口壳服务对象）
+    void* native_ = nullptr;           // NativeWindow*（App 层窗口壳对象）
     std::unique_ptr<Panel> root_;
     uintptr_t tickTimer_ = 0;          // UI 统一节拍定时器（0 = 未启动）
     unsigned  tickPeriodMs_ = 0;       // 当前周期（变化时才重设 SetTimer）

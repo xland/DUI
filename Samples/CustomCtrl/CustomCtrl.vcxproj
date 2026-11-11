@@ -54,8 +54,8 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <!-- 公共头文件入口：以 #include "DUI/DUI.h" 使用；
-           自绘控件需要 graphics::Painter 完整类型，故额外暴露框架内部头目录 -->
-      <AdditionalIncludeDirectories>$(SolutionDir);$(SolutionDir)DUI\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+           DUI.h 已聚合 Graphics 层，自绘控件可直接拿到 graphics::Painter 完整类型 -->
+      <AdditionalIncludeDirectories>$(SolutionDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions Condition="'$(Configuration)'=='Debug'">_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)'=='Release'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>

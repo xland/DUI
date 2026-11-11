@@ -1,5 +1,5 @@
 // ============================================================================
-//  DUI/RichText/CssValue.h — CSS 值白名单解析（文档数据 → 强类型）
+//  DUI/UI/CssValue.h — CSS 值白名单解析（文档数据 → 强类型）
 //
 //  框架内部尺寸一律是不带单位的 float DIP，没有 px/em/% 单位系统，
 //  因此富文本 JSON 里的 CSS 字符串必须在这一层落地（RichEditor.md §3.3）。
@@ -11,7 +11,7 @@
 #pragma once
 
 #include "Core/Core.h"
-#include "RichText/RichDoc.h"
+#include "UI/RichDoc.h"
 
 namespace dui {
 namespace richtext {

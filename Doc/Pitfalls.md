@@ -72,6 +72,8 @@
 ### 2.9 命令行 msbuild 的 LNK4020 / IPDB 损坏（M5.10）
 `/MP` + `/Zi` 缺 `/FS`。命令行加 `-p:UseMultiToolTask=true`（等价 VS 内构建）；`-p:AdditionalOptions=/FS` **无效**（全局属性进不了 ClCompile 项元数据）。也不要用 `-p:OutDir=...` 覆盖构建（obj/pdb 写散 → IPDB/IOBJ mismatch）。
 
+补充（2026-11-11）：**LNK4020「xxx.pdb 中的类型记录已损坏」是辅助警告**——MS 文档明确它是其它生成问题的伴随现象：先修真正的错误/警告，清空 Build 目录重编通常即可消除；并行构建时"库工程正在重写 PDB、示例链接步骤同时读旧类型流"也会触发。产物（exe）本身不受影响，只影响调试器里部分符号/类型的显示。
+
 ### 2.10 颜色约定 0xAARRGGBB（M5.10）
 低字节 R、高字节 A。`0xFF000000` 是不透明黑不是白；白色写 `0xFFFFFFFF`。
 
@@ -122,14 +124,16 @@ DirectWrite 仅支持 ttf/otf/ttc；woff/woff2 需先转 ttf。`Shape` 里族名
 ### 4.5 公共头边界
 ~~`DUI.h` 与 UI 层公共头不得引入 windows.h~~ **约束已取消**（2026-11-11）：公共头允许 windows.h（M5.27 起已实际引入）；d3d11 / dwrite 等重图形头仍只随实现层头出现。功能类能力归 Core 且允许直接用系统 API —— 剪贴板在 `Core/Clipboard`（原「App 层注入 UI 函数指针」方案废除）。import lib 用 `#pragma comment(lib)` 随编译单元携带，不动 `DUI.props`。
 
+**d3d11.h 不能进公共头**（2026-11-11 实测）：`d3d11.h` 第 26-27 行 `#include "rpc.h"` / `#include "rpcndr.h"`，而 `rpcndr.h:201` 是 `#define small char` → 业务代码里任何叫 `small` 的标识符会被改写成 `char`（`Samples/Image` 的 `dui::Svg* small` 变成 `dui::Svg* char` → C2062「意外的类型 char」）。这类 MIDL 遗留宏**无法靠事后 `#undef` 补救**（无法预知用户代码用了哪些名字），只能从源头隔离：D3D 设备 `Device` 拆到内部头 `Graphics/Device.h`，公共的 `Graphics/Graphics.h` 只留 Painter / 顶点指令 / TextureStore（纯 C++，无 windows.h）。
+
 ### 4.6 API 冻结的执行方式（M4 教训）
 公共 API 未设计的能力（如事件 Phase）不能私自实现——先改示例与文档，再动实现。M4 曾因此推迟隧道阶段，M6 随 `dui::Phase::Tunnel` 设计落地。
 
 ### 4.7 `MessageBox` 与 Win32 同名宏（M7）
-`winuser.h`（UNICODE）定义 `#define MessageBox MessageBoxW`。成员方法 `Window::MessageBox` 若直接声明：含 `windows.h` 的 TU 会把声明/调用替换成 `MessageBoxW`，不含的 TU 仍是 `MessageBox` → 跨 TU 符号不一致（LNK2019 / ODR）。修法：`App.h` 顶部与 `Core/Dialog.h` 末尾各 `#undef MessageBox`，`App/Dialog.cpp` 在全部 include 后再 `#undef` 一次；另给 `Window::MessageBoxW` 兼容别名（业务不主动调用），兜住「DUI.h 先、windows.h 后」的包含顺序。副作用：含 `DUI.h` 后调 Win32 原生弹窗要写 `::MessageBoxW`。`Samples/Dialog/MacroCompat.cpp` 是两种顺序的编译期守卫。
+`winuser.h`（UNICODE）定义 `#define MessageBox MessageBoxW`。成员方法 `Window::MessageBox` 若直接声明：含 `windows.h` 的 TU 会把声明/调用替换成 `MessageBoxW`，不含的 TU 仍是 `MessageBox` → 跨 TU 符号不一致（LNK2019 / ODR）。修法：`App.h` 顶部与 `App/Dialog.h` 末尾各 `#undef MessageBox`，`App/Dialog.cpp` 在全部 include 后再 `#undef` 一次；另给 `Window::MessageBoxW` 兼容别名（业务不主动调用），兜住「DUI.h 先、windows.h 后」的包含顺序。副作用：含 `DUI.h` 后调 Win32 原生弹窗要写 `::MessageBoxW`。`Samples/Dialog/MacroCompat.cpp` 是两种顺序的编译期守卫。
 
 ### 4.8 同工程内同名 .cpp 的 obj 冲突（M7）
-`App/Dialog.cpp` 与 `Core/Dialog.cpp` 同一库工程里同名 → MSB8027「两个或更多文件将生成到同一位置的输出」。修法：在 `DUI.vcxproj` 给后者加 `<ObjectFileName>$(IntDir)Core_Dialog.obj</ObjectFileName>`，不必改文件名；IntDir 按工程名隔离只能解决**跨工程**冲突，同工程仍会互踩。
+`App/Dialog.cpp` 与 `App/Dialog.cpp` 同一库工程里同名 → MSB8027「两个或更多文件将生成到同一位置的输出」。修法：在 `DUI.vcxproj` 给后者加 `<ObjectFileName>$(IntDir)Core_Dialog.obj</ObjectFileName>`，不必改文件名；IntDir 按工程名隔离只能解决**跨工程**冲突，同工程仍会互踩。（2026-11-11 两文件已合并为单个 `App/Dialog.cpp`，该特例随之取消。）
 
 ### 4.9 单行注释行尾反斜杠吞掉下一行（M7）
 `...;  // C:\` 结尾的 `\` 触发行继续（C4010），下一行也被当成注释 → 紧随其后的变量声明消失（C2065 未声明标识符）。注释不要以反斜杠结尾，改成文字描述。
@@ -142,6 +146,10 @@ DirectWrite 仅支持 ttf/otf/ttc；woff/woff2 需先转 ttf。`Shape` 里族名
 - UI 线程 COM **必须 STA**（`Application::Run` 用 `OleInitialize` 建立，见 ADR-027）；MTA 下 `Show()` 死锁，详见 §4.11。
 
 ### 4.11 Common Item Dialog 在 MTA 下死锁（M7.1，实测）
-现象：`Samples/Dialog` 点击「打开文件…/保存文件…/选择文件夹…」后进程 Not Responding，且枚举不到任何对话框窗口（卡在 `IFileDialog::Show` 内部）；`MessageBoxW` 完全正常。根因：UI 线程被 `CoInitializeEx(COINIT_MULTITHREADED)` 建成 MTA，Common Item Dialog / Shell 扩展按 STA 假设工作。修法：`Application::Run` 起始 `OleInitialize(nullptr)`（必须早于 WIC 的 MTA 初始化），`Core/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验。
+现象：`Samples/Dialog` 点击「打开文件…/保存文件…/选择文件夹…」后进程 Not Responding，且枚举不到任何对话框窗口（卡在 `IFileDialog::Show` 内部）；`MessageBoxW` 完全正常。根因：UI 线程被 `CoInitializeEx(COINIT_MULTITHREADED)` 建成 MTA，Common Item Dialog / Shell 扩展按 STA 假设工作。修法：`Application::Run` 起始 `OleInitialize(nullptr)`（必须早于 WIC 的 MTA 初始化），`App/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验。
 **二次踩坑**：`OleInitialize` 得到的是 **main STA（`APTTYPE_MAINSTA`）**，只判断 `APTTYPE_STA` 会把合法单元误判成错误 → 弹窗静默不出现、但进程响应正常（比死锁更难发现）。必须同时放行 `APTTYPE_STA` / `APTTYPE_MAINSTA`。
 诊断手法：自动 `PostMessage` 注入点击 → `EnumWindows` 按 PID 找 `#32770` + `Get-Process.Responding`；能区分「弹窗没开」「卡在 Show」「关闭后没回主循环」三种情况。
+
+### 4.12 入口函数的 SAL 批注要与 SDK 声明一致（C28251，2026-11-11）
+SDK 的 `winbase.h:1075` 给 `wWinMain` 的声明加了 SAL 批注（`_In_ HINSTANCE` / `_In_opt_ HINSTANCE` / `_In_ LPWSTR` / `_In_ int`）。示例若只写 `int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)`，VS 的**实时代码分析**（/analyze）会报 **C28251**「"wWinMain" 的批注不一致: 此实例包含 无批注」——注意它**不是编译器警告**：命令行 msbuild（未开 /analyze）不报，只在 IDE 的错误列表里冒出来，容易被误当成构建失败。
+修法：定义处照抄 SDK 的批注 —— `int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int)`（19 个示例统一改）。批注不影响代码生成，纯粹是消除分析噪音。

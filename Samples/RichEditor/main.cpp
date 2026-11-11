@@ -1,7 +1,7 @@
 // ============================================================================
-//  RichEditor/main.cpp — P1 + P2 验收示例：JSON → RichDoc → RichEdit 渲染
+//  RichEditor/main.cpp — P1 + P2 验收示例：JSON → RichDoc → RichEditor 渲染
 //
-//  Scroller > 白纸 Panel > RichEdit（块级排版 + 行内 run；图片为占位框）
+//  Scroller > 白纸 Panel > RichEditor（块级排版 + 行内 run；图片为占位框）
 //  样本 JSON 内嵌在下方，覆盖 RichEditor.md §2 的全部块与行内形态。
 // ============================================================================
 
@@ -133,14 +133,14 @@ protected:
         dui::Panel* sheet = page->AddChild<dui::Panel>(dui::Style()
             .Padding(dui::Thickness(28.f, 24.f, 28.f, 36.f))
             .Background(0xFFFFFFFF));
-        dui::RichEdit* view = sheet->AddChild<dui::RichEdit>();
+        dui::RichEditor* view = sheet->AddChild<dui::RichEditor>();
         view->SetDoc(doc);
     }
 };
 
 }  // namespace
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int) {
     dui::Application app;
     RichEditorWindow window;
     return app.Run(window);

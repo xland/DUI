@@ -1,8 +1,8 @@
 // ============================================================================
-//  DUI/Text/GlyphAtlas.cpp — 图集放置 / LRU 淘汰 / 整页释放
+//  DUI/Graphics/GlyphAtlas.cpp — 图集放置 / LRU 淘汰 / 整页释放
 // ============================================================================
 
-#include "Text/GlyphAtlas.h"
+#include "Graphics/GlyphAtlas.h"
 
 #include <algorithm>
 #include <functional>

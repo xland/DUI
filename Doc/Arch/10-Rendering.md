@@ -56,7 +56,7 @@
 | --- | --- |
 | `Rect` / `RoundedRect` | 纯色或渐变填充；圆角在片元着色器内按 SDF 距离裁形（§6.2） |
 | `Shape` | 2D 图元：线段（胶囊）/ 椭圆 / 圆角矩形，填充与描边；SDF + fwidth AA，独立形状批（§6.1） |
-| `TextRun` | 字形实例（图集坐标 + 位置），来自 Text 层排版结果 |
+| `TextRun` | 字形实例（图集坐标 + 位置），来自文字排版层排版结果 |
 | `Image` | 图集/纹理引用 + 目标矩形 |
 | `PushClip` / `PopClip` | 矩形 / 圆角矩形裁剪（栈式，与 `overflow` 联动） |
 | `PushLayer` / `PopLayer` | 离屏层：`opacity < 1` 的子树、带 `transform` 的子树 |

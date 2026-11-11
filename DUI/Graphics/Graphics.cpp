@@ -3,6 +3,7 @@
 // ============================================================================
 
 #include "Graphics/Graphics.h"
+#include "Graphics/Device.h"
 
 #include <algorithm>
 #include <cmath>

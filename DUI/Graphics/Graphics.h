@@ -1,24 +1,27 @@
 // ============================================================================
-//  DUI/Graphics/Graphics.h — D3D11 渲染设备与绘制指令收集
+//  DUI/Graphics/Graphics.h — 绘制指令收集与 CPU 侧资源（公共头，进 DUI.h）
 //
 //  M3：矩形 / 圆角矩形（SDF 片元裁形，10-Rendering §6.2）。
 //  对齐已定决策：ADR-001（D3D11 + DXGI）、ADR-013（BGRA8、预乘 Alpha、VSync）、
 //  10-Rendering D2（按需全量光栅）。
 //  B2 有序显示列表：Painter 记录指令 + 状态槽，Device::Render 按指令顺序
 //  流式发射顶点并按段提交（10-Rendering §6.1），单元内严格 painter's algorithm。
+//
+//  公共面：Painter（自绘控件的绘制接口）+ 顶点/指令结构 + TextureStore。
+//  D3D 设备（Device）依赖 d3d11.h，而该头经 rpcndr.h 引入 `#define small char`
+//  这类污染业务的宏 → Device 留在内部头 Graphics/Device.h，本头保持纯 C++。
 // ============================================================================
 #pragma once
 
-#include <windows.h>
-#include <d3d11.h>
-#include <dxgi1_2.h>
-#include <dcomp.h>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
 #include "Core/Core.h"
 
 namespace dui::graphics {
+
+class Device;   // Graphics/Device.h：App 层内部使用（D3D11 设备，公共头不暴露）
 
 // 顶点：物理像素空间；矩形参数供片元 SDF 求值（1 像素过渡带 AA，§9-3）
 struct Vertex {
@@ -148,91 +151,6 @@ private:
 struct DrawUnit {
     const Painter* painter = nullptr;
     Rect clipPx{};        // 物理像素裁剪矩形；w/h <= 0 表示整单元不绘制
-};
-
-class Device {
-public:
-    Device() = default;
-    ~Device();
-    Device(const Device&) = delete;
-    Device& operator=(const Device&) = delete;
-
-    // transparent = true → PREMULTIPLIED + 全透明清屏，背景可透视桌面（ADR-010）；
-    // 默认 false → IGNORE + 不透明清屏，视觉与普通窗口一致。
-    bool Init(HWND hwnd, bool transparent, String& error);
-
-    // 幂等：尺寸未变直接返回。DPI 变化与窗口缩放共用此入口（12-Windowing §5）
-    void Resize(const Vec2& clientPx);
-
-    Painter& GetPainter() noexcept { return painter_; }
-    // 清屏 + 按指令顺序发射顶点并提交（scale 用于 DIP → 物理像素换算）
-    void Render(const DrawUnit* units, uint32_t unitCount, float scale);
-    // 全时立即提交（ADR-013，2026-11 修订）：不等 vblank，主循环不阻塞在 VSync 上。
-    void Present();
-
-    // 字形图集页（R8）：创建或全量更新；页被 LRU 整页释放后调 Release
-    void UploadGlyphPage(uint32_t id, uint32_t w, uint32_t h, const uint8_t* bits);
-    void ReleaseGlyphPage(uint32_t id);
-
-    // 图像纹理（BGRA8）：创建或全量更新；控件释放纹理后由 TextureStore 调 Release
-    void UploadImage(uint32_t id, uint32_t w, uint32_t h, const uint8_t* bgra);
-    void ReleaseImage(uint32_t id);
-
-private:
-    bool CreateSizeDependent(const Vec2& clientPx, String& error);
-    void EnsureVertexBuffer(uint32_t vertexCount);
-    ID3D11ShaderResourceView* FindGlyphSrv(uint32_t id);
-    ID3D11ShaderResourceView* FindImageSrv(uint32_t id);
-
-    ID3D11Device*           dev_ = nullptr;
-    ID3D11DeviceContext*    ctx_ = nullptr;
-    IDXGISwapChain1*        swap_ = nullptr;
-    // DirectComposition 视觉树：所有窗口内容都经它交给 DWM 合成（ADR-010）
-    IDCompositionDevice*    dcompDevice_ = nullptr;
-    IDCompositionTarget*    dcompTarget_ = nullptr;
-    IDCompositionVisual*    dcompVisual_ = nullptr;
-    ID3D11RenderTargetView* rtv_ = nullptr;
-    ID3D11VertexShader*     vs_ = nullptr;
-    ID3D11PixelShader*      ps_ = nullptr;
-    ID3D11InputLayout*      layout_ = nullptr;
-    ID3D11Buffer*           vb_ = nullptr;
-    ID3D11Buffer*           ib_ = nullptr;
-    ID3D11Buffer*           cb_ = nullptr;
-    ID3D11BlendState*       blend_ = nullptr;
-    ID3D11RasterizerState*  raster_ = nullptr;
-    // 字形管线（图集采样批）
-    ID3D11VertexShader*     vsG_ = nullptr;
-    ID3D11PixelShader*      psG_ = nullptr;
-    ID3D11InputLayout*      layoutG_ = nullptr;
-    ID3D11SamplerState*     sampler_ = nullptr;
-    ID3D11BlendState*       blendGlyph_ = nullptr;   // 字形专用：dst 因子取 1 - 覆盖率（逐通道）
-    // 形状管线（SDF 图元批）
-    ID3D11VertexShader*     vsS_ = nullptr;
-    ID3D11PixelShader*      psS_ = nullptr;
-    ID3D11InputLayout*      layoutS_ = nullptr;
-    // 图像管线（彩色纹理采样批；顶点格式同字形批，复用 vsG_/layoutG_）
-    ID3D11PixelShader*      psI_ = nullptr;
-    ID3D11SamplerState*     samplerI_ = nullptr;   // 线性采样（图像缩放需平滑）
-    struct GlyphPageTex {
-        uint32_t id = 0;
-        ID3D11Texture2D* tex = nullptr;
-        ID3D11ShaderResourceView* srv = nullptr;
-    };
-    struct ImageTex {
-        uint32_t id = 0;
-        ID3D11Texture2D* tex = nullptr;
-        ID3D11ShaderResourceView* srv = nullptr;
-    };
-    std::vector<GlyphPageTex> pages_;
-    std::vector<ImageTex> images_;
-    // 发射期缓冲：段描述符 + 单元段范围前缀（单元 i 的段为 [first[i], first[i+1])）
-    std::vector<EmittedSegment> segments_;
-    std::vector<uint32_t> unitFirstSeg_;
-    uint32_t vbCapacity_ = 0;
-    bool     transparent_ = false;
-    float    width_ = 0.f;
-    float    height_ = 0.f;
-    Painter  painter_;
 };
 
 // ---------------------------------------------------------------------------

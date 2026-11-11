@@ -1,5 +1,5 @@
 // ============================================================================
-//  DUI/RichText/RichDocJson.h — JSON 文档 → RichDoc（RichEditor.md §2 形态）
+//  DUI/UI/RichDocJson.h — JSON 文档 → RichDoc（RichEditor.md §2 形态）
 //
 //  解析层次：JSON 语法（Core/Json）→ 结构（本节）→ 样式值白名单（CssValue）
 //
@@ -13,7 +13,7 @@
 #pragma once
 
 #include "Core/Core.h"
-#include "RichText/RichDoc.h"
+#include "UI/RichDoc.h"
 
 namespace dui {
 namespace richtext {

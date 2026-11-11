@@ -33,18 +33,6 @@
     <Filter Include="源文件\Graphics">
       <UniqueIdentifier>{a1b2c3d4-0009-4c8d-9e6a-2b5d8f10a3d0}</UniqueIdentifier>
     </Filter>
-    <Filter Include="头文件\Text">
-      <UniqueIdentifier>{a1b2c3d4-000a-4c8d-9e6a-2b5d8f10a3d1}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\Text">
-      <UniqueIdentifier>{a1b2c3d4-000b-4c8d-9e6a-2b5d8f10a3d2}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="头文件\RichText">
-      <UniqueIdentifier>{a1b2c3d4-000d-4c8d-9e6a-2b5d8f10a3d4}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\RichText">
-      <UniqueIdentifier>{a1b2c3d4-000e-4c8d-9e6a-2b5d8f10a3d5}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DUI.h">
@@ -104,20 +92,20 @@
     <ClInclude Include="UI\Svg.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
-    <ClInclude Include="UI\RichEdit.h">
+    <ClInclude Include="UI\RichEditor.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
     <ClInclude Include="App\App.h">
       <Filter>头文件\App</Filter>
     </ClInclude>
-    <ClInclude Include="Core\Window.h">
-      <Filter>头文件\Core</Filter>
+    <ClInclude Include="App\Window.h">
+      <Filter>头文件\App</Filter>
     </ClInclude>
-    <ClInclude Include="Core\Dialog.h">
-      <Filter>头文件\Core</Filter>
+    <ClInclude Include="App\Dialog.h">
+      <Filter>头文件\App</Filter>
     </ClInclude>
-    <ClInclude Include="Core\Menu.h">
-      <Filter>头文件\Core</Filter>
+    <ClInclude Include="App\Menu.h">
+      <Filter>头文件\App</Filter>
     </ClInclude>
     <ClInclude Include="Graphics\Graphics.h">
       <Filter>头文件\Graphics</Filter>
@@ -125,20 +113,26 @@
     <ClInclude Include="Graphics\ImageCodec.h">
       <Filter>头文件\Graphics</Filter>
     </ClInclude>
-    <ClInclude Include="Text\GlyphAtlas.h">
-      <Filter>头文件\Text</Filter>
+    <ClInclude Include="Graphics\Device.h">
+      <Filter>头文件\Graphics</Filter>
     </ClInclude>
-    <ClInclude Include="Text\TextEngine.h">
-      <Filter>头文件\Text</Filter>
+    <ClInclude Include="Graphics\GlyphAtlas.h">
+      <Filter>头文件\Graphics</Filter>
     </ClInclude>
-    <ClInclude Include="RichText\RichDoc.h">
-      <Filter>头文件\RichText</Filter>
+    <ClInclude Include="Graphics\TextEngine.h">
+      <Filter>头文件\Graphics</Filter>
     </ClInclude>
-    <ClInclude Include="RichText\CssValue.h">
-      <Filter>头文件\RichText</Filter>
+    <ClInclude Include="UI\RichDoc.h">
+      <Filter>头文件\UI</Filter>
     </ClInclude>
-    <ClInclude Include="RichText\RichDocJson.h">
-      <Filter>头文件\RichText</Filter>
+    <ClInclude Include="UI\RichDocEditor.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="UI\CssValue.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="UI\RichDocJson.h">
+      <Filter>头文件\UI</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -154,11 +148,11 @@
     <ClCompile Include="Core\Json.cpp">
       <Filter>源文件\Core</Filter>
     </ClCompile>
-    <ClCompile Include="Text\GlyphAtlas.cpp">
-      <Filter>源文件\Text</Filter>
+    <ClCompile Include="Graphics\GlyphAtlas.cpp">
+      <Filter>源文件\Graphics</Filter>
     </ClCompile>
-    <ClCompile Include="Text\TextEngine.cpp">
-      <Filter>源文件\Text</Filter>
+    <ClCompile Include="Graphics\TextEngine.cpp">
+      <Filter>源文件\Graphics</Filter>
     </ClCompile>
     <ClCompile Include="UI\Style.cpp">
       <Filter>源文件\UI</Filter>
@@ -190,7 +184,7 @@
     <ClCompile Include="UI\Svg.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
-    <ClCompile Include="UI\RichEdit.cpp">
+    <ClCompile Include="UI\RichEditor.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
     <ClCompile Include="UI\StyleResolve.cpp">
@@ -208,17 +202,14 @@
     <ClCompile Include="App\Dialog.cpp">
       <Filter>源文件\App</Filter>
     </ClCompile>
-    <ClCompile Include="Core\Menu.cpp">
-      <Filter>源文件\Core</Filter>
+    <ClCompile Include="App\Menu.cpp">
+      <Filter>源文件\App</Filter>
     </ClCompile>
     <ClCompile Include="App\Frame.cpp">
       <Filter>源文件\App</Filter>
     </ClCompile>
-    <ClCompile Include="Core\Window.cpp">
-      <Filter>源文件\Core</Filter>
-    </ClCompile>
-    <ClCompile Include="Core\Dialog.cpp">
-      <Filter>源文件\Core</Filter>
+    <ClCompile Include="App\Window.cpp">
+      <Filter>源文件\App</Filter>
     </ClCompile>
     <ClCompile Include="Graphics\Graphics.cpp">
       <Filter>源文件\Graphics</Filter>
@@ -229,11 +220,14 @@
     <ClCompile Include="Graphics\SvgRaster.cpp">
       <Filter>源文件\Graphics</Filter>
     </ClCompile>
-    <ClCompile Include="RichText\CssValue.cpp">
-      <Filter>源文件\RichText</Filter>
+    <ClCompile Include="UI\CssValue.cpp">
+      <Filter>源文件\UI</Filter>
     </ClCompile>
-    <ClCompile Include="RichText\RichDocJson.cpp">
-      <Filter>源文件\RichText</Filter>
+    <ClCompile Include="UI\RichDocEditor.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\RichDocJson.cpp">
+      <Filter>源文件\UI</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

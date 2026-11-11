@@ -5,7 +5,7 @@
 //  应用系统建议矩形，完整七步流程（ResizeBuffers/字形重光栅）M5 落地。
 // ============================================================================
 
-#include "Core/Window.h"
+#include "App/Window.h"
 
 #include <cstring>
 #include <dwmapi.h>

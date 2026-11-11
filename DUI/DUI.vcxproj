@@ -76,12 +76,10 @@
     <ClInclude Include="Core\Threading.h" />
     <ClInclude Include="Core\Utf8.h" />
     <ClInclude Include="Core\Json.h" />
-    <ClInclude Include="Text\GlyphAtlas.h" />
-    <ClInclude Include="Text\TextEngine.h" />
-    <ClInclude Include="RichText\RichDoc.h" />
-    <ClInclude Include="RichText\RichDocEdit.h" />
-    <ClInclude Include="RichText\CssValue.h" />
-    <ClInclude Include="RichText\RichDocJson.h" />
+    <ClInclude Include="UI\RichDoc.h" />
+    <ClInclude Include="UI\RichDocEditor.h" />
+    <ClInclude Include="UI\CssValue.h" />
+    <ClInclude Include="UI\RichDocJson.h" />
     <ClInclude Include="UI\UI.h" />
     <ClInclude Include="UI\Style.h" />
     <ClInclude Include="UI\Element.h" />
@@ -96,21 +94,22 @@
     <ClInclude Include="UI\Canvas.h" />
     <ClInclude Include="UI\Scroller.h" />
     <ClInclude Include="UI\Svg.h" />
-    <ClInclude Include="UI\RichEdit.h" />
+    <ClInclude Include="UI\RichEditor.h" />
     <ClInclude Include="App\App.h" />
-    <ClInclude Include="Core\Window.h" />
-    <ClInclude Include="Core\Dialog.h" />
-    <ClInclude Include="Core\Menu.h" />
+    <ClInclude Include="App\Window.h" />
+    <ClInclude Include="App\Dialog.h" />
+    <ClInclude Include="App\Menu.h" />
     <ClInclude Include="Graphics\Graphics.h" />
     <ClInclude Include="Graphics\ImageCodec.h" />
+    <ClInclude Include="Graphics\Device.h" />
+    <ClInclude Include="Graphics\GlyphAtlas.h" />
+    <ClInclude Include="Graphics\TextEngine.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Core\Dispatcher.cpp" />
     <ClCompile Include="Core\Clipboard.cpp" />
     <ClCompile Include="Core\Utf8.cpp" />
     <ClCompile Include="Core\Json.cpp" />
-    <ClCompile Include="Text\GlyphAtlas.cpp" />
-    <ClCompile Include="Text\TextEngine.cpp" />
     <ClCompile Include="UI\Style.cpp" />
     <ClCompile Include="UI\Element.cpp" />
     <ClCompile Include="UI\Text.cpp" />
@@ -123,25 +122,23 @@
     <ClCompile Include="UI\Canvas.cpp" />
     <ClCompile Include="UI\Scroller.cpp" />
     <ClCompile Include="UI\Svg.cpp" />
-    <ClCompile Include="UI\RichEdit.cpp" />
+    <ClCompile Include="UI\RichEditor.cpp" />
+    <ClCompile Include="UI\CssValue.cpp" />
+    <ClCompile Include="UI\RichDocEditor.cpp" />
+    <ClCompile Include="UI\RichDocJson.cpp" />
     <ClCompile Include="UI\StyleResolve.cpp" />
     <ClCompile Include="UI\Layout.cpp" />
     <ClCompile Include="UI\Event.cpp" />
     <ClCompile Include="App\App.cpp" />
     <ClCompile Include="App\Dialog.cpp" />
     <ClCompile Include="App\Frame.cpp" />
-    <ClCompile Include="Core\Window.cpp" />
-    <ClCompile Include="Core\Menu.cpp" />
-    <!-- 与 App\Dialog.cpp 同名：显式指定 obj 名，避免 MSB8027 输出冲突 -->
-    <ClCompile Include="Core\Dialog.cpp">
-      <ObjectFileName>$(IntDir)Core_Dialog.obj</ObjectFileName>
-    </ClCompile>
+    <ClCompile Include="App\Window.cpp" />
+    <ClCompile Include="App\Menu.cpp" />
     <ClCompile Include="Graphics\Graphics.cpp" />
     <ClCompile Include="Graphics\ImageCodec.cpp" />
     <ClCompile Include="Graphics\SvgRaster.cpp" />
-    <ClCompile Include="RichText\CssValue.cpp" />
-    <ClCompile Include="RichText\RichDocEdit.cpp" />
-    <ClCompile Include="RichText\RichDocJson.cpp" />
+    <ClCompile Include="Graphics\GlyphAtlas.cpp" />
+    <ClCompile Include="Graphics\TextEngine.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -1,8 +1,8 @@
 // ============================================================================
-//  DUI/RichText/RichDocEdit.cpp — 文档模型编辑原语
+//  DUI/UI/RichDocEditor.cpp — 文档模型编辑原语
 // ============================================================================
 
-#include "RichText/RichDocEdit.h"
+#include "UI/RichDocEditor.h"
 
 #include <utility>
 
@@ -19,6 +19,9 @@ bool SameThickness(const Thickness& a, const Thickness& b) noexcept {
 }  // namespace
 
 String BlockText(const Block& block) {
+    // 代码块：内容在 block.code（与 runs 分离）
+    if (block.kind == BlockKind::Code) return block.code;
+
     String text;
     text.reserve(TextLength(block.runs));
     for (const Run& run : block.runs) text += run.text;
@@ -35,6 +38,8 @@ uint32_t SnapBoundary(const String& text, uint32_t offset) {
 }
 
 RunStyle StyleAt(const Block& block, uint32_t offset) {
+    // 代码块无行内样式（整块等宽）
+    if (block.kind == BlockKind::Code) return RunStyle{};
     if (block.runs.empty()) return RunStyle{};
     uint32_t pos = 0;
     for (size_t i = 0; i < block.runs.size(); ++i) {
@@ -70,6 +75,14 @@ void MergeRuns(Block& block) {
 
 void InsertText(Block& block, uint32_t offset, const String& text, const RunStyle& style) {
     if (text.empty()) return;
+
+    // 代码块：写入 block.code（保留原始换行，不拆段）
+    if (block.kind == BlockKind::Code) {
+        const uint32_t length = static_cast<uint32_t>(block.code.size());
+        if (offset > length) offset = length;
+        block.code.insert(offset, text);
+        return;
+    }
 
     // 定位插入点：index == runs.size() 表示段尾
     size_t index = block.runs.size();
@@ -122,6 +135,16 @@ void InsertText(Block& block, uint32_t offset, const String& text, const RunStyl
 void DeleteRange(Block& block, uint32_t start, uint32_t end) {
     if (start >= end) return;
 
+    // 代码块：删 block.code 的区间
+    if (block.kind == BlockKind::Code) {
+        const uint32_t length = static_cast<uint32_t>(block.code.size());
+        if (start > length) start = length;
+        if (end > length) end = length;
+        if (start >= end) return;
+        block.code.erase(start, end - start);
+        return;
+    }
+
     std::vector<Run> out;
     out.reserve(block.runs.size());
     uint32_t pos = 0;
@@ -158,6 +181,16 @@ Block SplitBlock(Block& src, uint32_t offset) {
     tail.level = src.level;
     tail.listType = src.listType;
 
+    // 代码块：按 code 切分（保留原始换行的同时把尾部独立成块）
+    if (src.kind == BlockKind::Code) {
+        const uint32_t length = static_cast<uint32_t>(src.code.size());
+        if (offset > length) offset = length;
+        tail.code = src.code.substr(offset);
+        tail.showLineNumbers = src.showLineNumbers;
+        src.code.erase(offset);
+        return tail;
+    }
+
     uint32_t pos = 0;
     for (Run& run : src.runs) {
         const uint32_t length = static_cast<uint32_t>(run.text.size());
@@ -182,6 +215,13 @@ Block SplitBlock(Block& src, uint32_t offset) {
 }
 
 void AppendRuns(Block& dst, const Block& src) {
+    // 代码块：内容在 block.code，只与代码块合并（代码不并入正文，正文也不并入代码）
+    if (dst.kind == BlockKind::Code) {
+        if (src.kind == BlockKind::Code) dst.code += src.code;
+        return;
+    }
+    if (src.kind == BlockKind::Code) return;
+
     for (const Run& run : src.runs) {
         if (run.text.empty()) continue;
         dst.runs.push_back(run);

@@ -4,7 +4,7 @@
 
 #include "UI/Text.h"
 
-#include "Text/TextEngine.h"
+#include "Graphics/TextEngine.h"
 
 namespace dui {
 

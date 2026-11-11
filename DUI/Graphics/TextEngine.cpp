@@ -1,8 +1,8 @@
 // ============================================================================
-//  DUI/Text/TextEngine.cpp — DWrite 工厂/系统字体集/段落排版/字形光栅与绘制
+//  DUI/Graphics/TextEngine.cpp — DWrite 工厂/系统字体集/段落排版/字形光栅与绘制
 // ============================================================================
 
-#include "Text/TextEngine.h"
+#include "Graphics/TextEngine.h"
 
 #include <dwrite_3.h>
 
@@ -302,66 +302,124 @@ Engine::~Engine() {
     if (gdi_ != nullptr) gdi_->Release();
     if (baseFormat_ != nullptr) baseFormat_->Release();
     if (fonts_ != nullptr) fonts_->Release();
+    loadedFonts_.clear();   // 释放各字体的面引用与集合
+    // 内存字体加载器：字体文件引用在装载器注册期间才有效 → 先放字体再注销装载器
+    if (memLoader_ != nullptr) {
+        factory_->UnregisterFontFileLoader(memLoader_);
+        memLoader_->Release();
+        memLoader_ = nullptr;
+    }
     if (factory2_ != nullptr) factory2_->Release();
     if (factory_ != nullptr) factory_->Release();
 }
 
 bool Engine::LoadFontFile(const wchar_t* path, String& familyOut) {
     familyOut.clear();
-    if (!Ready()) return false;
-    if (customFonts_ != nullptr) { familyOut = customFamily_; return true; }   // 只装一次
+    if (!Ready() || path == nullptr || path[0] == 0) return false;
 
-    // 字体文件 → 字体面引用 → FontSet → 字体集合（IDWriteFactory3，Win10+；
-    // classic 的 CustomFontCollection + Loader 样板太重，此处不走）
     IDWriteFactory3* f3 = nullptr;
     if (FAILED(factory_->QueryInterface(&f3))) return false;
 
     bool ok = false;
     IDWriteFontFile* file = nullptr;
-    IDWriteFontFaceReference* ref = nullptr;
-    IDWriteFontSetBuilder* sb = nullptr;
-    IDWriteFontSet* set = nullptr;
-    IDWriteFontCollection1* c = nullptr;
-    if (SUCCEEDED(factory_->CreateFontFileReference(path, nullptr, &file)) &&
-        SUCCEEDED(f3->CreateFontFaceReference(file, 0, DWRITE_FONT_SIMULATIONS_NONE, &ref)) &&
-        SUCCEEDED(f3->CreateFontSetBuilder(&sb)) &&
-        SUCCEEDED(sb->AddFontFaceReference(ref)) &&
-        SUCCEEDED(sb->CreateFontSet(&set)) &&
-        SUCCEEDED(f3->CreateFontCollectionFromFontSet(set, &c))) {
-        // 取首字体的族名（iconfont 类单字体重只有一个族）
-        IDWriteFontFamily* fam = nullptr;
-        if (SUCCEEDED(c->GetFontFamily(0, &fam))) {
-            IDWriteLocalizedStrings* names = nullptr;
-            UINT32 len = 0;
-            if (SUCCEEDED(fam->GetFamilyNames(&names)) && names->GetCount() > 0 &&
-                SUCCEEDED(names->GetStringLength(0, &len))) {
-                std::vector<wchar_t> buf(len + 1);
-                if (SUCCEEDED(names->GetString(0, buf.data(), len + 1))) {
-                    customFamily_ = buf.data();
-                }
-            }
-            if (names != nullptr) names->Release();
-            fam->Release();
-        }
-        if (!customFamily_.empty()) {
-            customFonts_ = c;   // 生命周期归引擎
-            familyOut = customFamily_;
-            ok = true;
-        } else {
-            c->Release();
-        }
+    if (SUCCEEDED(factory_->CreateFontFileReference(path, nullptr, &file)) && file != nullptr) {
+        ok = AddCustomFont(f3, file, familyOut);
     }
-    if (set != nullptr) set->Release();
-    if (sb != nullptr) sb->Release();
-    if (ref != nullptr) ref->Release();
     if (file != nullptr) file->Release();
     f3->Release();
     return ok;
 }
 
+bool Engine::LoadFontData(const void* data, size_t size, String& familyOut) {
+    familyOut.clear();
+    if (!Ready() || data == nullptr || size == 0 || size > 0xFFFFFFFFu) return false;
+
+    // 内存字体：DirectWrite 官方 in-memory loader（IDWriteFactory5，Win10 1703+）。
+    // ownerObject 传 nullptr → DWrite 自行拷贝字体字节，调用方的缓冲可立即释放；
+    // 字体文件引用在装载器注册期间才有效 → 引擎持有装载器。
+    if (memLoader_ == nullptr) {
+        IDWriteFactory5* f5 = nullptr;
+        if (FAILED(factory_->QueryInterface(&f5))) return false;
+        const HRESULT hr = f5->CreateInMemoryFontFileLoader(&memLoader_);
+        f5->Release();
+        if (FAILED(hr) || memLoader_ == nullptr) {
+            memLoader_ = nullptr;
+            return false;
+        }
+        factory_->RegisterFontFileLoader(memLoader_);
+    }
+
+    IDWriteFactory3* f3 = nullptr;
+    if (FAILED(factory_->QueryInterface(&f3))) return false;
+
+    bool ok = false;
+    IDWriteFontFile* file = nullptr;
+    if (SUCCEEDED(memLoader_->CreateInMemoryFontFileReference(
+            factory_, data, static_cast<UINT32>(size), nullptr, &file)) && file != nullptr) {
+        ok = AddCustomFont(f3, file, familyOut);
+    }
+    if (file != nullptr) file->Release();
+    f3->Release();
+    return ok;
+}
+
+// 字体文件 → 字体面引用 → FontSet → 字体集合（IDWriteFactory3，Win10+；
+// classic 的 CustomFontCollection + Loader 样板太重，此处不走）
+bool Engine::AddCustomFont(IDWriteFactory3* f3, IDWriteFontFile* file, String& familyOut) {
+    IDWriteFontFaceReference* ref = nullptr;
+    IDWriteFontSetBuilder* sb = nullptr;
+    IDWriteFontSet* set = nullptr;
+    IDWriteFontCollection1* c = nullptr;
+    bool ok = false;
+    if (SUCCEEDED(f3->CreateFontFaceReference(file, 0, DWRITE_FONT_SIMULATIONS_NONE, &ref)) && ref != nullptr &&
+        SUCCEEDED(f3->CreateFontSetBuilder(&sb)) &&
+        SUCCEEDED(sb->AddFontFaceReference(ref)) &&
+        SUCCEEDED(sb->CreateFontSet(&set)) &&
+        SUCCEEDED(f3->CreateFontCollectionFromFontSet(set, &c)) && c != nullptr) {
+        // 取首字体的族名（iconfont 类单字体重只有一个族）
+        String family;
+        IDWriteFontFamily* fam = nullptr;
+        if (SUCCEEDED(c->GetFontFamily(0, &fam)) && fam != nullptr) {
+            IDWriteLocalizedStrings* names = nullptr;
+            UINT32 len = 0;
+            if (SUCCEEDED(fam->GetFamilyNames(&names)) && names != nullptr && names->GetCount() > 0 &&
+                SUCCEEDED(names->GetStringLength(0, &len))) {
+                std::vector<wchar_t> buf(len + 1);
+                if (SUCCEEDED(names->GetString(0, buf.data(), len + 1))) {
+                    family = buf.data();
+                }
+            }
+            if (names != nullptr) names->Release();
+            fam->Release();
+        }
+        if (!family.empty()) {
+            auto font = std::make_unique<LoadedFont>();
+            font->faceRef = ref;   ref = nullptr;   // 生命周期归 LoadedFont
+            font->collection = c;  c = nullptr;
+            font->family = family;
+            loadedFonts_.push_back(std::move(font));
+            familyOut = family;
+            ok = true;
+        }
+    }
+    if (c != nullptr) c->Release();
+    if (set != nullptr) set->Release();
+    if (sb != nullptr) sb->Release();
+    if (ref != nullptr) ref->Release();
+    return ok;
+}
+
+IDWriteFontCollection1* Engine::CustomCollectionOf(const wchar_t* family) const noexcept {
+    if (family == nullptr || family[0] == 0) return nullptr;
+    for (const auto& f : loadedFonts_) {
+        if (f->family == family) return f->collection;
+    }
+    return nullptr;
+}
+
 bool Engine::HasFamily(const wchar_t* family) const noexcept {
     if (family == nullptr || family[0] == 0) return false;
-    if (customFonts_ != nullptr && customFamily_ == family) return true;
+    if (CustomCollectionOf(family) != nullptr) return true;
     if (fonts_ == nullptr) return false;
 
     BOOL exists = FALSE;
@@ -409,10 +467,11 @@ Paragraph* Engine::Shape(Paragraph* p, const ShapeInput& in) {
         p->layout->SetFontWeight(
             static_cast<DWRITE_FONT_WEIGHT>(in.weight != 0 ? in.weight : 400), all);
         if (fam != nullptr) {
-            // 自定义字体集合（LoadFontFile 装入）：layout 默认挂在系统集合上，
-            // 必须连集合一起替换，否则族名命中不到 → DWrite 静默回退默认字体
-            if (customFonts_ != nullptr && customFamily_ == fam) {
-                p->layout->SetFontCollection(customFonts_, all);
+            // 自定义字体集合（LoadFontFile / LoadFontData 装入）：layout 默认挂在
+            // 系统集合上，必须连集合一起替换，否则族名命中不到 → DWrite 静默回退默认字体
+            IDWriteFontCollection1* custom = CustomCollectionOf(fam);
+            if (custom != nullptr) {
+                p->layout->SetFontCollection(custom, all);
             }
             // 开发者指定字体族（系统已安装任意字体）；未安装时 DWrite 自动回退默认
             p->layout->SetFontFamilyName(fam, all);
@@ -458,8 +517,9 @@ void Engine::ApplyRuns(IDWriteTextLayout* layout, const ShapeInput& in, uint32_t
             layout->SetFontWeight(static_cast<DWRITE_FONT_WEIGHT>(run.weight), range);
         }
         if (run.family != nullptr && run.family[0] != 0) {
-            if (customFonts_ != nullptr && customFamily_ == run.family) {
-                layout->SetFontCollection(customFonts_, range);
+            IDWriteFontCollection1* custom = CustomCollectionOf(run.family);
+            if (custom != nullptr) {
+                layout->SetFontCollection(custom, range);
             }
             layout->SetFontFamilyName(run.family, range);
         }
@@ -795,6 +855,12 @@ namespace dui {
 String LoadFontFamily(const wchar_t* fontFilePath) {
     String family;
     text::Engine::Get().LoadFontFile(fontFilePath, family);
+    return family;
+}
+
+String LoadFontFamilyFromMemory(const void* fontData, size_t fontDataSize) {
+    String family;
+    text::Engine::Get().LoadFontData(fontData, fontDataSize, family);
     return family;
 }
 

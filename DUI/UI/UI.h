@@ -12,7 +12,8 @@
 //    UI/Gif.h      动画图像控件（Pause / Play / Stop / SetLoopCount）
 //    UI/Animation.h 命令式属性动画（属性标签 / AnimConfig / AnimationHandle）
 //    UI/Focus.h    焦点服务与 Tab 链
-//    UI/RichEdit.h 只读富文本控件（richtext::RichDoc 的块级排版与绘制）
+//    UI/RichEditor.h 富文本控件（richtext::RichDoc 的块级排版、绘制与编辑）
+//    UI/RichDoc.h 富文本文档模型（纯数据；CssValue.h / RichDocJson.h 在 DUI.h 登记）
 //  本头聚合以上全部并声明跨模块入口（布局 / 命中测试），业务代码仍只
 //  include "DUI/DUI.h"。
 // ============================================================================
@@ -29,7 +30,7 @@
 #include "UI/Gif.h"
 #include "UI/Animation.h"
 #include "UI/Focus.h"
-#include "UI/RichEdit.h"
+#include "UI/RichEditor.h"
 
 namespace dui {
 

@@ -232,12 +232,12 @@
 
 ## ADR-016 工程结构
 
-**已定（工程已创建）**：`DUI.slnx` 下两个工程 —— **DUI（库）+ Samples（示例）**，将来可能增加更多子工程。源码按 `Core / Graphics / Text / UI / App` 分层（原 `Platform/` 层 2026-11-11 并入 Core）。
+**已定（工程已创建）**：`DUI.slnx` 下两个工程 —— **DUI（库）+ Samples（示例）**，将来可能增加更多子工程。源码按 `Core / Graphics / UI / App` 分层（原 `Platform/` 层 2026-11-11 并入 Core；原 `Text/` 2026-11-11 并入 `Graphics/`，原 `RichText/` 并入 `UI/`）。
 
 ```
 DUI.slnx                 解决方案
 DUI/                     库工程（静态库 .lib）
-  Core/ Graphics/ Text/ UI/ App/
+  Core/ Graphics/ UI/ App/
 Samples/                 示例工程（可按示例数量增子工程）
 Doc/Arch/                文档
 ```
@@ -368,11 +368,11 @@ Doc/Arch/                文档
 
 | 决策项 | 结论 | 理由 |
 | --- | --- | --- |
-| 能力分层 | L1 排版引擎（无状态）/ L2 富文本文档模型 / L3 编辑器控件 | 各层可独立测试与裁剪；控件阶梯 Label → TextBlock → TextBox → RichEdit |
+| 能力分层 | L1 排版引擎（无状态）/ L2 富文本文档模型 / L3 编辑器控件 | 各层可独立测试与裁剪；控件阶梯 Label → TextBlock → TextBox → RichEditor |
 | 排版基座 | `IDWriteTextLayout` **段落级**使用 + 段落缓存/失效（确认 ADR-004） | 免费获得换行/BiDi/复杂脚本/回退/命中测试/内联对象 |
 | 富文本属性 | **内容属性，不进样式系统**（ADR-019）；文档默认值由元素样式注入 | 内容样式随文本走（复制/序列化），元素样式管外观，二者解耦 |
 | 编辑数据结构 | 段落 = 文本 + 属性区间表；MVP run 数组，piece table P2 | 简单优先，接口不变可后换 |
-| RichEdit 排期 | 控件 P2；L1 能力清单与 L2 数据结构**自现在起预留** | "将来提供"= 交互后置、能力先行，避免返工 |
+| RichEditor 排期 | 控件 P2；L1 能力清单与 L2 数据结构**自现在起预留** | "将来提供"= 交互后置、能力先行，避免返工 |
 | 剪贴板/序列化 | MVP 纯文本；内部格式 P2；HTML/RTF 导入导出 P2 且可裁剪 | HTML 解析体积可观，不用不链接 |
 | 属性集与范围 | **已拍板**：核心可支持的均列入目标 —— 背景高亮、链接（P1）、基础竖排（P2）；需自实现的（上下标）与编辑器周边（拼写检查/协同编辑）先不实现 | 拍板原则：不支持的先不实现，其他都进目标 |
 
@@ -429,9 +429,33 @@ Doc/Arch/                文档
 | --- | --- | --- |
 | 初始化 | `Application::Run` 起始调用 `OleInitialize(nullptr)`，建立 **STA（主 STA / `APTTYPE_MAINSTA`）**，进程级持有不配对 Uninitialize | STA + OLE 是 Win32 UI 线程的常规形态，覆盖 Shell 拖放 / 扩展 |
 | 顺序 | 必须早于任何可能初始化 COM 的组件（尤其 WIC 的 MTA 尝试） | COM 单元在本线程一旦建立不能改；WIC 随后请求 MTA 只返回 `RPC_E_CHANGED_MODE`，COM 仍可用，WIC 在 STA 下同样工作 |
-| 兜底 | `Core/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验，放行 `APTTYPE_STA` / `APTTYPE_MAINSTA`，其余返回 `Error` | 自定义宿主若先把 UI 线程建成 MTA，宁可显式报错也不挂界面 |
+| 兜底 | `App/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验，放行 `APTTYPE_STA` / `APTTYPE_MAINSTA`，其余返回 `Error` | 自定义宿主若先把 UI 线程建成 MTA，宁可显式报错也不挂界面 |
 | 背景线程 | 不变：不初始化 COM；WIC 若在工作线程首次使用，其自身的 MTA 初始化照旧 | 后台只碰纯数据（ADR-022 / 07-Threading §3.1） |
 
 **不采用**：专用 STA 线程 + 跨线程 owner + 同步等待（复杂度高、owner 归属易错）。
 
 **验证**：改 STA 后四类系统对话框均能弹出、关闭后主循环恢复、进程响应正常；15 个示例（含 WIC 的 `Image`）启动无回归。注意 `OleInitialize` 得到的是 `APTTYPE_MAINSTA`，只判断 `APTTYPE_STA` 会把合法单元误判成错误 → 弹窗静默不出现（`../Pitfalls.md §4.11`）。
+
+---
+
+## ADR-028 目录层级收敛：Text 并入 Graphics、RichText 并入 UI（2026-11-11）
+
+**背景**：原目录树 `Core / Graphics / Text / UI / App` 的层级与真实依赖不完全一致，且层次过碎：
+
+- `Text` 只依赖 `Graphics`（`TextEngine.cpp` 用 `Painter` 画字形图集），不反向依赖 → 单独成层没有边界价值。
+- `RichText` 是纯文档模型（只依赖 Core），唯一消费者是 `UI/RichEditor` 与 `UI/CssValue` → 与 UI 同族。
+- 一个小控件要跨三个目录取头文件成为常态（`UI/RichEditor.cpp` 同时 include `RichText/`、`Text/`、`Graphics/`）。
+
+**决策**：
+
+| 决策项 | 结论 | 理由 |
+| --- | --- | --- |
+| 依赖链 | `App ──→ UI ──→ Graphics ──→ Core` | 与真实依赖一致，目录即依赖图 |
+| `Text/` | 并入 `Graphics/`（`TextEngine.*` / `GlyphAtlas.*`） | 文字排版是渲染的一部分，与 GPU 侧同层；原层不构成独立边界 |
+| `RichText/` | 并入 `UI/`（`RichDoc*` / `CssValue.*`） | 文档模型是 UI 控件的私有数据结构，与控件同族 |
+| Graphics 的公共性 | `Graphics/Graphics.h` + `Graphics/ImageCodec.h` 聚合进 `DUI/DUI.h`，Graphics 升格为正式公共层 | `dui::graphics::Painter` 是业务可见的自绘 API（自定义控件要用），此前示例需额外暴露 `$(SolutionDir)DUI\` 内部头目录才能拿到完整类型；升格后示例只 include `DUI/DUI.h` |
+| 命名空间 | 不动（`dui::text` / `dui::richtext` 保持原样） | 本次只收敛目录；命名空间迁移会波及全部控件与示例，收益不抵风险 |
+
+**不采用**（曾评估）：把 UI / Text / RichText / Graphics 全部合并成一层 —— `Painter` 是业务可见的自绘 API，合并会让这层扩展面更难发现，且「合并易、拆分贵」。
+
+**落地**：`git mv` 保留历史；全仓 include 路径重写；`DUI.vcxproj` / `.filters` 路径更新（`Text` / `RichText` filter 节点删除，并补登记此前漏登的 `RichDocEditor.*`）；`Samples/CustomCtrl` 取消额外内部头目录、`main.cpp` 去掉多余 include。Debug + Release 编译通过。

@@ -12,7 +12,7 @@
 
 #include "Core/Clipboard.h"
 #include "Graphics/Graphics.h"
-#include "Text/TextEngine.h"
+#include "Graphics/TextEngine.h"
 
 namespace dui {
 

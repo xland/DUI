@@ -11,8 +11,8 @@
 //    → OnChanged 把值变化交给外部（控件不耦合业务 UI）
 //
 //  构建产物：Build\CustomCtrl\Debug|Release\CustomCtrl.exe
-//  注意：DUI/DUI.h 只前向声明 graphics::Painter；自绘控件需要完整类型，
-//        故本文件额外包含框架内部头 Graphics/Graphics.h。
+//  注意：DUI/DUI.h 已聚合 Graphics 层，graphics::Painter 的完整类型随公共头
+//        一并给出，本文件不再单独包含框架内部头。
 // ============================================================================
 
 #include <windows.h>
@@ -22,7 +22,6 @@
 #include <utility>
 
 #include "DUI/DUI.h"
-#include "Graphics/Graphics.h"
 
 namespace {
 
@@ -151,7 +150,7 @@ protected:
 
 }  // namespace
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int) {
     dui::Application app;
     CustomCtrlWindow window;
     return app.Run(window);

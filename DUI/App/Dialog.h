@@ -1,9 +1,9 @@
 // ============================================================================
-//  DUI/Core/Dialog.h — 系统对话框（Core 层公共服务，17-Dialogs）
+//  DUI/App/Dialog.h — 系统对话框（应用层服务，17-Dialogs）
 //
-//  与 Clipboard 同构的 OS 服务：公共类型（选项 / 结果）与 Win32/COM 实现同在
-//  Core，UI 层的 Window 成员方法（OpenFile / MessageBox …）只是薄封装
-//  （owner 句柄、对话框深度计数）。与界面无关，业务可直接使用自由函数。
+//  窗口模态的应用级交互：公共类型（选项 / 结果）与 Win32/COM 实现同在此头
+//  与同名 cpp；Window 成员方法（OpenFile / MessageBox …）是薄封装（owner 句柄、
+//  对话框深度计数），业务也可直接调用自由函数。
 //
 //  owner 为 HWND，以 void* 传递（本头不含窗口对象类型）；nullptr 直接返回
 //  失败语义的结果。

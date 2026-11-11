@@ -42,7 +42,7 @@ display: Flex; flexDirection: Column; alignItems: Stretch   ← 默认值
 | --- | --- |
 | `div`（块级流） | 默认值组合（§2 开头），无需任何设置 |
 | `flex` 容器 | `display: Flex` + `flexDirection: Row` |
-| `inline` / 文本混排 | 交给 Text 层排版（§4.4），容器级内联 = `flexWrap: Wrap` 的行布局 |
+| `inline` / 文本混排 | 交给 文字排版层排版（§4.4），容器级内联 = `flexWrap: Wrap` 的行布局 |
 | `grid` | `display: Grid`（§4.2） |
 | `position: absolute` / `fixed` | `Position::Absolute` / `Fixed`（§4.3） |
 | `table` | 不做，Grid 覆盖（§7） |
@@ -161,7 +161,7 @@ anyParent->AddChild<dui::Panel>(dui::Style()
 
 ### 4.4 内联混排与文本的关系
 
-文本段落内的混排（文字 + 行内图标 + 行内按钮，随文本换行）**归 Text 层**，不属于容器布局：
+文本段落内的混排（文字 + 行内图标 + 行内按钮，随文本换行）**归 文字排版层**，不属于容器布局：
 
 - `Text.Layout`（基于 `IDWriteTextLayout`，见 ADR-004）已支持 inline object：富文本场景由文本元素承接，行内对象实现文本层的内联接口即可。
 - 容器布局不复制这套规则，避免两套换行算法。
@@ -234,7 +234,7 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
 | 2 | 无 `float` | 现代场景由 flex/grid 覆盖 |
 | 3 | 无表格布局 | Grid 覆盖（R4） |
 | 4 | 无选择器与层叠 | 样式复用走 [03-Style.md](./03-Style.md)（共享/派生/继承） |
-| 5 | 容器布局不处理 inline 流 | 内联混排归 Text 层（§4.4） |
+| 5 | 容器布局不处理 inline 流 | 内联混排归 文字排版层（§4.4） |
 | 6 | 父尺寸 `auto` 时百分比解析为 `auto` | 与 CSS 主流行为一致，显式列出避免歧义 |
 | 7 | 单遍约束近似，不做完整 intrinsic sizing 多遍求解 | 换取实现复杂度大幅下降（"不追求通用"原则）；**有意取舍，不追求与浏览器逐项一致** |
 | 8 | `box-sizing` 默认 `BorderBox` | 业界实践，写界面更直觉 |
@@ -277,9 +277,9 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
 | **Flex 子集 + 默认值组合**（建议） | ++ | ○ | ++ | 一套引擎覆盖块流/行流/弹性；块流语义 = `Column + Stretch` |
 | 独立 block 布局引擎 + flex 引擎 | -- | + | -- | 与 CSS 一致性更高，但两套算法、两套失效路径 |
 
-### D2 内联混排的归属：Text 层（建议）vs 容器 inline 布局
+### D2 内联混排的归属：文字排版层（建议）vs 容器 inline 布局
 
-**建议：Text 层。** 复用 `IDWriteTextLayout` 的换行与 inline object，避免两套换行算法；富文本需求与 ADR-017 联动，未定前容器布局不预埋。
+**建议：文字排版层。** 复用 `IDWriteTextLayout` 的换行与 inline object，避免两套换行算法；富文本需求与 ADR-017 联动，未定前容器布局不预埋。
 
 ### D3 margin 塌陷：不做（建议）
 
@@ -302,7 +302,7 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
 | 期 | 内容 |
 | --- | --- |
 | **P0** | 盒模型（含 box-sizing，**`margin` 已落地，§3**）、Flex 全量（§4.1）、**`position` 四值 + 四边定位（已落地，§4.3）**、auto/固定/百分比、min/max、`display: None` |
-| **P1** | **Grid（§4.2，已落地）**、`overflow: Scroll` + 滚动条、RTL（`direction` 与 flex 主轴联动，依赖 Text 层） |
+| **P1** | **Grid（§4.2，已落地）**、`overflow: Scroll` + 滚动条、RTL（`direction` 与 flex 主轴联动，依赖 文字排版层） |
 | **P2** | 普通流的 `zIndex`、`alignItems: Baseline`、嵌套百分比与浏览器对齐的精化（§7-7） |
 
 ---

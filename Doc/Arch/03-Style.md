@@ -200,11 +200,24 @@ auto* b = panel->AddChild<Text>(L"副标题", kTitle);
 | 值形态 | 写入槽 | 示例 |
 | --- | --- | --- |
 | 枚举 / 整型 / `Color` | `u` | `a->Set(Prop::Color, 0xFFC00000)` |
-| 浮点 | `f`；`IsThicknessProp` 的属性同时把 `extra[3]` 填成同值 | `a->Set(Prop::CornerRadius, 8.f)` |
+| 浮点 | `f`；`IsThicknessProp` / `IsCornerRadiusProp` 的属性同时把 `extra[3]` 填成同值 | `a->Set(Prop::CornerRadius, 8.f)` |
 | `dui::Thickness` | `f` + `extra[3]` | `a->Set(Prop::Padding, dui::Thickness(8.f, 16.f))` |
+| `dui::CornerRadii` | `f` + `extra[3]`（左上 / 右上 / 右下 / 左下） | `a->Set(Prop::CornerRadius, dui::CornerRadii(16.f, 0.f, 16.f, 0.f))` |
 | `const wchar_t*` | `family`（零拷贝） | `a->Set(Prop::FontFamily, L"SimSun")` |
 
 同 `Prop` 的新值**整体替换**旧的 `StyleValue`，因此从 `Thickness` 切回标量、或从字体族切回其它值时不会残留旧槽。`fontFamily` 只存指针、不拷贝字符串：传入的宽字符串必须活到该覆盖被替换（建议字面量或 `static` 缓存），与 `Style::FontFamily()` 契约相同。
+
+字体样式与文本装饰的链式方法写入 `u` 槽；装饰线是**位标志**，`operator|` 组合：
+
+```cpp
+static const Style kQuote = Style()
+    .FontStyle(FontStyle::Italic)                                   // 斜体（继承属性）
+    .TextDecoration(TextDecoration::Underline |                     // 位标志可组合
+                    TextDecoration::LineThrough);
+```
+
+- `FontStyle` 是**继承属性**（同 CSS `font-style`）：父元素设一次，整棵子树生效。
+- `TextDecoration` **不继承**（同 CSS `text-decoration`）：装饰线只作用于设了它的那个元素。
 
 ### 6.2 状态变体（挂在元素上）
 
@@ -271,7 +284,8 @@ for (int i = 0; i < n; ++i) {
 // 真实签名（已落地，Element/UI.h）：收集期在背景之后、子元素之前调用
 void MyWidget::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) {
     const StyleValue radius = ResolveProperty(this, Prop::CornerRadius, ctx);
-    p.FillRoundedRect(Bounds(), radius.f, ResolveProperty(this, Prop::BackgroundColor, ctx).u, 1.f, scale);
+    const dui::CornerRadii r = ValueAsCornerRadii(radius);   // 四角：f=左上，extra=右上/右下/左下
+    p.FillRoundedRect(Bounds(), r, ResolveProperty(this, Prop::BackgroundColor, ctx).u, 1.f, scale);
 }
 ```
 
@@ -340,7 +354,7 @@ Color c = Style::Resolve(element, Prop::Color);   // 非继承属性 O(1–3)
 ## 10. 待确认
 
 1. **D1 / D2 / D3 / D4** 是否按建议拍板。
-2. MVP 属性清单（§3.2）是否增减；~~`shadow`~~ 已落地（box-shadow 子集，见 15-Properties §4.3）、`textDecoration` 是否进 MVP。
+2. MVP 属性清单（§3.2）是否增减；~~`shadow`~~ 已落地（box-shadow 子集，见 15-Properties §4.3）、~~`textDecoration`~~ 已落地（Underline / LineThrough 子集，见 15-Properties §4.1）。
 3. ~~已定~~：状态全集、多状态合并优先级、`SetState` 写入契约、`selected` 归属见 §6.2。
 4. `background` 是否提前升级为 `Brush`（纯色 / 线性渐变 / 图片）—— 影响是否需要资源引用与资源管理。
 5. 元素本地覆盖是否允许超过 2 条（内联容量取值，决定元素基础尺寸）。

@@ -65,8 +65,11 @@ L1  排版与渲染引擎    字体集合/成形/段落排版/光栅化/命中�
 | 换行策略（词/字/任意） | DWrite `wordWrapping` | 断字（hyphenation）P2 |
 | 两端对齐 | DWrite `DWRITE_TEXT_ALIGNMENT_JUSTIFIED` | 基线 Win10 1703 可用 |
 | 字符间距 | `IDWriteTextLayout1::SetCharacterSpacing` | 对应 03-Style `letterSpacing` |
+| 词间距 | `IDWriteTextLayout1::SetCharacterSpacing`（**按区间下发**） | 对应 15-Properties `wordSpacing`（M5.55）：DWrite 无词距接口，但 `trailingSpacing` 可按区间设置 —— 对词分隔符（半角/全角空格）区间额外加宽、同区间覆盖字距，宽度由 DWrite 算进 layout，测量与折行天然一致 |
+| 文本截断 | 单行排版 + `HitTestTextPosition` 二分前缀 + `HitTestPoint` 簇边界校正 + 拼 `…` 重排 | 对应 15-Properties `textOverflow: Ellipsis`（M5.56，单行）：DWrite 的 layout 无 trimming API，故自己实现"截断 + 省略号"；前缀长度按**字形簇边界**校正，不会切出半个汉字 |
 | 行距（等高/比例/最小） | `IDWriteTextLayout3::SetLineSpacing` | 对应 03-Style `lineHeight` |
-| 下划线/删除线 | `SetUnderline` / `SetStrikethrough` + 绘制回调 | |
+| 下划线/删除线 | `SetUnderline` / `SetStrikethrough` + 绘制回调 | 对应 15-Properties `textDecoration`（`Underline`/`LineThrough` 位标志，**不继承**，运行时已落地）；线位与厚度由 DWrite 算出，走 `DrawUnderline`/`DrawStrikethrough` 回调用 `Painter::StrokeLine` 画线（Shape 批），不占行高 |
+| 斜体 | `SetFontStyle(DWRITE_FONT_STYLE_ITALIC)` | 对应 15-Properties `fontStyle`（**继承属性**，运行时已落地）；`Text`/`TextBox` 走整段默认，`RichEditor` 作段落默认（run 级 italic 显式为真时覆盖） |
 | 字符级样式（颜色等） | `SetDrawingEffect` + 自定义绘制回调 | 富文本 run 的落点 |
 | BiDi / 复杂脚本 / 回退 | DWrite 内建 | |
 | 描边文字、渐变文字 | 自定义绘制回调 + Graphics 层 | P2，走 03-Style `color` 的扩展形态 |

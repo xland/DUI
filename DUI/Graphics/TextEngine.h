@@ -46,7 +46,14 @@ struct ShapeInput {
     uint32_t weight = 0;             // 段落默认
     float    lineHeight = 0.f;       // 倍数（03-Style）
     float    maxWidth = 0.f;         // 换行宽（DIP）
+    bool     noWrap = false;        // true = 不折行（text-overflow: ellipsis 的单行排版）
     const wchar_t* family = nullptr; // nullptr / 空串 → 引擎默认（微软雅黑）
+    float    letterSpacing = 0.f;    // 字距（DIP；引擎按 em 千分比下发）
+    float    wordSpacing = 0.f;      // 词距（DIP；只加宽词间空格，按 em 千分比下发）
+    // 段落默认的字体样式 / 装饰线（单样式路径用；富文本由 run 覆盖）
+    bool     italic = false;
+    bool     underline = false;
+    bool     strike = false;
     // runs == nullptr / runCount == 0 → 单样式快速路径（与 run 化前完全同路，零额外开销）
     const TextRun* runs = nullptr;
     uint32_t runCount = 0;
@@ -65,11 +72,18 @@ struct Paragraph {
     uint32_t weight = 0;         // DWRITE_FONT_WEIGHT
     float    lineHeight = 0.f;   // 倍数（03-Style）
     float    maxWidth = 0.f;     // 换行宽（DIP）
+    bool     noWrap = false;    // 不折行（缓存键的一部分）
+    float    letterSpacing = 0.f; // 字距（DIP）
+    float    wordSpacing = 0.f;   // 词距（DIP）
+    bool     italic = false;     // 段落默认：斜体
+    bool     underline = false;  // 段落默认：下划线
+    bool     strike = false;     // 段落默认：删除线
     // 富文本：run 表**由调用方持有**（引擎不拷贝），配合 runVersion 判定是否重建
     const TextRun* runs = nullptr;
     uint32_t runCount = 0;
     uint64_t runVersion = 0;
     Vec2     size;               // 排版结果（DIP）
+    float    baseline = 0.f;      // 首行基线（相对排版原点，DIP）—— align-items: baseline 用
 };
 
 // 行信息（编辑控件用；一次遍历取全部行）
@@ -112,6 +126,12 @@ public:
 
     // 收集字形 quad。originDip = 文本原点（元素 bounds + padding）的 DIP 坐标
     void Draw(Paragraph* p, graphics::Painter& painter, float scale, Vec2 originDip, Color color);
+
+    // ---- 文本截断（text-overflow: ellipsis）----
+    // 省略号（U+2026）在给定排版参数下的宽度（DIP）；cached = 复用的测量缓存槽
+    float MeasureEllipsis(Paragraph* cached, const ShapeInput& in);
+    // 已排版段落上"宽度 <= maxWidth 的最长前缀"字符数（二分 + 簇边界校正）
+    uint32_t FitPrefixChars(const Paragraph* p, float maxWidth);
 
     // ---- 命中测试与几何（编辑控件用；M5.9）----
     // 局部 DIP 坐标 → 最近的字符插入点（0..文本长度）
@@ -157,6 +177,7 @@ private:
     uint32_t               bmpSize_ = 0;          // 位图边长（按字号档位缓存）
     IDWriteFontCollection* fonts_ = nullptr;
     IDWriteTextFormat*     baseFormat_ = nullptr;   // 家族/风格基座；字号字重由 layout 覆盖
+    IDWriteTextFormat*     noWrapFormat_ = nullptr; // 同上，但**不折行**（ellipsis 单行排版用）
     // 一个已装入的自定义字体（文件或内存）：字体面引用 + 只含它的字体集合 +
     // 族名。排版时按族名挑对应集合挂到 layout 上——layout 默认挂在系统集合，
     // 不换集合则自定义族名命中不到 → DWrite 静默回退默认字体。

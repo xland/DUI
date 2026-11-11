@@ -42,7 +42,12 @@ void ClearDirtyTree(Element* root);
 bool SubtreeLayoutDirty(const Element* e);
 
 // 命中测试与最小输入（UI/Event.cpp，06-Events M3 子集）
-Element* HitTest(Element* root, const Vec2& ptDip);
+// outLocal（可选）：命中点换算到"命中元素所在单元空间"的坐标 —— 已沿链累计
+//   滚动容器的滚动偏移、逐层应用 transform 逆变换。命中元素在滚动容器内时，
+//   该坐标与它的 Bounds 同空间（控件直接相减即得局部坐标）。
+Element* HitTest(Element* root, const Vec2& ptDip, Vec2* outLocal = nullptr);
+// 客户区坐标 → 元素所在单元空间（指针捕获期间派发用；Event.cpp）
+Vec2 ClientToLocal(Element* e, const Vec2& clientPt);
 void DispatchClick(Element* hit, const Vec2& pt, PointerButton button);
 void UpdateHoverChain(Element* previous, Element* current);
 void SetPressedChain(Element* hit, bool on);

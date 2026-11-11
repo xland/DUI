@@ -94,16 +94,19 @@ public:
                 hover_ = nullptr;
             }
             lastPt_ = pt;
-            DispatchPointerMove(cap, pt);
+            DispatchPointerMove(cap, ClientToLocal(cap, pt));
             RequestFrame();
             return;
         }
-        Element* hit = HitTest(window_.Root(), pt);
+        // 命中点换算到命中元素所在单元空间（滚动容器内含滚动偏移）——
+        // 控件据此把 ev.pos 与自己的 Bounds 相减求局部坐标
+        Vec2 local{};
+        Element* hit = HitTest(window_.Root(), pt, &local);
         UpdateHoverChain(hover_, hit);
-        DispatchHoverTransitions(hover_, hit, pt);   // 移入/移出（悬停链差分）
+        DispatchHoverTransitions(hover_, hit, local);   // 移入/移出（悬停链差分）
         hover_ = hit;
         lastPt_ = pt;
-        DispatchPointerMove(hit, pt);                 // 移动（冒泡）
+        DispatchPointerMove(hit, local);                 // 移动（冒泡）
         window_.SyncImeCaret();                       // 拖选移动光标 → 同步 IME 插入点
         RequestFrame();
     }
@@ -111,7 +114,8 @@ public:
     void OnPointerButton(Vec2 pt, PointerButton button, bool down) override {
         if (down) {
             // 命中滚动条 → 进入滑块拖拽（不参与 Click 合成，也不派发元素事件）
-            Element* hit = HitTest(window_.Root(), pt);
+            Vec2 local{};
+            Element* hit = HitTest(window_.Root(), pt, &local);
             Scroller* sc = FindScroller(hit);
             bool vertical = false;
             if (sc != nullptr && sc->HitScrollBar(pt, vertical)) {
@@ -126,10 +130,12 @@ public:
             SetPressedChain(hit, true);
             // 点击取得焦点（命中可聚焦元素或其可聚焦祖先；06-Events §6）
             if (Element* f = FindFocusable(hit)) SetFocus(f);
-            DispatchPointerDown(hit, pt, button);        // 按下（冒泡）
+            DispatchPointerDown(hit, local, button);      // 按下（冒泡）
         } else if (button != PointerButton::Left) {
             // 非左键抬起：只派发元素级弹起，不动 pressed / 焦点 / Click 状态机
-            DispatchPointerUp(HitTest(window_.Root(), pt), pt, button);
+            Vec2 local{};
+            Element* hit = HitTest(window_.Root(), pt, &local);
+            DispatchPointerUp(hit, local, button);
         } else {
             if (dragging_ != nullptr) {
                 dragging_->EndBarDrag();
@@ -137,15 +143,23 @@ public:
                 RequestFrame();
                 return;
             }
+            Vec2 local{};
             Element* cap = CapturedElement();
-            Element* hit = cap != nullptr ? cap : HitTest(window_.Root(), pt);
+            Element* hit = nullptr;
+            if (cap != nullptr) {
+                hit = cap;
+                local = ClientToLocal(cap, pt);   // 捕获者空间（未必是命中元素）
+            } else {
+                hit = HitTest(window_.Root(), pt, &local);
+            }
             SetPressedChain(pressed_, false);
-            DispatchPointerUp(hit, pt, button);          // 弹起（冒泡）
+            DispatchPointerUp(hit, local, button);           // 弹起（冒泡）
             if (cap != nullptr) {
                 SetCaptureElement(nullptr);            // 抬起自动释放捕获（拖拽不合成 Click）
-                Element* cur = HitTest(window_.Root(), pt);
+                Vec2 curLocal{};
+                Element* cur = HitTest(window_.Root(), pt, &curLocal);
                 UpdateHoverChain(hover_, cur);         // 恢复悬停链到当前指针位置
-                DispatchHoverTransitions(hover_, cur, pt);
+                DispatchHoverTransitions(hover_, cur, curLocal);
                 hover_ = cur;
             } else {
                 // Click 合成：按下抬起同元素且拖出在阈值内（06-Events §3：4 dip）
@@ -153,7 +167,7 @@ public:
                 if (pressed_ != nullptr && hit == pressed_ &&
                     pt.x >= pressPt_.x - kDragThreshold && pt.x <= pressPt_.x + kDragThreshold &&
                     pt.y >= pressPt_.y - kDragThreshold && pt.y <= pressPt_.y + kDragThreshold) {
-                    DispatchClick(pressed_, pt, PointerButton::Left);
+                    DispatchClick(pressed_, local, PointerButton::Left);
                 }
             }
             pressed_ = nullptr;
@@ -166,8 +180,9 @@ public:
     // （沿祖先链找最近的"该轴还可滚"的滚动容器：内层滚不动 → 冒泡外层；
     //   纵向滚轮，Shift + 滚轮横向）
     void OnMouseWheel(Vec2 pt, float delta, bool horizontal) override {
-        Element* hit = HitTest(window_.Root(), pt);
-        if (DispatchWheel(hit, pt, delta, horizontal)) {   // 已被元素处理
+        Vec2 local{};
+        Element* hit = HitTest(window_.Root(), pt, &local);
+        if (DispatchWheel(hit, local, delta, horizontal)) {   // 已被元素处理
             RequestFrame();
             return;
         }

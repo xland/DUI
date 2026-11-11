@@ -34,13 +34,19 @@ auto h = card->Animate(dui::Opacity, 0.f,
     { .durationMs = 200, .easing = dui::Easing::EaseOut });
 h.OnFinished(fn);
 h.Cancel();   // 幂等；元素销毁后自动失效
+
+// 多通道值：四边 / 四角一起补间
+card->Animate(dui::Padding, dui::Thickness(16.f),
+    { .durationMs = 200, .easing = dui::Easing::EaseOut });
+card->Animate(dui::CornerRadius, dui::CornerRadii{8.f, 8.f, 0.f, 0.f},
+    { .durationMs = 250 });
 ```
 
 定义于 `UI/Animation.h`，经 `UI/UI.h` / `DUI/DUI.h` 聚合，业务侧只需 include 公共入口。
 
 ### 2.1 `AnimProp<T>`：强类型属性标签
 
-`template <class T> struct AnimProp { Prop prop; };` —— 标签携带属性 ID，**模板参数 `T` 决定目标值类型**，编译期拒绝不可动画的属性（`static_assert`，不用 RTTI）。目前开放 Paint 类标量，以及布局尺寸 / 定位偏移对照标签：
+`template <class T> struct AnimProp { Prop prop; };` —— 标签携带属性 ID，**模板参数 `T` 决定目标值类型**，编译期拒绝不可动画的属性（`static_assert`，不用 RTTI）。目前开放 Paint 类标量、布局尺寸 / 定位偏移对照标签，以及多通道值（Thickness 四边 / 四角圆角）：
 
 | 标签 | 值类型 | 属性 | 插值 |
 | --- | --- | --- | --- |
@@ -57,11 +63,17 @@ h.Cancel();   // 幂等；元素销毁后自动失效
 | `dui::Height` | `float` | `Prop::Height` | 同上 |
 | `dui::Left` | `float` | `Prop::Left` | 同上（仅定位元素生效，见 04-Layout §4.3） |
 | `dui::Top` | `float` | `Prop::Top` | 同上 |
+| `dui::Padding` | `dui::Thickness` | `Prop::Padding` | 四通道分别线性插值（`kFlagLayout`，每帧重排） |
+| `dui::Margin` | `dui::Thickness` | `Prop::Margin` | 同上 |
+| `dui::CornerRadius` | `dui::CornerRadii` | `Prop::CornerRadius` | 四通道分别线性插值（`kFlagPaint`，只重绘） |
 
 - `Color` 约定 `0xAARRGGBB`（[Core/Core.h](../DUI/Core/Core.h)），逐通道在 sRGB/gamma 空间插值，与 ADR-013 的混合空间一致。
 - 前四个 transform 标签与 `Opacity` 一样是 `kFlagPaint`：动画每帧只重收集顶点，不重排；`Bounds()` 与布局结果不变（[10-Rendering.md](./10-Rendering.md) §6.4）。
 - `Width` / `Height` 是布局尺寸对照，`Left` / `Top` 是定位偏移对照（仅 `Relative` / `Absolute` / `Fixed` 生效，`Static` 忽略，见 04-Layout §4.3）：级联层 1 的值会被 `Layout.cpp` 读到，但每帧 `kFlagLayout` 全量重排、兄弟元素跟着回流，不宜用于高频动画；轻量位移动画用 `dui::TranslationX`（`kFlagPaint`）。
-- 文本、Thickness（四边）、枚举、字体族类属性**不开放**：它们每帧重排版，或没有自然的插值定义。
+- 文本、枚举、字体族类属性**不开放**：它们每帧重排版，或没有自然的插值定义。
+- **多通道值（Thickness 四边 / 四角圆角）已开放**：四通道各自线性插值，**共用同一条时间轴与缓动**（CSS `transition` 的"同一属性一条时间轴"语义 —— 四边一起动，不做逐边错峰）。存储口径与样式声明一致：Thickness `f = left` / `extra = top/right/bottom`，CornerRadii `f = 左上` / `extra = 右上/右下/左下`。
+- `padding` / `margin` 是 `kFlagLayout` → 补间期间**每帧重排整棵子树**（与 `Width` / `Height` 同代价，树大时可能掉帧）；`cornerRadius` 是 `kFlagPaint` → 只重绘。
+- 同一属性只有一条动画槽：不能"padding 左边补间、右边单独补间"。
 - 第二参数是 `std::type_identity_t<T>`，只从标签推导 `T`，目标值允许隐式转换（如整数字面量传给 `Color` 标签）。
 
 ### 2.2 `AnimConfig`：聚合配置
@@ -157,4 +169,4 @@ struct AnimConfig {
 - GIF 帧动画与光标闪烁不是样式动画，不读写动画槽，也不受 `Cancel()` 影响。
 - transform 动画只改绘制顶点：`Bounds()` / 布局结果 / `Scroller` 可滚动范围不变；`PointerEvent::pos` 仍是客户区绝对 DIP，旋转的交互文本框光标定位列为后续项（[10-Rendering.md](./10-Rendering.md) §6.4）。
 - 等比 `Scale` 动画下字形是被线性拉伸的图集位图（ADR-006 按离散尺度光栅化），放大略糊；SDF 圆角的 1px AA 过渡带会按比例变宽。
-- 命令式属性动画的完整交互演示见 `Samples/Animation`（按功能拆成多个自包含的极简示例函数，可单独阅读）；GIF 帧动画与播放控制见 `Samples/Image`。库侧不再保留额外的 API 形状契约函数。
+- 命令式属性动画的完整交互演示见 `Samples/Animation`（按功能拆成多个自包含的极简示例函数，可单独阅读；示例 11 / 12 为多通道补间：Thickness 四边每帧重排、四角圆角只重绘）；GIF 帧动画与播放控制见 `Samples/Image`。库侧不再保留额外的 API 形状契约函数。

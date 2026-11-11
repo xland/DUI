@@ -28,9 +28,9 @@ struct Vertex {
     float    x, y;      // 物理像素
     float    lx, ly;    // 相对矩形中心的偏移（像素）
     float    hw, hh;    // 半宽 / 半高（像素）
-    float    radius;    // 圆角半径（像素；< 1px 在收集端退化直角）
+    float    r0, r1, r2, r3;  // 四角圆角半径：左上 / 右上 / 右下 / 左下（像素）
     uint32_t color;     // R8G8B8A8 内存序（straight alpha；预乘在 PS 完成）
-};
+};  // 44B
 
 // 字形顶点（10-Rendering §6.1：pos + uv + rgba8 ≈ 20B）；图集采样批与矩形批分离
 struct GlyphVertex {
@@ -49,17 +49,18 @@ struct PaintState {
     float originDipX = 0.f, originDipY = 0.f;
 };
 
-// 定宽指令（按最坏情形 Shape 的参数定宽，64B）。p[] 布局：
-//   Rect  : dipRect.x/y/w/h, radiusDip
+// 定宽指令（按最坏情形 Shape 的参数定宽，80B）。p[] 布局：
+//   Rect  : dipRect.x/y/w/h, r0/r1/r2/r3（四角圆角半径 DIP）
 //   Glyph : x/y/w/h（布局空间物理像素）, u0/v0/u1/v1
-//   Shape : cx/cy/hw/hh, p0x/p0y, p1x/p1y, extra, halfStroke, kind（物理像素）
+//   Shape : cx/cy/hw/hh, p0x/p0y, p1x/p1y, extra, halfStroke, kind,
+//           r0/r1/r2/r3（四角圆角半径，物理像素）
 //   Image : dipRect.x/y/w/h
 struct PaintCommand {
     uint32_t op = 0;
     uint32_t state = 0;
     uint32_t resource = 0;      // Glyph: 图集页 / Image: 纹理 id / 其余 0
     uint32_t color = 0;         // 已打包 R8G8B8A8（含 opacity）
-    float    p[11]{};
+    float    p[16]{};
 };
 
 // 发射期段描述符（按绘制顺序线性排布于 VB；跨帧复用，不作常驻指令）
@@ -74,19 +75,21 @@ struct EmittedSegment {
 // 片元按 kind 在局部坐标里求有符号距离（像素空间的真实距离场）再做 1 像素过渡带 AA。
 //   kind 0 胶囊（线段）：params = 端点 A/B（相对中心），extra = 半径
 //   kind 1 椭圆        ：params = 半轴 (rx, ry)
-//   kind 2 圆角矩形    ：params = 半 ext，extra = 圆角半径
+//   kind 2 圆角矩形    ：params = 半 ext，radii = 四角圆角半径
+//   kind 3 阴影圆角矩形：params = 半 ext，radii = 四角圆角半径，halfStroke = blur
 // halfStroke = 0 表示填充，> 0 表示描边（沿等距线偏移）。
 // 注意字段顺序与 Graphics.cpp 的输入布局逐字节对应
-// （POSITION x,y | TEXCOORD0 lx,ly | TEXCOORD1 params | TEXCOORD2 extra,kind
-//   | TEXCOORD3 halfStroke | COLOR）。
+// （POSITION x,y | TEXCOORD0 lx,ly | TEXCOORD1 params | TEXCOORD2 radii
+//   | TEXCOORD3 extra,kind | TEXCOORD4 halfStroke | COLOR）。
 struct ShapeVertex {
     float    x, y;        // 物理像素：图元中心
     float    lx, ly;      // 局部坐标（相对中心，物理像素）
     float    p0x, p0y;    // 形状参数 0
     float    p1x, p1y;    // 形状参数 1
-    float    extra;       // 胶囊半径 / 圆角半径（物理像素）
-    float    kind;        // 0 胶囊 / 1 椭圆 / 2 圆角矩形
-    float    halfStroke;  // 0 = 填充；> 0 = 描边半宽（物理像素）
+    float    r0, r1, r2, r3;  // 四角圆角半径：左上 / 右上 / 右下 / 左下（物理像素）
+    float    extra;       // 胶囊半径（物理像素）
+    float    kind;        // 0 胶囊 / 1 椭圆 / 2 圆角矩形 / 3 阴影圆角矩形
+    float    halfStroke;  // 0 = 填充；> 0 = 描边半宽 / 模糊半径（物理像素）
     uint32_t color;       // R8G8B8A8 内存序（straight alpha；预乘在 PS 完成）
 };
 
@@ -102,6 +105,8 @@ public:
     void SetOrigin(float dipX, float dipY, float scale);
     void SetTransform(const Transform2D& dipXform);
 
+    // 圆角矩形填充。四角半径独立（CornerRadii）；统一圆角用便捷重载。
+    void FillRoundedRect(const Rect& dipRect, const CornerRadii& radii, Color color, float opacity, float scale);
     void FillRoundedRect(const Rect& dipRect, float radiusDip, Color color, float opacity, float scale);
     void AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
                       float u0, float v0, float u1, float v1, Color color);
@@ -112,10 +117,13 @@ public:
     void StrokeLine(Vec2 p0, Vec2 p1, Color color, float widthDip, float scale);
     void FillEllipse(Vec2 center, float rxDip, float ryDip, Color color, float scale);
     void StrokeEllipse(Vec2 center, float rxDip, float ryDip, Color color, float widthDip, float scale);
+    // 圆角矩形描边：沿等距线偏移 halfStroke（路径居中于描边带）
+    void StrokeRoundRect(const Rect& dipRect, const CornerRadii& radii, float widthDip, Color color, float scale);
     void StrokeRoundRect(const Rect& dipRect, float radiusDip, float widthDip, Color color, float scale);
 
     // 阴影（box-shadow 子集）：把元素边框盒按 blur 软化成投影（Shape 批 kind=3）。
     // quad 外扩 blur，SDF 仍以 dipRect 为边界；blur<=0 时由调用方退化成普通矩形。
+    void ShadowRoundRect(const Rect& dipRect, const CornerRadii& radii, float blurDip, Color color, float scale);
     void ShadowRoundRect(const Rect& dipRect, float radiusDip, float blurDip, Color color, float scale);
 
     const std::vector<PaintCommand>& Commands() const noexcept { return commands_; }
@@ -138,7 +146,8 @@ private:
     void UseState(const PaintState& next);
     void PushShapeQuad(float cx, float cy, float hw, float hh,
                        float p0x, float p0y, float p1x, float p1y,
-                       float extra, float halfStroke, Color color, uint32_t kind);
+                       float extra, float halfStroke, Color color, uint32_t kind,
+                       const CornerRadii& radii = CornerRadii{});
 
     std::vector<PaintCommand> commands_;
     std::vector<PaintState> states_;

@@ -416,12 +416,7 @@ void TextBox::Redo() {
 // ---------------------------------------------------------------------------
 
 Rect TextBox::ContentBox() const {
-    const StyleValue pv = ResolveProperty(this, Prop::Padding);
-    const Thickness pad{pv.f, pv.extra[0], pv.extra[1], pv.extra[2]};
-    const Rect b = Bounds();
-    return Rect{b.x + pad.left, b.y + pad.top,
-                std::max(0.f, b.w - pad.left - pad.right),
-                std::max(0.f, b.h - pad.top - pad.bottom)};
+    return ContentRectOf(this);
 }
 
 Vec2 TextBox::TextOrigin() const {
@@ -506,7 +501,16 @@ Vec2 TextBox::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) 
     in.lineHeight = ctx.lineHeight;
     in.maxWidth = wrapW;
     in.family = ctx.family;
+    in.letterSpacing = ctx.letterSpacing;   // 字距（继承属性）
+    in.wordSpacing = ctx.wordSpacing;       // 词距（继承属性）
+    // 斜体（继承属性）/ 文本装饰（不继承）：整段默认，run 级由富文本路径覆盖
+    in.italic = ResolveProperty(this, Prop::FontStyle, ctx).u ==
+                static_cast<uint32_t>(dui::FontStyle::Italic);
+    const uint32_t deco = ResolveProperty(this, Prop::TextDecoration, ctx).u;
+    in.underline = dui::HasDecoration(deco, dui::TextDecoration::Underline);
+    in.strike = dui::HasDecoration(deco, dui::TextDecoration::LineThrough);
     para_ = en.Shape(ParaOf(para_), in);
+    baseline_ = ParaOf(para_) != nullptr ? ParaOf(para_)->baseline : -1.f;
     UpdateMaskOffset();
     Vec2 size = ParaOf(para_) != nullptr ? ParaOf(para_)->size : Vec2{};
     if (!multiline_) {

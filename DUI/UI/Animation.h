@@ -47,6 +47,20 @@ inline constexpr AnimProp<float> Height{Prop::Height};
 // 定位偏移（04-Layout §4.3）：仅 Relative/Absolute/Fixed 生效，同样每帧重排
 inline constexpr AnimProp<float> Left{Prop::Left};
 inline constexpr AnimProp<float> Top{Prop::Top};
+// 四边厚度（四边同时补间，共用同一条时间轴与缓动；kFlagLayout → 每帧重排）
+inline constexpr AnimProp<Thickness> Padding{Prop::Padding};
+inline constexpr AnimProp<Thickness> Margin{Prop::Margin};
+// 四角圆角（四角同时补间；kFlagPaint → 只重绘，不重排）
+inline constexpr AnimProp<CornerRadii> CornerRadius{Prop::CornerRadius};
+// 边框宽度（四边同时补间；kFlagPaint → 只重绘，不重排）
+inline constexpr AnimProp<Thickness> BorderWidth{Prop::BorderWidth};
+
+// 值的插值形态：决定补间时哪些通道参与插值
+enum class AnimKind : uint8_t {
+    Scalar,   // 单标量（f）
+    Color,    // ARGB 四通道（u）
+    Quad,     // 四通道（f + extra[0..2]）：Thickness 四边 / CornerRadii 四角
+};
 
 // 聚合：支持 C++20 指派初始化 { .durationMs = 200, .easing = dui::Easing::EaseOut }
 struct AnimConfig {
@@ -70,7 +84,7 @@ struct AnimSlot {
     Prop     prop = Prop::Unknown;
     StyleValue from{};
     StyleValue to{};
-    bool     color = false;                  // 颜色按 ARGB 通道插值，其余按 float 插值
+    AnimKind kind = AnimKind::Scalar;        // 插值形态：标量 / 颜色 / 四通道
     uint64_t startMs = 0;                   // 0 = 首次 tick 时取当前时刻
     uint32_t durationMs = 0;
     Easing   easing = Easing::EaseOut;

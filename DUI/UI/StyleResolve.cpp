@@ -29,9 +29,14 @@ bool IsInherited(Prop p) {
     case Prop::Color:
     case Prop::FontSize:
     case Prop::FontWeight:
+    case Prop::FontStyle:
     case Prop::FontFamily:
     case Prop::LineHeight:
+    case Prop::LetterSpacing:
+    case Prop::WordSpacing:
     case Prop::TextAlign:
+    case Prop::TextOverflow:
+    case Prop::Visibility:   // 可见性：父设 hidden 则子树隐藏（子可显式设 visible 反转）
     case Prop::Cursor:   // 光标：父元素设了，子元素未设则沿用（同 CSS 的 cursor 继承）
         return true;
     default:
@@ -104,9 +109,14 @@ bool TryResolve(const Element* e, Prop p, const StyleContext& ctx, StyleValue& o
     case Prop::Color:      out = MakeU(p, ctx.color);      return true;
     case Prop::FontSize:   out = MakeF(p, ctx.fontSize);   return true;
     case Prop::LineHeight: out = MakeF(p, ctx.lineHeight); return true;
+    case Prop::LetterSpacing: out = MakeF(p, ctx.letterSpacing); return true;
+    case Prop::WordSpacing: out = MakeF(p, ctx.wordSpacing); return true;
     case Prop::FontWeight: out = MakeU(p, ctx.fontWeight); return true;
+    case Prop::FontStyle:  out = MakeU(p, ctx.fontStyle);  return true;
     case Prop::FontFamily: out.family = ctx.family;        return true;   // nullptr = 引擎默认
     case Prop::TextAlign:  out = MakeU(p, ctx.textAlign);  return true;
+    case Prop::TextOverflow: out = MakeU(p, ctx.textOverflow); return true;
+    case Prop::Visibility: out = MakeU(p, ctx.visibility); return true;
     default:
         return false;   // 非继承属性：交给内建默认（层 7）
     }
@@ -127,13 +137,14 @@ StyleValue BuiltinDefault(Prop p) {
     case Prop::FlexDirection: return MakeU(p, static_cast<uint32_t>(FlexDirection::Column));
     case Prop::GridRowSpan:
     case Prop::GridColumnSpan:  return MakeU(p, 1u);
-    // 滚动条：厚 10 DIP，轨道/滑块半透明黑；直角、无边框（圆角/边框走 0 兜底）
+    // 滚动条：厚 8 DIP，轨道/滑块半透明黑；直角、无边框（圆角/边框走 0 兜底）
+    // 滑块默认更浅（约 19% 黑）；指针悬停在滑块上时由 Scroller 自绘加深（alpha ×1.6）
     case Prop::ScrollbarTrackWidth:
     case Prop::ScrollbarTrackHeight:
     case Prop::ScrollbarThumbWidth:
-    case Prop::ScrollbarThumbHeight:        return MakeF(p, 10.f);
-    case Prop::ScrollbarTrackBackgroundColor: return MakeU(p, 0x1F000000);
-    case Prop::ScrollbarThumbBackgroundColor: return MakeU(p, 0x73000000);
+    case Prop::ScrollbarThumbHeight:        return MakeF(p, 8.f);
+    case Prop::ScrollbarTrackBackgroundColor: return MakeU(p, 0x14000000);
+    case Prop::ScrollbarThumbBackgroundColor: return MakeU(p, 0x30000000);
     default:
         return MakeU(p, 0);   // Flex / 透明 / 0 尺寸
     }
@@ -162,9 +173,14 @@ StyleContext StyleContext::Child(const Element* e) const {
     if (TryResolveElement(e, Prop::Color, v))      c.color = v.u;
     if (TryResolveElement(e, Prop::FontSize, v))   c.fontSize = v.f;
     if (TryResolveElement(e, Prop::LineHeight, v)) c.lineHeight = v.f;
+    if (TryResolveElement(e, Prop::LetterSpacing, v)) c.letterSpacing = v.f;
+    if (TryResolveElement(e, Prop::WordSpacing, v)) c.wordSpacing = v.f;
     if (TryResolveElement(e, Prop::FontWeight, v)) c.fontWeight = v.u;
+    if (TryResolveElement(e, Prop::FontStyle, v))  c.fontStyle = v.u;
     if (TryResolveElement(e, Prop::FontFamily, v)) c.family = v.family;   // nullptr 透传引擎默认
     if (TryResolveElement(e, Prop::TextAlign, v))  c.textAlign = v.u;
+    if (TryResolveElement(e, Prop::TextOverflow, v)) c.textOverflow = v.u;
+    if (TryResolveElement(e, Prop::Visibility, v)) c.visibility = v.u;
     return c;
 }
 
@@ -293,6 +309,10 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::CornerRadius:
     case Prop::Opacity:
     case Prop::Shadow:
+    // 边框（内描边，不改布局盒 → 只重绘）
+    case Prop::BorderWidth:
+    case Prop::BorderColor:
+    case Prop::BorderStyle:
     // Paint 级 transform：只重收集顶点，不触发 Measure/Arrange
     case Prop::TranslationX:
     case Prop::TranslationY:
@@ -302,6 +322,8 @@ uint32_t PropFlagsOf(Prop p) {
     // 文本编辑外观
     case Prop::SelectionColor:
     case Prop::CaretColor:
+    // 溢出裁剪只影响绘制（不改布局盒）
+    case Prop::Overflow:
     // 滚动条外观（不改布局，几何每帧按属性重算）
     case Prop::ScrollbarTrackWidth:
     case Prop::ScrollbarTrackHeight:
@@ -321,6 +343,11 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::FontWeight:
     case Prop::FontFamily:
     case Prop::LineHeight:
+    // 斜体 / 文本装饰：段落要重新排版（斜体改字形宽度；装饰线进引擎的形状缓存键）
+    case Prop::FontStyle:
+    case Prop::TextDecoration:
+    case Prop::TextOverflow:   // 省略号截断要重排（截断点随宽度变）
+    case Prop::BoxSizing:     // 盒模型：内容区尺寸随之变化
     case Prop::Padding:
     case Prop::Margin:
     case Prop::Width:
@@ -335,6 +362,17 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::JustifyContent:
     case Prop::AlignItems:
     case Prop::FlexWrap:
+    // 布局补充（M5.52）：字距改排版宽度；alignSelf 改单项交叉轴；min/max 高；
+    // 行列间距；flexBasis 改主轴基准尺寸；visibility 改可见性（布局期写命中标记）
+    case Prop::LetterSpacing:
+    case Prop::WordSpacing:
+    case Prop::AlignSelf:
+    case Prop::MinHeight:
+    case Prop::MaxHeight:
+    case Prop::RowGap:
+    case Prop::ColumnGap:
+    case Prop::FlexBasis:
+    case Prop::Visibility:
     // 定位：改布局盒，需重新 Measure/Arrange
     case Prop::Position:
     case Prop::Left:

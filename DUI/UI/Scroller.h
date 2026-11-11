@@ -47,7 +47,8 @@ public:
 
     // ---- 交互（App 层调用）----
     // 点是否落在滚动条上（vertical=true → 纵向条）
-    bool HitScrollBar(const Vec2& ptDip, bool& vertical) const;
+    // 非 const：命中测试顺带记录指针位置，供滑块悬停判定（悬停时滑块加深）
+    bool HitScrollBar(const Vec2& ptDip, bool& vertical);
     void BeginBarDrag(bool vertical, Vec2 ptDip);
     void UpdateBarDrag(Vec2 ptDip);
     void EndBarDrag();
@@ -65,16 +66,26 @@ protected:
     // 内容自然尺寸：主轴不限（可溢出），交叉轴受视口约束（列表项拉满视口宽）
     Vec2 MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) const override;
 
+    // 悬停态变化 → 自绘滑块配色可能变 → 刷新
+    void SetState(State s, bool on) override;
+
 private:
     // 条厚（DIP）：纵向取 *Width、横向取 *Height；thumb=false 轨道 / true 滑块
     float BarThickness(bool vertical, bool thumb) const;
     // 按样式画一段轨道或滑块（背景 + 可选边框）
     void PaintBar(graphics::Painter& p, const Rect& r, bool thumb, float scale);
+    // 指针是否在滑块上（用命中测试记录的指针位置；悬停态是"指针在容器内"的可靠信号）
+    bool ThumbHovered() const;
+    // 滑块悬停态变化 → 标脏重绘（缓存旧值用于判变化）
+    void RefreshThumbHover();
 
     Vec2 offset_{};
     mutable Vec2 contentSize_{};   // 内容实际范围（布局后写入）
     mutable Vec2 natSize_{};       // 内容自然尺寸（测量期写入）
     mutable Thickness pad_{};
+    mutable Thickness border_{};        // border-box 盒模型时占盒内的边框宽度（否则为零）
+    Vec2  barPointer_{};           // 命中测试记录的指针位置（容器自身空间，与 Bounds 同空间）
+    bool  thumbHover_ = false;     // 滑块悬停态缓存（用于判变化 → 标脏）
     bool  dragActive_ = false;
     bool  dragVertical_ = false;
     float dragStartPt_ = 0.f;

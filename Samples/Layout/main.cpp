@@ -4,7 +4,9 @@
 //  覆盖能力（04-Layout）：FlexDirection Row/Column、Gap、Padding、
 //  FlexGrow（剩余空间分配）、FlexShrink + MinWidth（收缩）、
 //  JustifyContent / AlignItems（主轴/交叉轴对齐）、嵌套容器、
-//  Grid（Fixed/Flex/Auto/Percent 轨道 + 自动放置 + 显式行列 + 跨格）。
+//  Grid（Fixed/Flex/Auto/Percent 轨道 + 自动放置 + 显式行列 + 跨格）、
+//  JustifyContent 六取值、alignSelf / alignItems::End·Baseline、
+//  FlexBasis、rowGap/columnGap、visibility / overflow / letterSpacing。
 //  样式相关示例（Margin / TextAlign / 运行时 Set）见 Samples/Style；
 //  定位相关示例（Relative/Absolute/Fixed/zIndex）见 Samples/Position。
 //
@@ -56,17 +58,21 @@ public:
         : dui::Window(dui::WindowOptions{
               .title  = L"Layout · 布局能力演示",
               .width  = 900.f,
-              .height = 800.f,
+              .height = 900.f,
           }) {}
 
 protected:
     void OnCreate() override {
-        dui::Panel* root = Root();
-        root->SetStyle(dui::Style()
+        // 内容比窗口高 → 放进 Scroller：直接挂在根 Column 上时 flex-shrink 会把
+        // 每一块压扁（内容被压缩、文字却不被裁剪 → 文字溢出块外）。
+        dui::Panel* host = Root();
+        host->SetStyle(dui::Style().Background(0xFFF3F3F3));
+        dui::Scroller* scroll = host->AddChild<dui::Scroller>(dui::Style()
+            .FlexGrow(1.f));   // 视口高度由剩余空间决定（内容超出则在视口内滚动）
+        dui::Panel* root = scroll->AddChild<dui::Panel>(dui::Style()
             .FlexDirection(dui::FlexDirection::Column)
             .Padding(16.f)
             .Gap(10.f)
-            .Background(0xFFF3F3F3)
             .Color(0xFF222222)
             .FontSize(13.f));
 
@@ -156,6 +162,86 @@ protected:
                 .JustifyContent(dui::Justify::Center).AlignItems(dui::Align::Center));
             cell->AddChild<dui::Text>(labels[i]);
         }
+
+        // ---- JustifyContent 六取值：剩余空间怎么分 --------------------------
+        NewCaption(root, L"JustifyContent：Start / Center / End / SpaceBetween / SpaceAround / SpaceEvenly");
+        dui::Panel* justRow = root->AddChild<dui::Panel>(dui::Style()
+            .FlexDirection(dui::FlexDirection::Row)
+            .Gap(8.f));
+        const dui::Justify justs[] = {dui::Justify::Start, dui::Justify::Center, dui::Justify::End,
+                                      dui::Justify::SpaceBetween, dui::Justify::SpaceAround,
+                                      dui::Justify::SpaceEvenly};
+        for (int i = 0; i < 6; ++i) {
+            dui::Panel* cell = justRow->AddChild<dui::Panel>(dui::Style()
+                .Width(140.f).Height(52.f)
+                .Background(0xFFFFFFFF).CornerRadius(4.f)
+                .JustifyContent(justs[i])
+                .Padding(4.f));
+            NewBox(cell, L"1", 0xFF4472C4, 26.f, 26.f);
+            NewBox(cell, L"2", 0xFF70AD47, 26.f, 26.f);
+        }
+
+        // ---- 交叉轴：Start 贴顶 / alignSelf 覆盖 / End 贴底 / Baseline 基线 ----
+        NewCaption(root, L"AlignItems：Start 贴顶 · alignSelf 覆盖 · End 贴底 · Baseline 按首行基线");
+        dui::Panel* crossRow = root->AddChild<dui::Panel>(dui::Style()
+            .FlexDirection(dui::FlexDirection::Row)
+            .Gap(14.f)
+            .Height(92.f)
+            .Background(0xFFE7E6E6).CornerRadius(4.f)
+            .AlignItems(dui::Align::Start));      // 父级：全部贴顶
+        crossRow->AddChild<dui::Panel>(dui::Style()
+            .Width(70.f).Height(28.f).Background(0xFF4472C4).CornerRadius(4.f));
+        crossRow->AddChild<dui::Panel>(dui::Style()
+            .Width(80.f).Height(28.f).Background(0xFFED7D31).CornerRadius(4.f)
+            .AlignSelf(dui::Align::End));         // 单项覆盖：贴底
+        crossRow->AddChild<dui::Text>(L"16 号", dui::Style().FontSize(16.f));
+        crossRow->AddChild<dui::Text>(L"28 号基线对齐", dui::Style().FontSize(28.f));
+
+        // ---- FlexBasis：主轴基准尺寸 ------------------------------------------
+        NewCaption(root, L"FlexBasis：basis=60 + grow=1 → 按基准起算再分剩余");
+        dui::Panel* basisRow = root->AddChild<dui::Panel>(dui::Style()
+            .FlexDirection(dui::FlexDirection::Row)
+            .Gap(8.f));
+        for (int i = 0; i < 3; ++i) {
+            dui::Panel* b = basisRow->AddChild<dui::Panel>(dui::Style()
+                .FlexBasis(60.f).FlexGrow(1.f).Height(46.f)
+                .Background(0xFF4472C4).CornerRadius(4.f)
+                .JustifyContent(dui::Justify::Center).AlignItems(dui::Align::Center));
+            b->AddChild<dui::Text>(L"basis 60", dui::Style().Color(0xFFFFFFFF));
+        }
+
+        // ---- 换行 + 行列间距 --------------------------------------------------
+        NewCaption(root, L"FlexWrap + columnGap 12 / rowGap 20：换行后列间距与行间距分开");
+        dui::Panel* wrapBox = root->AddChild<dui::Panel>(dui::Style()
+            .FlexDirection(dui::FlexDirection::Row)
+            .FlexWrap(dui::FlexWrap::Wrap)
+            .ColumnGap(12.f).RowGap(20.f)
+            .Width(320.f)
+            .Padding(8.f)
+            .Background(0xFFE7E6E6).CornerRadius(4.f));
+        for (int i = 0; i < 6; ++i)
+            NewBox(wrapBox, L"item", 0xFF4472C4, 80.f, 40.f);
+
+        // ---- 可见性 / 溢出裁剪 / 字距 -----------------------------------------
+        NewCaption(root, L"Visibility 隐藏但占位 · Overflow 裁剪到内容盒 · LetterSpacing 字距");
+        dui::Panel* miscRow = root->AddChild<dui::Panel>(dui::Style()
+            .FlexDirection(dui::FlexDirection::Row)
+            .Gap(12.f)
+            .AlignItems(dui::Align::Start));
+        dui::Panel* hiddenBox = miscRow->AddChild<dui::Panel>(dui::Style()
+            .Width(120.f).Height(58.f)
+            .Background(0xFF4472C4).CornerRadius(4.f)
+            .Visibility(dui::Visibility::Hidden));   // 占位但不画
+        hiddenBox->AddChild<dui::Text>(L"看不见", dui::Style().Color(0xFFFFFFFF));
+        dui::Panel* clipBox = miscRow->AddChild<dui::Panel>(dui::Style()
+            .Width(220.f).Height(58.f)
+            .Background(0xFFFFFFFF).CornerRadius(4.f)
+            .Overflow(dui::Overflow::Hidden)           // 内容裁到盒内
+            .Padding(6.f));
+        clipBox->AddChild<dui::Text>(L"overflow hidden：这段文字会超出盒子，但被裁掉了。",
+                                     dui::Style().Color(0xFF222222));
+        miscRow->AddChild<dui::Text>(L"字距 4 DIP", dui::Style()
+            .LetterSpacing(4.f).Color(0xFF222222));
     }
 };
 

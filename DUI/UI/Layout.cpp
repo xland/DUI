@@ -29,6 +29,17 @@ Thickness ElementMargin(const Element* e, const StyleContext& ctx) {
     return {v.f, v.extra[0], v.extra[1], v.extra[2]};
 }
 
+// box-sizing: border-box 时边框**占盒内空间** → 内容可用宽高要再扣边框宽度。
+// 默认 content-box（边框是内描边、不占盒）→ 返回零。
+Thickness ElementBorderBox(const Element* e, const StyleContext& ctx) {
+    if (ResolveProperty(e, Prop::BoxSizing, ctx).u !=
+        static_cast<uint32_t>(dui::BoxSizing::BorderBox)) {
+        return Thickness{};
+    }
+    const StyleValue v = ResolveProperty(e, Prop::BorderWidth, ctx);
+    return {v.f, v.extra[0], v.extra[1], v.extra[2]};
+}
+
 // 每层递归独立的可见子项缓冲（跨帧复用；单线程 UI，ADR-012。Arena 化列 M6）。
 // 两层陷阱：
 //   1. 不能全递归共享一份：子项循环内会递归 ArrangeElement，递归 clear/push_back
@@ -91,7 +102,7 @@ struct GridPlacement {
 // natural 阶段只返回外接尺寸；排布阶段把每个子项的矩形（相对内容盒原点）交给 place。
 template <class Place>
 Vec2 ComputeGrid(const Element* e, const StyleContext& ctx, const Vec2& avail,
-                 bool natural, float gap, Place&& place) {
+                 bool natural, float rowGap, float colGap, Place&& place) {
     const std::vector<GridTrack>* colsDecl = GridTracksOf(e, Prop::GridTemplateColumns);
     const std::vector<GridTrack>* rowsDecl = GridTracksOf(e, Prop::GridTemplateRows);
     const uint32_t nc = colsDecl != nullptr ? static_cast<uint32_t>(colsDecl->size()) : 1u;
@@ -170,8 +181,8 @@ Vec2 ComputeGrid(const Element* e, const StyleContext& ctx, const Vec2& avail,
     colSize.resize(nc, 0.f);
     rowSize.resize(nr, 0.f);
     for (const GridPlacement& p : pl) {
-        const float perCol = (p.child->Measured().x - gap * (p.colSpan - 1)) / p.colSpan;
-        const float perRow = (p.child->Measured().y - gap * (p.rowSpan - 1)) / p.rowSpan;
+        const float perCol = (p.child->Measured().x - colGap * (p.colSpan - 1)) / p.colSpan;
+        const float perRow = (p.child->Measured().y - rowGap * (p.rowSpan - 1)) / p.rowSpan;
         if (perCol > 0.f)
             for (uint32_t i = 0; i < p.colSpan; ++i)
                 colSize[p.col + i] = std::max(colSize[p.col + i], perCol);
@@ -183,7 +194,7 @@ Vec2 ComputeGrid(const Element* e, const StyleContext& ctx, const Vec2& avail,
         return decl != nullptr && i < decl->size()
              ? (*decl)[i] : GridTrack{GridTrackKind::Auto, 0.f};
     };
-    auto ResolveAxis = [&](const std::vector<GridTrack>* decl, std::vector<float>& size, float total) {
+    auto ResolveAxis = [&](const std::vector<GridTrack>* decl, std::vector<float>& size, float total, float gap) {
         const uint32_t n = static_cast<uint32_t>(size.size());
         float fixed = 0.f, shares = 0.f;
         for (uint32_t i = 0; i < n; ++i) {
@@ -209,10 +220,10 @@ Vec2 ComputeGrid(const Element* e, const StyleContext& ctx, const Vec2& avail,
             }
         }
     };
-    ResolveAxis(colsDecl, colSize, avail.x);
-    ResolveAxis(rowsDecl, rowSize, avail.y);
+    ResolveAxis(colsDecl, colSize, avail.x, colGap);
+    ResolveAxis(rowsDecl, rowSize, avail.y, rowGap);
 
-    float totalW = gap * (nc - 1), totalH = gap * (nr - 1);
+    float totalW = colGap * (nc - 1), totalH = rowGap * (nr - 1);
     for (float v : colSize) totalW += v;
     for (float v : rowSize) totalH += v;
     if (natural) return {totalW, totalH};
@@ -220,25 +231,35 @@ Vec2 ComputeGrid(const Element* e, const StyleContext& ctx, const Vec2& avail,
     const uint32_t align = ResolveProperty(e, Prop::AlignItems, ctx).u;
     for (const GridPlacement& p : pl) {
         float x = 0.f, y = 0.f, w = 0.f, h = 0.f;
-        for (uint32_t i = 0; i < p.col; ++i) x += colSize[i] + gap;
-        for (uint32_t i = 0; i < p.row; ++i) y += rowSize[i] + gap;
+        for (uint32_t i = 0; i < p.col; ++i) x += colSize[i] + colGap;
+        for (uint32_t i = 0; i < p.row; ++i) y += rowSize[i] + rowGap;
         for (uint32_t i = 0; i < p.colSpan; ++i) w += colSize[p.col + i];
         for (uint32_t i = 0; i < p.rowSpan; ++i) h += rowSize[p.row + i];
-        w += gap * (p.colSpan - 1);
-        h += gap * (p.rowSpan - 1);
+        w += colGap * (p.colSpan - 1);
+        h += rowGap * (p.rowSpan - 1);
         StyleValue v;
         const bool fixedW = TryResolve(p.child, Prop::Width, ctx, v);
         const bool fixedH = TryResolve(p.child, Prop::Height, ctx, v);
         // 格子矩形是外边距盒；显式 Width/Height 是元素盒，故取已含 margin 的 Measured()
         const float fw = p.child->Measured().x;
         const float fh = p.child->Measured().y;
+        // alignSelf 显式设置则覆盖父的 alignItems（Grid 内不做 Baseline）
+        uint32_t a = align;
+        StyleValue av;
+        if (TryResolve(p.child, Prop::AlignSelf, ctx, av)) a = av.u;
         float cw = fixedW ? fw : w, ch = fixedH ? fh : h;
-        if (align != static_cast<uint32_t>(Align::Stretch)) {
-            cw = fw;   // Start / Center：自然尺寸（含 margin）
+        if (a != static_cast<uint32_t>(Align::Stretch)) {
+            cw = fw;   // Start / Center / End：自然尺寸（含 margin）
             ch = fh;
         }
-        const float cx = x + (align == static_cast<uint32_t>(Align::Center) ? (w - cw) * 0.5f : 0.f);
-        const float cy = y + (align == static_cast<uint32_t>(Align::Center) ? (h - ch) * 0.5f : 0.f);
+        float cx = x, cy = y;
+        if (a == static_cast<uint32_t>(Align::Center)) {
+            cx = x + (w - cw) * 0.5f;
+            cy = y + (h - ch) * 0.5f;
+        } else if (a == static_cast<uint32_t>(Align::End)) {
+            cx = x + (w - cw);
+            cy = y + (h - ch);
+        }
         place(p.child, Rect{cx, cy, cw > 0.f ? cw : 0.f, ch > 0.f ? ch : 0.f});
     }
     return {totalW, totalH};
@@ -250,29 +271,42 @@ Vec2 ComputeGrid(const Element* e, const StyleContext& ctx, const Vec2& avail,
 // Measure：传入选定空间，返回自然（外边距盒）尺寸
 // ---------------------------------------------------------------------------
 
-Vec2 MeasureElement(Element* e, const Vec2& avail, const StyleContext& parentCtx) {
+Vec2 MeasureElement(Element* e, const Vec2& avail, const StyleContext& parentCtx, bool parentRow) {
     if (ResolveProperty(e, Prop::Display, parentCtx).u == static_cast<uint32_t>(Display::None)) {
         e->measured_ = {};
         return {};
     }
 
     const StyleContext ctx = parentCtx.Child(e);
+    // 可见性（继承属性）：隐藏但仍占位。命中测试没有 StyleContext，故布局期落标记。
+    e->hidden_ = ctx.visibility == static_cast<uint32_t>(Visibility::Hidden);
     const Thickness pad = ElementPadding(e, ctx);
     const Thickness mg = ElementMargin(e, ctx);
-    const float ax = avail.x - pad.left - pad.right - mg.left - mg.right;
-    const float ay = avail.y - pad.top - pad.bottom - mg.top - mg.bottom;
+    const Thickness bw = ElementBorderBox(e, ctx);   // border-box：边框占盒内空间
+    const float ax = avail.x - pad.left - pad.right - mg.left - mg.right - bw.left - bw.right;
+    const float ay = avail.y - pad.top - pad.bottom - mg.top - mg.bottom - bw.top - bw.bottom;
     const Vec2 innerAvail{ax > 0.f ? ax : 0.f, ay > 0.f ? ay : 0.f};
     const Vec2 content = e->MeasureContent(ctx, innerAvail);
 
     // size 是元素盒（BorderBox，04-Layout §3）；measured_ 再向外扩出 margin 占位，
     // 父布局的聚合 / grow·shrink / Grid 轨道 / Wrap 装箱统一按外边距盒计算。
-    Vec2 size{content.x + pad.left + pad.right, content.y + pad.top + pad.bottom};
+    // border-box 时盒要装下边框 → 自然尺寸加边框宽度。
+    Vec2 size{content.x + pad.left + pad.right + bw.left + bw.right,
+              content.y + pad.top + pad.bottom + bw.top + bw.bottom};
 
     StyleValue v;
     if (TryResolve(e, Prop::Width, ctx, v))  size.x = v.f;    // BorderBox（04-Layout §3）
     if (TryResolve(e, Prop::Height, ctx, v)) size.y = v.f;
-    if (TryResolve(e, Prop::MinWidth, ctx, v)) if (size.x < v.f) size.x = v.f;
-    if (TryResolve(e, Prop::MaxWidth, ctx, v)) if (size.x > v.f) size.x = v.f;
+    // flex-basis（04-Layout §4.1）：主轴基准尺寸，替代主轴上的 Width / 内容自然尺寸。
+    // 语义按元素盒（与 Width 一致），非 CSS 的 content-box。
+    if (TryResolve(e, Prop::FlexBasis, ctx, v)) {
+        if (parentRow) size.x = v.f;
+        else           size.y = v.f;
+    }
+    if (TryResolve(e, Prop::MinWidth, ctx, v))  if (size.x < v.f) size.x = v.f;
+    if (TryResolve(e, Prop::MaxWidth, ctx, v))  if (size.x > v.f) size.x = v.f;
+    if (TryResolve(e, Prop::MinHeight, ctx, v)) if (size.y < v.f) size.y = v.f;
+    if (TryResolve(e, Prop::MaxHeight, ctx, v)) if (size.y > v.f) size.y = v.f;
 
     e->measured_ = {size.x + mg.left + mg.right, size.y + mg.top + mg.bottom};
     return e->measured_;
@@ -283,10 +317,13 @@ Vec2 MeasureElement(Element* e, const Vec2& avail, const StyleContext& parentCtx
 Vec2 MeasureGridContent(const Element* e, const StyleContext& ctx, const Vec2& avail) {
     for (Element* c : e->Children()) {
         if (ResolveProperty(c, Prop::Display, ctx).u == static_cast<uint32_t>(Display::None)) continue;
-        MeasureElement(c, avail, ctx);
+        MeasureElement(c, avail, ctx, false);   // Grid 里 flex-basis 不适用
     }
-    const float gap = ResolveProperty(e, Prop::Gap, ctx).f;
-    return ComputeGrid(e, ctx, avail, true, gap, [](Element*, const Rect&) {});
+    const float gapAll = ResolveProperty(e, Prop::Gap, ctx).f;
+    StyleValue gv;
+    const float rowGap = TryResolve(e, Prop::RowGap, ctx, gv) ? gv.f : gapAll;
+    const float colGap = TryResolve(e, Prop::ColumnGap, ctx, gv) ? gv.f : gapAll;
+    return ComputeGrid(e, ctx, avail, true, rowGap, colGap, [](Element*, const Rect&) {});
 }
 
 // ---------------------------------------------------------------------------
@@ -306,8 +343,10 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
     e->bounds_ = box;
 
     const Thickness pad = ElementPadding(e, ctx);
-    Rect content{box.x + pad.left, box.y + pad.top,
-                  box.w - pad.left - pad.right, box.h - pad.top - pad.bottom};
+    const Thickness bw = ElementBorderBox(e, ctx);   // border-box：边框占盒内空间
+    Rect content{box.x + pad.left + bw.left, box.y + pad.top + bw.top,
+                  box.w - pad.left - pad.right - bw.left - bw.right,
+                  box.h - pad.top - pad.bottom - bw.top - bw.bottom};
     const bool row = ResolveProperty(e, Prop::FlexDirection, ctx).u ==
                      static_cast<uint32_t>(FlexDirection::Row);
     if (e->GetKind() == Kind::Scroller) {
@@ -317,13 +356,18 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
         if (row) content.w = nat.x;
         else     content.h = nat.y;
     }
-    const float gap = ResolveProperty(e, Prop::Gap, ctx).f;
+    // 间距：gap 是通用值；rowGap / columnGap 未设则各自回落 gap（15-Properties §4.4）
+    const float gapAll = ResolveProperty(e, Prop::Gap, ctx).f;
+    StyleValue gv;
+    const float colGap = TryResolve(e, Prop::ColumnGap, ctx, gv) ? gv.f : gapAll;  // 列间距
+    const float rowGap = TryResolve(e, Prop::RowGap, ctx, gv) ? gv.f : gapAll;     // 行间距
+    const float gap = row ? colGap : rowGap;   // 主轴项间距
     const uint32_t just = ResolveProperty(e, Prop::JustifyContent, ctx).u;
     const uint32_t align = ResolveProperty(e, Prop::AlignItems, ctx).u;
 
     Vec2 extent{};          // 子项外接范围（相对内容盒原点）→ 滚动容器的内容尺寸
     if (ResolveProperty(e, Prop::Display, ctx).u == static_cast<uint32_t>(Display::Grid)) {
-        ComputeGrid(e, ctx, Vec2{content.w, content.h}, false, gap,
+        ComputeGrid(e, ctx, Vec2{content.w, content.h}, false, rowGap, colGap,
             [&](Element* c, const Rect& r) {
                 const Vec2 off = RelativeOffset(c, ctx);
                 const Rect outer{content.x + r.x + off.x, content.y + r.y + off.y, r.w, r.h};
@@ -391,9 +435,22 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
     }
 
     // 依序排列（04-Layout §4.1）：
-    //   主轴：Start（默认）顺序排列；Center 剩余空间均分前后
-    //   交叉轴：Stretch（默认，固定尺寸优先否则拉满）/ Start / Center（固定尺寸否则自然尺寸）
+    //   主轴：Start / Center / End / SpaceBetween / SpaceAround / SpaceEvenly
+    //   交叉轴：Stretch（默认，固定尺寸优先否则拉满）/ Start / Center / End / Baseline
+    //   alignSelf 显式设置则覆盖父的 alignItems
     const float crossLen = row ? content.h : content.w;
+    auto AlignOf = [&](Element* c) -> uint32_t {
+        StyleValue av;
+        if (TryResolve(c, Prop::AlignSelf, ctx, av)) return av.u;
+        return align;
+    };
+    // Baseline：各子项按首行文本基线对齐。基线相对外边距盒顶；
+    // 无文本基线的元素按 CSS 退化为外边距盒底边。
+    auto BaselineOf = [&](Element* c) -> float {
+        const float b = c->FirstBaseline();
+        if (b < 0.f) return c->Measured().y;
+        return ElementMargin(c, ctx).top + ElementPadding(c, ctx).top + b;
+    };
 
     if (wrapRow) {
         // 换行布局（Row + Wrap）：贪心装箱成行（与 MeasureContent 同一规则），
@@ -407,9 +464,17 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
                 StyleValue v;
                 const bool fixedCrossC = TryResolve(cc, Prop::Height, ctx, v);
                 // 显式 Height 是元素盒；Measured() 已含 margin，与外边距盒槽位一致
-                if (align == static_cast<uint32_t>(Align::Center)) {
+                const uint32_t a = AlignOf(cc);
+                if (a == static_cast<uint32_t>(Align::Center)) {
                     cross = cc->Measured().y;
                     crossPos = (lineH - cross) * 0.5f;
+                } else if (a == static_cast<uint32_t>(Align::End)) {
+                    cross = cc->Measured().y;
+                    crossPos = lineH - cross;
+                } else if (a == static_cast<uint32_t>(Align::Start) ||
+                           a == static_cast<uint32_t>(Align::Baseline)) {
+                    // Start：贴起始边不拉伸；Baseline：换行布局暂不支持基线对齐，按自然尺寸
+                    cross = cc->Measured().y;
                 } else if (fixedCrossC) {
                     cross = cc->Measured().y;
                 } else {
@@ -434,7 +499,7 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
                 float lineH = 0.f;
                 for (int j = start; j < i; ++j) lineH = std::max(lineH, items[j]->measured_.y);
                 PlaceLine(start, i, lineY, lineH);
-                lineY += lineH + gap;
+                lineY += lineH + rowGap;
                 lineW = w;
                 start = i;                        // 当前项成为新行首项
             } else {
@@ -447,9 +512,39 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
             PlaceLine(start, n, lineY, lineH);
         }
     } else {
-    float pos = (row ? content.x : content.y) +
-                (just == static_cast<uint32_t>(Justify::Center) && freeSpace > 0.f
-                     ? freeSpace * 0.5f : 0.f);
+    // 主轴排列（CSS justify-content）：剩余空间怎么分
+    float pos = row ? content.x : content.y;
+    float step = gap;
+    if (n > 0 && freeSpace > 0.f) {
+        switch (static_cast<Justify>(just)) {
+        case Justify::Center:
+            pos += freeSpace * 0.5f;
+            break;
+        case Justify::End:
+            pos += freeSpace;
+            break;
+        case Justify::SpaceBetween:      // 首尾贴边，间距均分剩余空间
+            if (n > 1) step = gap + freeSpace / (n - 1);
+            break;
+        case Justify::SpaceAround:       // 每项两侧各分一半剩余空间
+            step = gap + freeSpace / n;
+            pos += freeSpace / (2.f * n);
+            break;
+        case Justify::SpaceEvenly:       // 每项两侧各分一份（含首尾）
+            step = gap + freeSpace / (n + 1);
+            pos += freeSpace / (n + 1);
+            break;
+        default:                         // Start
+            break;
+        }
+    }
+    // Baseline：各子项按首行基线对齐（取本行最大基线，其余上移到同一基线）。
+    // 只在 Row 主轴有意义（基线是垂直概念）；Column 主轴退化为 Start。
+    float maxBaseline = 0.f;
+    for (Element* c : items) {
+        if (row && AlignOf(c) == static_cast<uint32_t>(Align::Baseline))
+            maxBaseline = std::max(maxBaseline, BaselineOf(c));
+    }
     for (Element* c : items) {
         const float main = row ? c->measured_.x : c->measured_.y;
         const float natCross = row ? c->Measured().y : c->Measured().x;   // 含 margin
@@ -457,10 +552,20 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
         float crossPos = 0.f;
         StyleValue v;
         const bool fixedCross = TryResolve(c, row ? Prop::Height : Prop::Width, ctx, v);
-        if (align == static_cast<uint32_t>(Align::Center)) {
+        const uint32_t a = AlignOf(c);
+        if (a == static_cast<uint32_t>(Align::Center)) {
             cross = natCross;
             crossPos = (crossLen - cross) / 2.f;
-        } else if (fixedCross) {          // Start / Stretch 下的固定尺寸
+        } else if (a == static_cast<uint32_t>(Align::End)) {
+            cross = natCross;
+            crossPos = crossLen - cross;
+        } else if (a == static_cast<uint32_t>(Align::Baseline) && row) {
+            cross = natCross;
+            crossPos = maxBaseline - BaselineOf(c);
+        } else if (a == static_cast<uint32_t>(Align::Start) ||
+                   a == static_cast<uint32_t>(Align::Baseline)) {
+            cross = natCross;               // 贴起始边，不拉伸（Column 主轴的 Baseline 退化到此）
+        } else if (fixedCross) {            // Stretch：显式尺寸优先
             cross = natCross;
         } else if (c->GetKind() == Kind::Image) {
             // 图像：未显式指定该轴尺寸 → 用自然尺寸，不被 Stretch 拉满
@@ -473,7 +578,7 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
         const Rect childSlot = row ? Rect{pos + off.x, content.y + crossPos + off.y, main, cross}
                                    : Rect{content.x + crossPos + off.x, pos + off.y, cross, main};
         ArrangeElement(c, childSlot, ctx, depth + 1);
-        pos += main + gap;
+        pos += main + step;
         extent.x = std::max(extent.x, childSlot.Right() - content.x);
         extent.y = std::max(extent.y, childSlot.Bottom() - content.y);
     }
@@ -512,7 +617,7 @@ void RunLayout(Element* root, const Vec2& sizeDip, float scale) {
     ResetAbsoluteAnchors();
     StyleContext ctx;
     ctx.scale = scale > 0.f ? scale : 1.f;   // 图像类控件据此把像素尺寸换算为 DIP
-    MeasureElement(root, sizeDip, ctx);
+    MeasureElement(root, sizeDip, ctx, false);
     ArrangeElement(root, Rect{0.f, 0.f, sizeDip.x, sizeDip.y}, ctx, 0);
 }
 

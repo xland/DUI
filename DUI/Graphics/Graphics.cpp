@@ -24,19 +24,38 @@ namespace {
 // 索引缓冲按此容量一次性分配；超出（>16k quads）在 M5 图集分批时重新设计
 constexpr uint32_t kMaxQuads = 16384;
 
+// 四角圆角半径夹紧（CSS border-radius 溢出规则的简化版）：
+//  ① 每角不超过 min(w,h)/2 —— 超过则圆弧中心跑到盒外，SDF 不再是真实距离
+//     （四角同值时与旧的"统一半径夹到 min(w/2,h/2)"完全一致）；
+//  ② 相邻两角半径之和不超过该边长度 —— 超出则按同一比例缩小全部半径，
+//     避免相邻角互相"吃掉"一条边。
+// r 顺序：左上 / 右上 / 右下 / 左下。
+void ClampRadii(float r[4], float w, float h) {
+    const float lim = std::min(w, h) * 0.5f;
+    for (int i = 0; i < 4; ++i) r[i] = std::clamp(r[i], 0.f, lim);
+    float f = 1.f;
+    const float top = r[0] + r[1], bottom = r[2] + r[3];
+    const float left = r[0] + r[3], right = r[1] + r[2];
+    if (top > w && top > 0.f) f = std::min(f, w / top);
+    if (bottom > w && bottom > 0.f) f = std::min(f, w / bottom);
+    if (left > h && left > 0.f) f = std::min(f, h / left);
+    if (right > h && right > 0.f) f = std::min(f, h / right);
+    if (f < 1.f) for (int i = 0; i < 4; ++i) r[i] *= f;
+}
+
 constexpr char kVS[] = R"(
 struct VSIn {
     float2 pos    : POSITION;
     float2 local  : TEXCOORD0;
     float2 ext    : TEXCOORD1;
-    float  radius : TEXCOORD2;
+    float4 radii  : TEXCOORD2;   // 四角圆角半径：左上 / 右上 / 右下 / 左下
     float4 color  : COLOR;
 };
 struct VSOut {
     float4 svpos  : SV_Position;
     float2 local  : TEXCOORD0;
     float2 ext    : TEXCOORD1;
-    float  radius : TEXCOORD2;
+    float4 radii  : TEXCOORD2;
     float4 color  : COLOR;
 };
 cbuffer PerFrame : register(b0) {
@@ -48,7 +67,7 @@ VSOut VSMain(VSIn i) {
                      1.0 - i.pos.y / g_rtSize.y * 2.0, 0.0, 1.0);
     o.local = i.local;
     o.ext = i.ext;
-    o.radius = i.radius;
+    o.radii = i.radii;
     o.color = i.color;
     return o;
 }
@@ -60,12 +79,20 @@ struct PSIn {
     float4 svpos  : SV_Position;
     float2 local  : TEXCOORD0;
     float2 ext    : TEXCOORD1;
-    float  radius : TEXCOORD2;
+    float4 radii  : TEXCOORD2;   // 四角圆角半径：左上 / 右上 / 右下 / 左下
     float4 color  : COLOR;
 };
+// 四角圆角矩形距离场（r = 左上/右上/右下/左下）。按象限取半径：先按 x 侧
+// （右半 = 右上/右下，左半 = 左上/左下），再按 y 侧取上/下。
+// 四角同值时等价于统一半径的 sdRoundBox（结果逐位一致）。
+float sdRoundBox4(float2 p, float2 b, float4 r) {
+    r.xy = (p.x > 0.0) ? r.yz : r.xw;
+    r.x  = (p.y > 0.0) ? r.y : r.x;
+    float2 q = abs(p) - b + r.x;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r.x;
+}
 float4 PSMain(PSIn i) : SV_Target {
-    float2 q = abs(i.local) - (i.ext - i.radius);
-    float  d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - i.radius;
+    float  d = sdRoundBox4(i.local, i.ext, i.radii);
     // 过渡带固定 1 像素：d 是像素空间的真实距离（梯度模长=1）。
     // 不能用 fwidth —— 它等于 |ddx|+|ddy|，斜向梯度会算出 1.41 倍宽度，
     // 导致同一形状的不同方向粗细不一（斜边粗、直边细）。
@@ -146,16 +173,18 @@ struct VSInS {
     float2 pos       : POSITION;
     float2 local     : TEXCOORD0;
     float4 params    : TEXCOORD1;
-    float2 extraKind : TEXCOORD2;
-    float  halfStroke: TEXCOORD3;
+    float4 radii     : TEXCOORD2;   // 四角圆角半径：左上 / 右上 / 右下 / 左下
+    float2 extraKind : TEXCOORD3;
+    float  halfStroke: TEXCOORD4;
     float4 color     : COLOR;
 };
 struct VSOutS {
     float4 svpos     : SV_Position;
     float2 local     : TEXCOORD0;
     float4 params    : TEXCOORD1;
-    float2 extraKind : TEXCOORD2;
-    float  halfStroke: TEXCOORD3;
+    float4 radii     : TEXCOORD2;
+    float2 extraKind : TEXCOORD3;
+    float  halfStroke: TEXCOORD4;
     float4 color     : COLOR;
 };
 cbuffer PerFrame : register(b0) {
@@ -167,6 +196,7 @@ VSOutS VSMain(VSInS i) {
                      1.0 - i.pos.y / g_rtSize.y * 2.0, 0.0, 1.0);
     o.local = i.local;
     o.params = i.params;
+    o.radii = i.radii;
     o.extraKind = i.extraKind;
     o.halfStroke = i.halfStroke;
     o.color = i.color;
@@ -179,8 +209,9 @@ struct PSInS {
     float4 svpos     : SV_Position;
     float2 local     : TEXCOORD0;
     float4 params    : TEXCOORD1;
-    float2 extraKind : TEXCOORD2;
-    float  halfStroke: TEXCOORD3;
+    float4 radii     : TEXCOORD2;
+    float2 extraKind : TEXCOORD3;
+    float  halfStroke: TEXCOORD4;
     float4 color     : COLOR;
 };
 // 线段距离（胶囊本体）
@@ -198,10 +229,12 @@ float sdEllipse(float2 p, float2 r) {
     float2 dir = (k > 1e-5) ? q / k : float2(1.0, 0.0);
     return (k - 1.0) * length(rr * dir);
 }
-// 圆角矩形
-float sdRoundBox(float2 p, float2 b, float r) {
-    float2 q = abs(p) - b + r;
-    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+// 四角圆角矩形（r = 左上/右上/右下/左下）：按象限取半径，四角同值时等价于统一半径
+float sdRoundBox4(float2 p, float2 b, float4 r) {
+    r.xy = (p.x > 0.0) ? r.yz : r.xw;
+    r.x  = (p.y > 0.0) ? r.y : r.x;
+    float2 q = abs(p) - b + r.x;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r.x;
 }
 float4 PSMain(PSInS i) : SV_Target {
     float d;
@@ -210,7 +243,7 @@ float4 PSMain(PSInS i) : SV_Target {
     } else if (i.extraKind.y < 1.5) {     // 椭圆
         d = sdEllipse(i.local, i.params.xy);
     } else {                              // 圆角矩形 / 阴影圆角矩形
-        d = sdRoundBox(i.local, i.params.xy, i.extraKind.x);
+        d = sdRoundBox4(i.local, i.params.xy, i.radii);
     }
     float cov;
     if (i.extraKind.y > 2.5) {
@@ -357,7 +390,8 @@ void Painter::AddImageQuad(uint32_t texture, const Rect& dipRect, Color color, f
 // 含 origin 的坐标与局部 SDF 参数原样保留，变换在发射期施加。
 void Painter::PushShapeQuad(float cx, float cy, float hw, float hh,
                             float p0x, float p0y, float p1x, float p1y,
-                            float extra, float halfStroke, Color color, uint32_t kind) {
+                            float extra, float halfStroke, Color color, uint32_t kind,
+                            const CornerRadii& radii) {
     if (hw <= 0.f || hh <= 0.f) return;
     // 形状批的 cov 用 smoothstep(-0.5, 0.5, d)，需要 1 像素 AA 过渡带。
     // 调用方给的 hw/hh 正好是形状外沿，圆弧 / 圆头在左右（上下）极值处与 quad 边
@@ -369,6 +403,7 @@ void Painter::PushShapeQuad(float cx, float cy, float hw, float hh,
     c.p[0] = cx; c.p[1] = cy; c.p[2] = hw; c.p[3] = hh;
     c.p[4] = p0x; c.p[5] = p0y; c.p[6] = p1x; c.p[7] = p1y;
     c.p[8] = extra; c.p[9] = halfStroke; c.p[10] = static_cast<float>(kind);
+    c.p[11] = radii.tl; c.p[12] = radii.tr; c.p[13] = radii.br; c.p[14] = radii.bl;
 }
 
 // 线段：胶囊 SDF（圆头端点），线宽 = widthDip
@@ -417,7 +452,7 @@ void Painter::StrokeEllipse(Vec2 center, float rxDip, float ryDip, Color color,
 }
 
 // 圆角矩形描边
-void Painter::StrokeRoundRect(const Rect& dipRect, float radiusDip, float widthDip,
+void Painter::StrokeRoundRect(const Rect& dipRect, const CornerRadii& radii, float widthDip,
                               Color color, float scale) {
     const float ox = (dipRect.x + originDipX_) * scale;
     const float oy = (dipRect.y + originDipY_) * scale;
@@ -425,20 +460,25 @@ void Painter::StrokeRoundRect(const Rect& dipRect, float radiusDip, float widthD
     const float h = dipRect.h * scale;
     if (w <= 0.f || h <= 0.f) return;
     const float half = std::max(widthDip * scale, 1.f) * 0.5f;
-    float radius = radiusDip * scale;
-    if (radius < 1.f) radius = 0.f;
-    if (radius > w * 0.5f) radius = w * 0.5f;
-    if (radius > h * 0.5f) radius = h * 0.5f;
+    float r[4] = {radii.tl * scale, radii.tr * scale, radii.br * scale, radii.bl * scale};
+    for (int i = 0; i < 4; ++i) if (r[i] < 1.f) r[i] = 0.f;
+    ClampRadii(r, w, h);
     const float cx = ox + w * 0.5f;
     const float cy = oy + h * 0.5f;
     const float hw = w * 0.5f;
     const float hh = h * 0.5f;
-    PushShapeQuad(cx, cy, hw + half, hh + half, hw, hh, 0.f, 0.f, radius, half, color, 2);
+    PushShapeQuad(cx, cy, hw + half, hh + half, hw, hh, 0.f, 0.f, 0.f, half, color, 2,
+                  CornerRadii{r[0], r[1], r[2], r[3]});
+}
+
+void Painter::StrokeRoundRect(const Rect& dipRect, float radiusDip, float widthDip,
+                              Color color, float scale) {
+    StrokeRoundRect(dipRect, CornerRadii(radiusDip), widthDip, color, scale);
 }
 
 // 阴影（box-shadow 子集）：kind 3 = 阴影圆角矩形，halfStroke 复用为 blur 像素。
 // quad 外扩 blur 让衰减带有采样范围；SDF 参数（半 ext / 圆角）仍是元素盒本身。
-void Painter::ShadowRoundRect(const Rect& dipRect, float radiusDip, float blurDip,
+void Painter::ShadowRoundRect(const Rect& dipRect, const CornerRadii& radii, float blurDip,
                               Color color, float scale) {
     if (blurDip <= 0.f) return;
     // 盒边界对齐到整数物理像素：DPI 缩放会让 d=0 边界落在任意小数相位，
@@ -450,25 +490,35 @@ void Painter::ShadowRoundRect(const Rect& dipRect, float radiusDip, float blurDi
     const float w = x1 - x0;
     const float h = y1 - y0;
     if (w <= 0.f || h <= 0.f) return;
-    float radius = radiusDip * scale;
-    if (radius < 1.f) radius = 0.f;
-    if (radius > w * 0.5f) radius = w * 0.5f;
-    if (radius > h * 0.5f) radius = h * 0.5f;
+    float r[4] = {radii.tl * scale, radii.tr * scale, radii.br * scale, radii.bl * scale};
+    for (int i = 0; i < 4; ++i) if (r[i] < 1.f) r[i] = 0.f;
+    ClampRadii(r, w, h);
     const float blur = blurDip * scale;
     const float cx = (x0 + x1) * 0.5f;
     const float cy = (y0 + y1) * 0.5f;
     const float hw = w * 0.5f;
     const float hh = h * 0.5f;
-    PushShapeQuad(cx, cy, hw + blur, hh + blur, hw, hh, 0.f, 0.f, radius, blur, color, 3);
+    PushShapeQuad(cx, cy, hw + blur, hh + blur, hw, hh, 0.f, 0.f, 0.f, blur, color, 3,
+                  CornerRadii{r[0], r[1], r[2], r[3]});
 }
 
-void Painter::FillRoundedRect(const Rect& dipRect, float radiusDip, Color color, float opacity, float) {
+void Painter::ShadowRoundRect(const Rect& dipRect, float radiusDip, float blurDip,
+                              Color color, float scale) {
+    ShadowRoundRect(dipRect, CornerRadii(radiusDip), blurDip, color, scale);
+}
+
+void Painter::FillRoundedRect(const Rect& dipRect, const CornerRadii& radii, Color color,
+                              float opacity, float) {
     if (dipRect.w <= 0.f || dipRect.h <= 0.f) return;
     // 存 DIP 原值：origin / scale / 变换都在发射期施加（10-Rendering §6.2）
     PaintCommand& c = NewCommand(PaintOp::Rect, 0, PackColor(color, opacity));
     c.p[0] = dipRect.x; c.p[1] = dipRect.y;
     c.p[2] = dipRect.w; c.p[3] = dipRect.h;
-    c.p[4] = radiusDip;
+    c.p[4] = radii.tl; c.p[5] = radii.tr; c.p[6] = radii.br; c.p[7] = radii.bl;
+}
+
+void Painter::FillRoundedRect(const Rect& dipRect, float radiusDip, Color color, float opacity, float scale) {
+    FillRoundedRect(dipRect, CornerRadii(radiusDip), color, opacity, scale);
 }
 
 // ---------------------------------------------------------------------------
@@ -582,8 +632,8 @@ bool Device::Init(HWND hwnd, bool transparent, String& error) {
             {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 8,  D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"TEXCOORD", 2, DXGI_FORMAT_R32_FLOAT,       0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"COLOR",    0, DXGI_FORMAT_R8G8B8A8_UNORM,  0, 28, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"COLOR",    0, DXGI_FORMAT_R8G8B8A8_UNORM,  0, 40, D3D11_INPUT_PER_VERTEX_DATA, 0},
         };
         hr = dev_->CreateInputLayout(kLayout, 5, vsBlob->GetBufferPointer(),
                                      vsBlob->GetBufferSize(), &layout_);
@@ -652,11 +702,12 @@ bool Device::Init(HWND hwnd, bool transparent, String& error) {
             {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,   0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,   0,  8, D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT,   0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"TEXCOORD", 3, DXGI_FORMAT_R32_FLOAT,      0, 40, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"COLOR",    0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 44, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 3, DXGI_FORMAT_R32G32_FLOAT,   0, 48, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 4, DXGI_FORMAT_R32_FLOAT,      0, 56, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"COLOR",    0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 60, D3D11_INPUT_PER_VERTEX_DATA, 0},
         };
-        hr = dev_->CreateInputLayout(kLayoutS, 6, vsSBlob->GetBufferPointer(),
+        hr = dev_->CreateInputLayout(kLayoutS, 7, vsSBlob->GetBufferPointer(),
                                      vsSBlob->GetBufferSize(), &layoutS_);
     }
     vsSBlob->Release();
@@ -887,16 +938,16 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
                 const float x1 = std::round((c.p[0] + st.originDipX + c.p[2]) * scale);
                 const float y1 = std::round((c.p[1] + st.originDipY + c.p[3]) * scale);
                 const float w = x1 - x0, h = y1 - y0;
-                float radius = c.p[4] * scale;
-                if (radius < 1.f) radius = 0.f;
-                if (radius > w * 0.5f) radius = w * 0.5f;
-                if (radius > h * 0.5f) radius = h * 0.5f;
+                float rr[4] = {c.p[4] * scale, c.p[5] * scale, c.p[6] * scale, c.p[7] * scale};
+                for (int i = 0; i < 4; ++i) if (rr[i] < 1.f) rr[i] = 0.f;
+                ClampRadii(rr, w, h);
                 const float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
                 const float hw = w * 0.5f, hh = h * 0.5f;
                 Vertex* v = reinterpret_cast<Vertex*>(out);
                 for (int i = 0; i < 4; ++i) {
                     const Vec2 q = Xf(cx + kSx[i] * hw, cy + kSy[i] * hh);
-                    v[i] = Vertex{q.x, q.y, kSx[i] * hw, kSy[i] * hh, hw, hh, radius, c.color};
+                    v[i] = Vertex{q.x, q.y, kSx[i] * hw, kSy[i] * hh, hw, hh,
+                                  rr[0], rr[1], rr[2], rr[3], c.color};
                 }
             } else if (c.op == static_cast<uint32_t>(PaintOp::Glyph)) {
                 // 字形位图按整像素 hinting 光栅，quad 必须落在整像素网格上：
@@ -930,6 +981,7 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
                     const Vec2 q = Xf(cx + kSx[i] * hw, cy + kSy[i] * hh);
                     v[i] = ShapeVertex{q.x, q.y, kSx[i] * hw, kSy[i] * hh,
                                        c.p[4], c.p[5], c.p[6], c.p[7],
+                                       c.p[11], c.p[12], c.p[13], c.p[14],
                                        c.p[8], c.p[10], c.p[9], c.color};
                 }
             }

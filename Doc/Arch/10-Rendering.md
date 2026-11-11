@@ -127,13 +127,13 @@
 
 ### 6.1 有序显示列表与批合并（B2）
 
-- **收集期**（`Painter`）：按元素树遍历顺序记录 `PaintCommand`（定宽 64 B：`op` / 状态槽索引 / 资源 id / 打包颜色 / 11 个参数）+ `PaintState`（DIP 空间变换 + 滚动原点）。指令不含烘焙后的窗口坐标（字形例外，见下），滚动只改状态槽；容量跨帧复用，稳态零分配。
+- **收集期**（`Painter`）：按元素树遍历顺序记录 `PaintCommand`（定宽 80 B：`op` / 状态槽索引 / 资源 id / 打包颜色 / 16 个参数）+ `PaintState`（DIP 空间变换 + 滚动原点）。指令不含烘焙后的窗口坐标（字形例外，见下），滚动只改状态槽；容量跨帧复用，稳态零分配。
 - **坐标空间**：`Rect` / `Image` 存 DIP 原值，`Shape` 存记录期换算好的物理像素（含 origin），`Glyph` 存布局空间物理像素 —— 字形绑定当前 DPI 下光栅化的图集位图与 1/4 像素相位，故 **DPI/resize 时字形指令须整体重收集**（与浏览器按 `(device scale, font, size)` 分桶的字形缓存同理）。其余指令可跨 scale 复用。
 - **状态槽**：`SetTransform` / `SetOrigin` 追加或复用状态槽，指令按索引引用。像素空间有效矩阵 `E = Translate(originPx) · xform(px) · Translate(−originPx)` 由 `Painter::StateTransform()` 统一推导，发射期与裁剪 AABB 共用。
 - **发射期**（`Device::Render`）：一遍流式遍历指令，按 `op` 展开成 4 顶点写入动态 VB。顶点按**段顺序线性排布**；段 = 连续同 `op`（着色器 / 顶点格式）+ 同 `resource`（图集页 / 纹理）的指令，且**不得跨绘制单元**（scissor 是单元级），单段 quad 数受静态 IB 容量 `kMaxQuads` 限制。
 - **提交**：静态 IB 是 0-based 局部 quad 索引（`q*4` 起 6 个索引）。每段把 VB 绑到自身字节起点 → `StartIndexLocation = 0`、`BaseVertexLocation = 0`，`DrawIndexed(quadCount*6, 0, 0)`；跨段只切 layout / stride / shader / SRV（相同则缓存跳过）。**不再有负 `BaseVertexLocation` 与跨单元 `quadBase`**。
 - **严格 z 序**：段顺序 = 指令顺序 = 绘制顺序，故单元内严格 painter's algorithm —— 后画的图元无论属于哪一类，都完整遮盖先画者的全部内容（含文字）。半透明按序混合，不引入 depth buffer。跨单元顺序仍由单元顺序决定（scissor / 滚动原点 / 窗口级 Fixed 层仍是单元边界）。
-- 顶点格式：`Vertex` 32 B、`GlyphVertex` 20 B（字形与图像共用）、`ShapeVertex` 48 B；共用一块动态 VB，容量按最大 48 B/顶点预留，上传量与段划分无关。
+- 顶点格式：`Vertex` 44 B（四角圆角半径各占一个 float）、`GlyphVertex` 20 B（字形与图像共用）、`ShapeVertex` 64 B；共用一块动态 VB，容量按最大 64 B/顶点预留，上传量与段划分无关。
 - **代价**：Draw Call = O(段数)，段数 ≈ 绘制序列的批切换次数（典型 UI 每个元素「背景 → 文字」交替 → ≈ 2×元素数），与 R3「Draw Call 与元素数解耦」存在张力。P1 已落地的指令级视口剔除在发射期丢掉屏外 / 被裁剪的指令（不生成顶点、不建段），段数只按可见指令计算；不变子树指令缓存与 P2 tile 脏区光栅 / 合成层继续摊薄（§8）。
 - 指标：Draw Call 数、段数、顶点数纳入观测（ADR-015：以指标跟踪回归，不设硬门槛）。
 
@@ -143,7 +143,7 @@
 
 | 着色器 | 覆盖 |
 | --- | --- |
-| 纯色/渐变 + SDF 圆角 | `Rect` / `RoundedRect`（圆角矩形在片元内按距离场裁形，一次 draw，无 stencil） |
+| 纯色/渐变 + SDF 圆角 | `Rect` / `RoundedRect`（圆角矩形在片元内按距离场裁形，一次 draw，无 stencil）；**四角独立圆角**（`radii` = 左上/右上/右下/左下，逐象限取半径的 `sdRoundBox4`） |
 | SDF 图元 | `Shape`（胶囊线段 / 椭圆 / 圆角矩形，填充与描边；kind 分支求局部空间有符号距离） |
 | 图集采样 | 字形（灰度 AA，DWrite 直出整像素覆盖率）、图标、图片 |
 | 阴影（已落地） | `Shape` kind=3：圆角矩形 SDF + 以元素边界为中心的宽衰减带（box-shadow 子集，无纹理/离屏） |

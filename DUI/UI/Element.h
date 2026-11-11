@@ -105,7 +105,8 @@ public:
     const Style* StylePtr() const noexcept { return style_; }
 
     // 运行时动态值（当前帧）；静态外观不要走这里（03-Style §6.1）。
-    // 标量 / 枚举 / 颜色写 f·u 槽；Thickness 写 f + extra 三边；字体族写零拷贝指针。
+    // 标量 / 枚举 / 颜色写 f·u 槽；Thickness 写 f + extra 三边；CornerRadii 写
+    // f + extra 三角（四角圆角）；字体族写零拷贝指针。
     // 整体替换同 Prop 的 StyleValue，避免 Thickness / family 的旧槽残留。
     template <class V>
     void Set(Prop p, V v) {
@@ -115,12 +116,19 @@ public:
             nv.u = static_cast<uint32_t>(v);
         } else if constexpr (std::is_floating_point_v<V>) {
             nv.f = static_cast<float>(v);
-            if (IsThicknessProp(p)) nv.extra[0] = nv.extra[1] = nv.extra[2] = nv.f;
+            // 四边厚度 / 四角圆角：标量按"全部同值"展开
+            if (IsThicknessProp(p) || IsCornerRadiusProp(p))
+                nv.extra[0] = nv.extra[1] = nv.extra[2] = nv.f;
         } else if constexpr (std::is_same_v<V, dui::Thickness>) {
             nv.f = v.left;
             nv.extra[0] = v.top;
             nv.extra[1] = v.right;
             nv.extra[2] = v.bottom;
+        } else if constexpr (std::is_same_v<V, dui::CornerRadii>) {
+            nv.f = v.tl;
+            nv.extra[0] = v.tr;
+            nv.extra[1] = v.br;
+            nv.extra[2] = v.bl;
         } else if constexpr (std::is_convertible_v<V, const wchar_t*>) {
             nv.family = v;   // 零拷贝：指针须存活到覆盖被替换（建议字面量）
         } else {
@@ -132,16 +140,39 @@ public:
     // 命令式属性动画（05-Animation）：启动一条补间，返回可取消的句柄。
     // 起点 = 当前显示值（含正在进行的动画值）；同 (元素, 属性) 新动画替换旧动画。
     // 动画值写入级联第 1 层，不改动 Set() 的本地覆盖。
+    // 值类型：float（标量）/ Color（ARGB 四通道）/ Thickness（四边）/ CornerRadii（四角）；
+    // 后两者按四通道分别插值，共用同一条时间轴与缓动。
     template <class T>
     AnimationHandle Animate(AnimProp<T> prop, std::type_identity_t<T> target,
                             AnimConfig cfg) {
-        static_assert(std::is_same_v<T, float> || std::is_same_v<T, dui::Color>,
-                      "dui::Element::Animate: only float / Color properties are animatable");
+        static_assert(std::is_same_v<T, float> || std::is_same_v<T, dui::Color> ||
+                          std::is_same_v<T, dui::Thickness> || std::is_same_v<T, dui::CornerRadii>,
+                      "dui::Element::Animate: only float / Color / Thickness / CornerRadii "
+                      "properties are animatable");
         StyleValue to;
         to.prop = prop.prop;
-        if constexpr (std::is_same_v<T, dui::Color>) to.u = target;
-        else to.f = target;
-        return StartAnimation(prop.prop, std::is_same_v<T, dui::Color>, to, cfg);
+        AnimKind kind = AnimKind::Scalar;
+        if constexpr (std::is_same_v<T, dui::Color>) {
+            to.u = target;
+            kind = AnimKind::Color;
+        } else if constexpr (std::is_same_v<T, dui::Thickness>) {
+            // Thickness 四边：f = left，extra = top/right/bottom（与 Style::Padding 同口径）
+            to.f = target.left;
+            to.extra[0] = target.top;
+            to.extra[1] = target.right;
+            to.extra[2] = target.bottom;
+            kind = AnimKind::Quad;
+        } else if constexpr (std::is_same_v<T, dui::CornerRadii>) {
+            // 四角：f = 左上，extra = 右上/右下/左下（与 Style::CornerRadius 同口径）
+            to.f = target.tl;
+            to.extra[0] = target.tr;
+            to.extra[1] = target.br;
+            to.extra[2] = target.bl;
+            kind = AnimKind::Quad;
+        } else {
+            to.f = target;
+        }
+        return StartAnimation(prop.prop, kind, to, cfg);
     }
 
     // 状态变体（03-Style §6.2）：每个状态一份差异集，状态位成立时立即生效、
@@ -151,7 +182,8 @@ public:
     const Style* StateVariant(State s) const noexcept;
 
     // 状态位：相同值幂等（03-Style §6.2）；标脏按该状态变体的属性标志取并集
-    void SetState(State s, bool on);
+    // virtual：自绘外观的控件（Scroller 的滑块配色随悬停变）需在状态变化时刷新
+    virtual void SetState(State s, bool on);
     bool HasState(State s) const noexcept { return (states_ & static_cast<uint32_t>(s)) != 0; }
 
     // 生命周期令牌（06-Events D7）：M2 起在延迟删除时置 false
@@ -311,6 +343,14 @@ public:
     // Measure 结果（外边距盒 = 元素盒 + margin）：Grid / 自定义布局读子项占位用
     Vec2 Measured() const noexcept { return measured_; }
 
+    // 可见性（visibility: hidden）：占位但不画、不命中。布局期按继承算好后写入
+    // （命中测试没有 StyleContext，故用布局期结果，避免每次命中都上溯父链）。
+    bool Hidden() const noexcept { return hidden_; }
+
+    // 首行文本基线（相对内容盒顶部，DIP）：供 align-items: baseline 对齐用。
+    // 默认无基线（-1）；Text 覆盖为 DWrite 排版出来的首行基线。
+    virtual float FirstBaseline() const { return -1.f; }
+
     // 失效查询 / 粗粒度入口（窗口尺寸、DPI 变化等）
     bool SubtreeDirty() const noexcept { return subtreeDirty_; }
     void InvalidateLayout() noexcept { MarkDirty(kFlagLayout); }
@@ -383,7 +423,7 @@ protected:
 
 private:
     // 命令式动画（实现在 UI/Animation.cpp）
-    AnimationHandle StartAnimation(Prop p, bool color, const StyleValue& to,
+    AnimationHandle StartAnimation(Prop p, AnimKind kind, const StyleValue& to,
                                    const AnimConfig& cfg);
     void TickAnimations(uint64_t nowMs);
     uint32_t StateVariantFlags(State s) const;   // 变体属性的失效标志并集
@@ -398,12 +438,13 @@ private:
 
     bool focusable_ = false;   // 可聚焦（Tab 链成员）
     int  tabIndex_ = 0;        // Tab 链次序（见 SetTabIndex 注释）
+    bool hidden_ = false;      // visibility: hidden（布局期写；命中 / 绘制读）
 
 private:
     // 布局 / 解析 / 事件实现（Layout.cpp、StyleResolve.cpp、Event.cpp）
     friend bool TryResolveElement(const Element* e, Prop p, StyleValue& out);
     friend bool SubtreeLayoutDirty(const Element* e);
-    friend Vec2 MeasureElement(Element* e, const Vec2& avail, const StyleContext& parentCtx);
+    friend Vec2 MeasureElement(Element* e, const Vec2& avail, const StyleContext& parentCtx, bool parentRow);
     friend void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx, unsigned depth);
     friend void ClearDirtyTree(Element* root);
     friend void detail::TickAnimations(uint64_t nowMs);
@@ -420,8 +461,27 @@ private:
     bool                       subtreeDirty_ = false;   // 子树有待处理（上溯快速判定）
 };
 
+// 内容盒（= 元素盒去掉内边距；box-sizing: border-box 时再去掉边框宽度）。
+// 框架默认 content-box：边框是**内描边、不占盒** → 只去内边距（现状不变）；
+// border-box：边框占盒内空间 → 内容区 = 盒 − 内边距 − 边框。
+inline Rect ContentRectOf(const Element* e) {
+    const Thickness pad = ValueAsThickness(ResolveProperty(e, Prop::Padding));
+    const Rect b = e->Bounds();
+    float bl = 0.f, br = 0.f, bt = 0.f, bb = 0.f;
+    if (ResolveProperty(e, Prop::BoxSizing).u ==
+        static_cast<uint32_t>(dui::BoxSizing::BorderBox)) {
+        const Thickness bw = ValueAsThickness(ResolveProperty(e, Prop::BorderWidth));
+        bl = bw.left; br = bw.right; bt = bw.top; bb = bw.bottom;
+    }
+    const float w = b.w - pad.left - pad.right - bl - br;
+    const float h = b.h - pad.top - pad.bottom - bt - bb;
+    return Rect{b.x + pad.left + bl, b.y + pad.top + bt,
+                w > 0.f ? w : 0.f, h > 0.f ? h : 0.f};
+}
+
 // 布局实现入口（UI/Layout.cpp；Element::MeasureContent 聚合子项时调用）
-Vec2 MeasureElement(Element* e, const Vec2& avail, const StyleContext& parentCtx);
+// parentRow：父容器主轴是否为 Row（决定 flex-basis 落在宽还是高）
+Vec2 MeasureElement(Element* e, const Vec2& avail, const StyleContext& parentCtx, bool parentRow);
 // Grid 容器的自然尺寸（04-Layout §4.2）；MeasureContent 在 Display::Grid 分支调用
 Vec2 MeasureGridContent(const Element* e, const StyleContext& ctx, const Vec2& avail);
 

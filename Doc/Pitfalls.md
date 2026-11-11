@@ -82,7 +82,19 @@
 - **Debug 配置不受影响**：没开 /GL → 无 LTCG 回写 → 无竞态（并行全量构建已验证零警告）。
 - 注意 `/Z7` 的枚举值是 `OldStyle`（`Embedded` 不是合法值，MSBuild 会报"元素 DebugInformationFormat 具有无效值"）。
 
-### 2.10 颜色约定 0xAARRGGBB（M5.10）
+### 2.10 指针事件坐标没换算到元素空间（M5.49）
+**现象**：元素放在 `Scroller` 里时，点它 ≠ 点它 —— 光标 / 选区落到别处。实测：点图片右侧的空白，RichEditor 的光标却跳进上方的**引用块行尾**（差值正好等于滚动偏移量）。
+
+**机制**：`HitTest` 命中时会把客户区坐标**加上滚动容器的滚动偏移**再与内容盒比较（内容画在 `单元空间 − 偏移`，命中要反过来加偏移），所以**命中元素是对的**；但派发指针事件时用的仍是**客户区坐标**（`DispatchPointerDown(hit, pt, …)`），而控件（`TextBox` / `RichEditor`）是"拿 `ev.pos` 减自己的内容盒原点"求局部位置 —— 坐标空间差了一个滚动偏移量，光标就落到了偏移后的错误位置。
+
+**修法**：命中测试顺带产出命中点的单元空间坐标，派发时用它：
+- `HitTest(root, pt, Vec2* outLocal)` —— `outLocal` = 命中元素所在单元空间（沿链累计滚动偏移 + 逐层 transform 逆变换）；命中容器自身（滚动条 / padding 区）时取容器自身空间的坐标。
+- `ClientToLocal(e, pt)` —— 客户区坐标 → 指定元素的单元空间（指针捕获期间 Move/Up 直达捕获者，捕获者未必是命中元素，用它换算）。
+- App 层所有指针派发（Move / Down / Up / Click / Hover / Wheel）改用该坐标；滚动条命中与滑块拖拽仍用客户区坐标（滚动条矩形画在容器父级空间，与内容偏移无关）。
+
+**注意**：不在滚动容器里的元素，单元空间 == 客户区空间，行为完全不变（零回归）；冒泡到滚动容器**之外**的祖先时，坐标是命中元素所在单元空间，祖先若要精确坐标需自行换算。
+
+### 2.11 颜色约定 0xAARRGGBB（M5.10）
 低字节 R、高字节 A。`0xFF000000` 是不透明黑不是白；白色写 `0xFFFFFFFF`。
 
 ---
@@ -113,51 +125,66 @@ DirectWrite 仅支持 ttf/otf/ttc；woff/woff2 需先转 ttf。`Shape` 里族名
 
 ---
 
-## 4. 语言与工程
+## 4. 布局与样式
 
-### 4.1 类作用域同名遮蔽（M1）
+### 4.1 flex-shrink 压扁容器 → 文字溢出块外（M5.52 排查）
+**现象**：文本画到父容器外面（第二行溢出白块底边），看着像"排版高度算错"。
+**根因**：排版与测量都**对**，是 **Arrange 阶段的 flex-shrink** —— 父 Column 容器的内容总高超过视口 → `flex-shrink`（默认 1）把每个子块的主轴尺寸压到**小于内容高** → 容器被压扁，而**文字不裁剪**（`overflow: visible`，同 CSS）→ 文字溢出块外。
+**诊断链（可复用）**：
+1. 探针打印 `MeasureElement` 的 `content/size/measured` → 测量**正确**（Text 76.02、块 96.02）；
+2. 探针打印 `Text::MeasureContent` 的 `ctx.lineHeight` 与引擎 `metrics.h` → 排版**正确**（DWrite `PROPORTIONAL 1.6` → 76.02）；
+3. 最终 `Bounds` 与测量值不符 → 差异出在 **Arrange 阶段**；
+4. 打印根容器自然高 vs 视口高 → 自然高 1282.6 > 视口 1068 → shrink 生效。
+**修法**：长内容放进 `dui::Scroller`（视口固定、内容内部滚动）；或容器 `overflow: hidden` 显式截断；或 `min-height` 保护内容高。
+**反直觉的一点**：给 `Scroller` 设 `FlexShrink(0)` 会让它保持"自然高"（= 内容高）→ 视口比内容还大 → `MaxScrollY()==0` → **不出滚动条**。要让它收缩成视口高：`flex-grow: 1` + **默认的** `flex-shrink: 1`。
+
+---
+
+## 5. 语言与工程
+
+### 5.1 类作用域同名遮蔽（M1）
 方法名与类型同名（`Display`/`Color`/`FontWeight`/`Lifetime`）时，类内引用该类型必须写全限定 `dui::Xxx`。
 
-### 4.2 /EHs-c- 下禁用会抛异常的 STL 用法（M3/M5.10）
+### 5.2 /EHs-c- 下禁用会抛异常的 STL 用法（M3/M5.10）
 `std::vector::insert`、`std::ofstream` 等触发 C4530。改 `push_back`、Win32 文件 API。异常关闭时 `unhandled_exception` 一律 `std::terminate()`。
 
-### 4.3 工程文件：IntDir 必须写在 Microsoft.Cpp.props **之后**（M3）
+### 5.3 工程文件：IntDir 必须写在 Microsoft.Cpp.props **之后**（M3）
 写在前 面 `$(ProjectName)` 为空 → 中间文件落盘符根目录 `\x64\Debug`、MSB8028 互踩。且用 `$(MSBuildProjectName)` 而非 `$(ProjectName)`。
 
-### 4.4 WIC（M5.10）
+### 5.4 WIC（M5.10）
 - `IWICFormatConverter::Initialize` 是 **6 参数**版（Win7+ 签名）。
 - SDK 里没有 `wincodec.lib`，import lib 叫 **`windowscodecs.lib`**——用 `#pragma comment(lib, ...)` 随编译单元携带，不动 `DUI.props` 公共基线。
 - 自造 BMP 头精确 14+40 字节（`biPlanes`/`biBitCount` 各 2 字节），多写 6 字节越界写坏堆（`free_dbg` 报堆损坏）。
 
-### 4.5 公共头边界
+### 5.5 公共头边界
 ~~`DUI.h` 与 UI 层公共头不得引入 windows.h~~ **约束已取消**（2026-11-11）：公共头允许 windows.h（M5.27 起已实际引入）；d3d11 / dwrite 等重图形头仍只随实现层头出现。功能类能力归 Core 且允许直接用系统 API —— 剪贴板在 `Core/Clipboard`（原「App 层注入 UI 函数指针」方案废除）。import lib 用 `#pragma comment(lib)` 随编译单元携带，不动 `DUI.props`。
 
 **d3d11.h 不能进公共头**（2026-11-11 实测）：`d3d11.h` 第 26-27 行 `#include "rpc.h"` / `#include "rpcndr.h"`，而 `rpcndr.h:201` 是 `#define small char` → 业务代码里任何叫 `small` 的标识符会被改写成 `char`（`Samples/Image` 的 `dui::Svg* small` 变成 `dui::Svg* char` → C2062「意外的类型 char」）。这类 MIDL 遗留宏**无法靠事后 `#undef` 补救**（无法预知用户代码用了哪些名字），只能从源头隔离：D3D 设备 `Device` 拆到内部头 `Graphics/Device.h`，公共的 `Graphics/Graphics.h` 只留 Painter / 顶点指令 / TextureStore（纯 C++，无 windows.h）。
 
-### 4.6 API 冻结的执行方式（M4 教训）
+### 5.6 API 冻结的执行方式（M4 教训）
 公共 API 未设计的能力（如事件 Phase）不能私自实现——先改示例与文档，再动实现。M4 曾因此推迟隧道阶段，M6 随 `dui::Phase::Tunnel` 设计落地。
 
-### 4.7 `MessageBox` 与 Win32 同名宏（M7）
+### 5.7 `MessageBox` 与 Win32 同名宏（M7）
 `winuser.h`（UNICODE）定义 `#define MessageBox MessageBoxW`。成员方法 `Window::MessageBox` 若直接声明：含 `windows.h` 的 TU 会把声明/调用替换成 `MessageBoxW`，不含的 TU 仍是 `MessageBox` → 跨 TU 符号不一致（LNK2019 / ODR）。修法：`App.h` 顶部与 `App/Dialog.h` 末尾各 `#undef MessageBox`，`App/Dialog.cpp` 在全部 include 后再 `#undef` 一次；另给 `Window::MessageBoxW` 兼容别名（业务不主动调用），兜住「DUI.h 先、windows.h 后」的包含顺序。副作用：含 `DUI.h` 后调 Win32 原生弹窗要写 `::MessageBoxW`。`Samples/Dialog/MacroCompat.cpp` 是两种顺序的编译期守卫。
 
-### 4.8 同工程内同名 .cpp 的 obj 冲突（M7）
+### 5.8 同工程内同名 .cpp 的 obj 冲突（M7）
 `App/Dialog.cpp` 与 `App/Dialog.cpp` 同一库工程里同名 → MSB8027「两个或更多文件将生成到同一位置的输出」。修法：在 `DUI.vcxproj` 给后者加 `<ObjectFileName>$(IntDir)Core_Dialog.obj</ObjectFileName>`，不必改文件名；IntDir 按工程名隔离只能解决**跨工程**冲突，同工程仍会互踩。（2026-11-11 两文件已合并为单个 `App/Dialog.cpp`，该特例随之取消。）
 
-### 4.9 单行注释行尾反斜杠吞掉下一行（M7）
+### 5.9 单行注释行尾反斜杠吞掉下一行（M7）
 `...;  // C:\` 结尾的 `\` 触发行继续（C4010），下一行也被当成注释 → 紧随其后的变量声明消失（C2065 未声明标识符）。注释不要以反斜杠结尾，改成文字描述。
 
-### 4.10 Common Item Dialog 实现细节（M7）
+### 5.10 Common Item Dialog 实现细节（M7）
 - `ShObjIdl_core.h` 里 `FileOpenDialog` / `FileSaveDialog` coclass 带 `DECLSPEC_UUID` → `CoCreateInstance(__uuidof(FileOpenDialog), ...)` 即可，**无需 `uuid.lib`**；只需 `#pragma comment(lib, "ole32.lib")` + `"shell32.lib"`（`SHCreateItemFromParsingName`）。
 - `COMDLG_FILTERSPEC` 定义在 `shtypes.h`，`SIGDN_FILESYSPATH` 在 `ShObjIdl_core.h`；过滤器数组必须活到 `Show()` 返回。
 - `GetDisplayName(SIGDN_FILESYSPATH)` 返回的 `LPWSTR` 必须 `CoTaskMemFree`；COM 接口用 RAII `ComReleaser` 兜底，提前 return 不漏 `Release`。
 - 取消是 `HRESULT_FROM_WIN32(ERROR_CANCELLED)`（`0x800704C7`），须单独映射成「用户取消」，别当成错误。
 - UI 线程 COM **必须 STA**（`Application::Run` 用 `OleInitialize` 建立，见 ADR-027）；MTA 下 `Show()` 死锁，详见 §4.11。
 
-### 4.11 Common Item Dialog 在 MTA 下死锁（M7.1，实测）
+### 5.11 Common Item Dialog 在 MTA 下死锁（M7.1，实测）
 现象：`Samples/Dialog` 点击「打开文件…/保存文件…/选择文件夹…」后进程 Not Responding，且枚举不到任何对话框窗口（卡在 `IFileDialog::Show` 内部）；`MessageBoxW` 完全正常。根因：UI 线程被 `CoInitializeEx(COINIT_MULTITHREADED)` 建成 MTA，Common Item Dialog / Shell 扩展按 STA 假设工作。修法：`Application::Run` 起始 `OleInitialize(nullptr)`（必须早于 WIC 的 MTA 初始化），`App/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验。
 **二次踩坑**：`OleInitialize` 得到的是 **main STA（`APTTYPE_MAINSTA`）**，只判断 `APTTYPE_STA` 会把合法单元误判成错误 → 弹窗静默不出现、但进程响应正常（比死锁更难发现）。必须同时放行 `APTTYPE_STA` / `APTTYPE_MAINSTA`。
 诊断手法：自动 `PostMessage` 注入点击 → `EnumWindows` 按 PID 找 `#32770` + `Get-Process.Responding`；能区分「弹窗没开」「卡在 Show」「关闭后没回主循环」三种情况。
 
-### 4.12 入口函数的 SAL 批注要与 SDK 声明一致（C28251，2026-11-11）
+### 5.12 入口函数的 SAL 批注要与 SDK 声明一致（C28251，2026-11-11）
 SDK 的 `winbase.h:1075` 给 `wWinMain` 的声明加了 SAL 批注（`_In_ HINSTANCE` / `_In_opt_ HINSTANCE` / `_In_ LPWSTR` / `_In_ int`）。示例若只写 `int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)`，VS 的**实时代码分析**（/analyze）会报 **C28251**「"wWinMain" 的批注不一致: 此实例包含 无批注」——注意它**不是编译器警告**：命令行 msbuild（未开 /analyze）不报，只在 IDE 的错误列表里冒出来，容易被误当成构建失败。
 修法：定义处照抄 SDK 的批注 —— `int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int)`（19 个示例统一改）。批注不影响代码生成，纯粹是消除分析噪音。

@@ -63,6 +63,8 @@ protected:
     void OnPaint(graphics::Painter& painter, const StyleContext& ctx, float scale) override;
     // 内容裁剪（文本溢出裁到内容盒）
     bool ContentClipRect(Rect& out) const override;
+    // 首行基线（相对内容盒顶部，DIP）：供 align-items: baseline 对齐用
+    float FirstBaseline() const override { return baseline_; }
     // 焦点变化：取得焦点时把光标放到文本末尾；失焦时清除选区（选区底色随之消失）
     void OnFocusChanged(bool focused) override;
     // 闪烁节拍：光标持续闪烁（框架定时器驱动，500ms 一次）
@@ -122,6 +124,7 @@ private:
     float    scrollY_ = 0.f;
     float    goalX_ = -1.f;   // 上下移动的目标列（-1 = 未记录）
     mutable void* para_ = nullptr;   // text::Paragraph（pimpl：公共头不引入 dwrite）
+    mutable float baseline_ = -1.f;  // 首行基线（-1 = 尚无排版结果）
     // 掩码文本的垂直补偿（DIP，负 = 上移）：bullet 类掩码的字形墨迹贴近基线，
     // 直接绘制会明显偏下；补偿后圆点落在行高中心（与光标条中部对齐）。
     mutable float maskDy_ = 0.f;

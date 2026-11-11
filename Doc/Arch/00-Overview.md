@@ -91,8 +91,8 @@ DUI/                     库工程（DUI.vcxproj，静态库）
   Graphics/              Device（D3D11/Flip Model/BGRA8）+ Painter（有序绘制指令 + 状态槽 / SDF 圆角矩形 / 字形 / 形状 / 图像）（M3/M5/M5.6/B2）+ ImageCodec（WIC）/ SvgRaster（Direct2D SVG 光栅化）+ DWrite 排版 + GlyphAtlas 灰度图集（M5；2026-11-11 由 Text/ 并入）
 Samples/                 示例工程（每个示例一个子目录 = 一个工程）
   HelloWorld/            最小示例：窗口正中一行“你好，World”
-  Layout/               布局能力演示（FlexGrow / 定宽+弹性 / FlexShrink / JustifyContent+AlignItems / Gap / 嵌套 / Grid 轨道）
-  Style/                 样式能力演示（复用与派生 / 继承属性 / 状态变体 / 级联优先级 / 视觉属性集 / Margin / TextAlign / 运行时 Set）
+  Layout/               布局能力演示（FlexGrow / 定宽+弹性 / FlexShrink / JustifyContent+AlignItems / Gap / 嵌套 / Grid 轨道 / justify 六取值 / alignSelf·End·Baseline / flexBasis / 行列间距 / visibility·overflow·letterSpacing）
+  Style/                 样式能力演示（复用与派生 / 继承属性 / 状态变体 / 级联优先级 / 视觉属性集 / Margin / TextAlign / 运行时 Set / 四角独立圆角 + 边框 / Shadow / 斜体与文本装饰）
   Icon/                  内置矢量图标演示（9 个 IconName / 自由尺寸 / Color 继承与 hover 换色 / 运行时 SetIcon）
   Position/             定位能力演示（Relative / Absolute / Fixed 含 Scroller 内 / 最近定位祖先 / zIndex 层叠排序）
   Canvas/                2D 绘图控件演示（直线/折线/多边形/矩形/圆角矩形/圆/椭圆/圆弧）

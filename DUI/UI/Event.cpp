@@ -31,13 +31,22 @@ bool InRect(const Rect& r, const Vec2& p) {
     return p.x >= r.x && p.x <= r.Right() && p.y >= r.y && p.y <= r.Bottom();
 }
 
+// 写出命中点的"命中元素所在单元空间"坐标（可空指针 —— 不关心时零成本）
+inline void SetLocal(Vec2* out, const Vec2& v) {
+    if (out != nullptr) *out = v;
+}
+
 // 命中测试：ptAbs 是"未变换布局空间"的客户区绝对 DIP（与 Bounds() 同空间）。
 // 子元素带 transform 时，先把指针逆变换到该元素的局部空间再判断；逐层施加
 // 逆矩阵等价于整体 T⁻¹，嵌套自动成立（10-Rendering §6.3）。
 // inFixedLayer：当前在窗口级 Fixed 子树内。普通树遍历跳过 Fixed（已由 HitTest
 // 用窗口坐标优先命中；Scroller 的 +off 换算会误命中窗口坐标的 Fixed Bounds）。
-Element* HitTestInner(Element* e, const Vec2& ptAbs, bool inFixedLayer = false,
-                      uint32_t depth = 0) {
+// outLocal：命中点换算到"命中元素所在单元空间"的坐标。滚动容器内的元素，
+//   它的 Bounds 在单元空间（= 客户区空间 + 滚动偏移），命中点同样要加偏移；
+//   命中容器自身（滚动条 / padding 区）时取容器自身空间的坐标。
+//   控件据此把 ev.pos 与自己的 Bounds 相减即得局部坐标（06-Events §3）。
+Element* HitTestInner(Element* e, const Vec2& ptAbs, Vec2* outLocal,
+                      bool inFixedLayer = false, uint32_t depth = 0) {
     const std::vector<Element*>& cs = e->Children();
     auto TryHit = [&](Element* c) -> Element* {
         if (!inFixedLayer && FixedCount() != 0 && IsFixed(c)) return nullptr;
@@ -46,18 +55,33 @@ Element* HitTestInner(Element* e, const Vec2& ptAbs, bool inFixedLayer = false,
         const Vec2 qc = t.Inverse().Apply(ptAbs);
         const Rect& b = c->Bounds();
         if (b.w <= 0.f || b.h <= 0.f || !InRect(b, qc)) return nullptr;
+        // visibility: hidden → 自身不可命中；子树里显式 visible 的元素仍可命中
+        const bool hidden = c->Hidden();
         if (c->GetKind() == Kind::Scroller) {
             auto* sc = static_cast<Scroller*>(c);
             bool vertical = false;
             // 滚动条区域优先命中滚动容器本身（否则会穿透到被裁剪的内容）
-            if (sc->HitScrollBar(qc, vertical)) return c;
+            if (sc->HitScrollBar(qc, vertical)) { SetLocal(outLocal, qc); return hidden ? nullptr : c; }
             // 视口外（padding 区）同样归容器；视口内换算到内容坐标再命中子元素
             const Rect vp = sc->Viewport();
-            if (!InRect(vp, qc)) return c;
+            if (!InRect(vp, qc)) { SetLocal(outLocal, qc); return hidden ? nullptr : c; }
             const Vec2 off = sc->ScrollOffset();
-            return HitTestInner(c, Vec2{qc.x + off.x, qc.y + off.y}, inFixedLayer, depth + 1);
+            // 内容空间 = 单元空间 + 滚动偏移（子项 Bounds 在单元空间，命中点要
+            // 加偏移才对得上；绘制侧则由 Painter 原点减偏移，两边互为逆运算）
+            Element* hit = HitTestInner(c, Vec2{qc.x + off.x, qc.y + off.y}, outLocal,
+                                        inFixedLayer, depth + 1);
+            if (hit == c) {   // 无子项命中 → 命中容器自身
+                SetLocal(outLocal, qc);
+                return hidden ? nullptr : c;
+            }
+            return hit;
         }
-        return HitTestInner(c, qc, inFixedLayer, depth + 1);
+        Element* hit = HitTestInner(c, qc, outLocal, inFixedLayer, depth + 1);
+        if (hit == c) {       // 同上
+            SetLocal(outLocal, qc);
+            return hidden ? nullptr : c;
+        }
+        return hit;
     };
     // 与 Frame.cpp 两趟绘制对应：流内子项先画、脱离流后画 → 倒序即先命中脱离流。
     // 启用锚点 / zIndex 时按绘制侧同一有序列表（含跨层提升到本 CB 的 Absolute）倒序，
@@ -116,7 +140,7 @@ void SetCaptureElement(Element* e) noexcept { g_capture = e; }
 Element* CapturedElement() noexcept { return g_capture; }
 void ClearCaptureIf(Element* e) noexcept { if (g_capture == e) g_capture = nullptr; }
 
-Element* HitTest(Element* root, const Vec2& pt) {
+Element* HitTest(Element* root, const Vec2& pt, Vec2* outLocal) {
     if (root == nullptr) return nullptr;
     const Transform2D t = ElementTransform(root);
     if (!t.IsInvertible()) return nullptr;
@@ -136,10 +160,39 @@ Element* HitTest(Element* root, const Vec2& pt) {
             const Vec2 fq = ft.Inverse().Apply(pt);
             if (!InRect(f->Bounds(), fq)) continue;
             if (!WithinAncestorClips(f, pt)) continue;
-            return HitTestInner(f, fq, true, 0);
+            // Fixed 层以窗口为原点绘制（不受祖先滚动 / transform 影响）
+            Element* hit = HitTestInner(f, fq, outLocal, true, 0);
+            if (hit == f) SetLocal(outLocal, fq);
+            return hit;
         }
     }
-    return HitTestInner(root, q);
+    Element* hit = HitTestInner(root, q, outLocal);
+    if (hit == root) SetLocal(outLocal, q);
+    return hit;
+}
+
+// 客户区坐标 → 元素所在单元空间：沿祖先链逐层应用 transform 逆变换，进入
+// 滚动容器的内容时加其滚动偏移（与 HitTest 的换算规则完全一致）。
+// 指针捕获期间 Move/Up 直达捕获者（未必是命中元素），用它在捕获者空间定位。
+Vec2 ClientToLocal(Element* e, const Vec2& clientPt) {
+    if (e == nullptr) return clientPt;
+    static std::vector<Element*> chain;   // 跨调用复用，稳态零分配
+    chain.clear();
+    for (Element* p = e; p != nullptr; p = p->Parent()) chain.push_back(p);
+    // chain = e → ... → 根；倒序遍历即 根 → ... → e
+    Vec2 pt = clientPt;
+    for (size_t i = chain.size(); i-- > 0;) {
+        Element* c = chain[i];
+        const Transform2D t = ElementTransform(c);
+        if (!t.IsInvertible()) continue;
+        pt = t.Inverse().Apply(pt);
+        // 进入滚动容器的子项前加滚动偏移（元素自身的偏移不加）
+        if (c->GetKind() == Kind::Scroller && i > 0) {
+            const Vec2 off = static_cast<Scroller*>(c)->ScrollOffset();
+            pt = Vec2{pt.x + off.x, pt.y + off.y};
+        }
+    }
+    return pt;
 }
 
 // 沿祖先链找最近的滚动容器（滚轮事件的路由目标）

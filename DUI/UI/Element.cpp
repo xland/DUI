@@ -107,11 +107,17 @@ Vec2 Element::MeasureContent(const StyleContext& ctx, const Vec2& avail) const {
         return MeasureGridContent(this, ctx, avail);
     const uint32_t dir = ResolveProperty(this, Prop::FlexDirection, ctx).u;
     const uint32_t wrap = ResolveProperty(this, Prop::FlexWrap, ctx).u;
-    const float gap = ResolveProperty(this, Prop::Gap, ctx).f;
+    // 间距：gap 是通用值；rowGap / columnGap 未设则各自回落 gap（15-Properties §4.4）
+    const float gapAll = ResolveProperty(this, Prop::Gap, ctx).f;
+    StyleValue gv;
+    const float colGap = TryResolve(this, Prop::ColumnGap, ctx, gv) ? gv.f : gapAll;  // 列间距
+    const float rowGap = TryResolve(this, Prop::RowGap, ctx, gv) ? gv.f : gapAll;     // 行间距
     const bool row = dir == static_cast<uint32_t>(FlexDirection::Row);
+    // 主轴项间距：Row 主轴水平 → 列间距；Column 主轴垂直 → 行间距
+    const float mainGap = row ? colGap : rowGap;
 
     // 换行流式布局（Row + Wrap）：按可用主轴宽贪心断行——
-    // 自然主轴 = 最长行宽，交叉轴 = 各行高之和（行间同 gap）。
+    // 自然主轴 = 最长行宽，交叉轴 = 各行高之和（行间用 rowGap）。
     // avail 不受限（1e6 透传）时不换行，走下方单行聚合。
     if (row && wrap == static_cast<uint32_t>(FlexWrap::Wrap) && avail.x < 1e5f) {
         Vec2 total{};
@@ -119,12 +125,12 @@ Vec2 Element::MeasureContent(const StyleContext& ctx, const Vec2& avail) const {
         bool first = true;
         for (Element* c : children_) {
             if (ResolveProperty(c, Prop::Display, ctx).u == static_cast<uint32_t>(Display::None)) continue;
-            const Vec2 cs = MeasureElement(c, avail, ctx);
+            const Vec2 cs = MeasureElement(c, avail, ctx, row);
             if (IsOutOfFlow(c)) continue;   // 脱离流：只测量，不计入父的自然尺寸
-            const float add = cs.x + (first ? 0.f : gap);
+            const float add = cs.x + (first ? 0.f : colGap);
             if (!first && lineW + add > avail.x) {   // 放不下 → 断行
                 if (lineW > total.x) total.x = lineW;
-                total.y += lineH + gap;
+                total.y += lineH + rowGap;
                 lineW = cs.x;                        // 新行首项不带前导 gap
                 lineH = cs.y;
             } else {
@@ -142,13 +148,13 @@ Vec2 Element::MeasureContent(const StyleContext& ctx, const Vec2& avail) const {
     bool first = true;
     for (Element* c : children_) {
         if (ResolveProperty(c, Prop::Display, ctx).u == static_cast<uint32_t>(Display::None)) continue;
-        const Vec2 cs = MeasureElement(c, avail, ctx);
+        const Vec2 cs = MeasureElement(c, avail, ctx, row);
         if (IsOutOfFlow(c)) continue;   // 脱离流：只测量，不计入父的自然尺寸
         if (row) {
-            total.x += cs.x + (first ? 0.f : gap);
+            total.x += cs.x + (first ? 0.f : mainGap);
             if (cs.y > total.y) total.y = cs.y;
         } else {
-            total.y += cs.y + (first ? 0.f : gap);
+            total.y += cs.y + (first ? 0.f : mainGap);
             if (cs.x > total.x) total.x = cs.x;
         }
         first = false;

@@ -52,11 +52,13 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `fontSize` | Length | ✓ | Layout·Text | ✓ | 14 dip | 排版缓存键；动画慎用 |
 | `fontWeight` | Enum | ✓ | Layout·Text | ✗ | Normal | 排版缓存键 |
 | `fontFamily` | String（`const wchar_t*` 指针） | ✓ | Layout·Text | ✓ | Microsoft YaHei | 框架默认微软雅黑；开发者可指定系统已安装任意字体族，指针生命周期由调用方保证（建议字面量）；未安装时 DWrite 自动回退默认。未安装字体经 `dui::LoadFontFamily`（文件）或 `dui::LoadFontFamilyFromMemory`（资源嵌入 exe 的内存字节）装入，可装多个、各自独立生效；仅支持 ttf/otf/ttc（DWrite 只认 SFNT，woff2 不支持，需先转换） |
-| `fontStyle` | Enum | ✓ | Layout·Text | ✗ | Normal | 排版缓存键 |
+| `fontStyle` | Enum（`dui::FontStyle`） | ✓ | Layout·Text | ✗ | Normal | 排版缓存键；运行时已接入：`Normal / Italic`（CSS `oblique` 归 Italic）；链式方法 `FontStyle()`；DWrite `SetFontStyle` |
 | `textAlign` | Enum | ✓ | **Paint** | ✗ | Start | 运行时已接入；`dui::TextAlign::Start/Center/End` + `Style::TextAlign()`；静态 `Text` 在内容盒内对齐（绘制期平移，不改 DWrite 排版，故标 Paint），`TextBox` 不参与；多行按最长行整体对齐 |
 | `lineHeight` | Length（倍数） | ✓ | Layout·Text | ✓ | 1.2 | |
-| `letterSpacing` | Length | ✓ | Layout·Text | ✓ | 0 | |
-| `textDecoration` | Enum | ✓ | Paint | ✗ | None | |
+| `letterSpacing` | Length（DIP） | ✓ | Layout·Text | ✓ | 0 | **已落地**：继承属性；DWrite `IDWriteTextLayout1::SetCharacterSpacing`（只收 em 千分比，按当前字号换算；CSS 的"字符后加距"对应 `trailingSpacing`）；进排版缓存键；`Text` / `TextBox` / `RichEditor` 均生效 |
+| `wordSpacing` | Length（DIP） | ✓ | Layout·Text | ✓ | 0 | **已落地（M5.55）**：继承属性；**DWrite 无此接口，但 `SetCharacterSpacing` 可按区间下发** —— 对"词分隔符"（半角/全角空格）区间额外加宽（同区间覆盖字距），即 CSS `word-spacing` 语义；加宽后的宽度由 DWrite 自己算进 layout，**测量与折行天然一致**（无需字形级自绘）；进排版缓存键；`Text` / `TextBox` / `RichEditor` 均生效 |
+| `textDecoration` | 位标志（`dui::TextDecoration`） | ✗ | Layout·Text | ✗ | None | 运行时已接入：`Underline / LineThrough` 可组合（`operator\|`）；**不继承**（同 CSS，装饰线不传给子元素）；链式方法 `TextDecoration()`；DWrite `SetUnderline` / `SetStrikethrough`，线位与厚度由 DWrite 算出、走渲染器回调画线（不占行高） |
+| `textOverflow` | Enum（`dui::TextOverflow`） | ✓ | Layout | ✗ | Clip | **已落地（M5.56）**：继承属性（同 CSS）；`Clip` = 直接裁掉（默认，裁剪由 `overflow` 负责）、`Ellipsis` = 单行排版 + 超出时末尾加省略号 `…`（**只做单行**，不做多行 clamp）。实现：单行排版 → 二分求最长可容纳前缀 → 拼 `…` 再排一次（DWrite 的 layout 无 trimming API）；前缀长度按**字形簇边界**校正（不会切出半个汉字）。CSS 要求配合 `overflow: hidden`，本框架不强制 —— 截断后文本本身就不溢出 |
 | `direction` | Enum | ✓ | Layout | ✗ | LTR | BiDi / Flex 主轴方向 |
 
 ### 4.1.1 文本编辑（dui::TextBox / dui::TextArea 自绘；运行时已接入）
@@ -82,8 +84,8 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `padding` | Thickness | ✗ | Layout | ✓ | 0 | |
 | `margin` | Thickness | ✗ | Layout | ✓ | 0 | 运行时已接入；`Style::Margin(float)` / `Margin(Thickness)`；作为**外边距盒**参与父布局占位，`Bounds()` 仍是元素盒；不做塌陷（04-Layout §3/§7-1） |
 | `width` / `height` | Length | ✗ | Layout | ✓ | Auto | measure 缓存键 |
-| `minWidth` / `maxWidth` / `minHeight` / `maxHeight` | Length | ✗ | Layout | ✓ | Auto | |
-| `boxSizing` | Enum | ✗ | Layout | ✗ | BorderBox | |
+| `minWidth` / `maxWidth` / `minHeight` / `maxHeight` | Length | ✗ | Layout | ✓ | Auto | **已落地**（M5.52 补齐高度向）：在测量期夹紧元素盒尺寸 |
+| `boxSizing` | Enum（`dui::BoxSizing`） | ✗ | Layout | ✗ | PaddingBox | **已落地（M5.58）**：`PaddingBox`（默认）= 宽高含内边距、不含边框 —— 边框是**内描边**，画在盒内缘但**不占布局空间**（与内容重叠，这是框架的既有语义，保持不变）；`BorderBox` = 宽高含内边距**与边框** → 边框占盒内空间，内容区 = 盒 − 内边距 − 边框（等价 CSS `box-sizing: border-box` 的效果）。命名与 CSS 的 `content-box` 不同：框架的 `width` 一贯是"含内边距的盒宽"，故默认档叫 `PaddingBox`；`BorderBox` 才是 CSS 那个"宽高含边框" |
 
 ### 4.3 背景与装饰
 
@@ -91,9 +93,10 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | --- | --- | --- | --- | --- | --- | --- |
 | `backgroundColor` | Color | ✗ | Paint | ✓ | 透明 | Brush（渐变/图片）列为 P2 |
 | `opacity` | Float | ✗ | Paint | ✓ | 1.0 | |
-| `cornerRadius` | Thickness | ✗ | Paint | ✓ | 0 | |
-| `borderWidth` | Thickness | ✗ | Layout·Paint | ✓ | 0 | |
-| `borderColor` | Color | ✗ | Paint | ✓ | 透明 | |
+| `cornerRadius` | CornerRadii | ✗ | Paint | ✓ | 0 | **已落地**：四角独立圆角（CSS `border-radius` 顺序：左上/右上/右下/左下）。`Style::CornerRadius(float)` = 四角同值；`Style::CornerRadius(CornerRadii)` = 四角独立。绘制走 Graphics 的逐角 SDF；相邻两角半径之和超出该边长时按 CSS 规则同比例缩小全部半径；每角半径夹到 `min(w,h)/2`（超出则圆弧中心跑到盒外，SDF 不再是真实距离） |
+| `borderWidth` | Thickness（四边） | ✗ | Paint | ✓ | 0 | **已落地（M5.57）**：实线 / 虚线 / 点线、`borderStyle` 可选；**分边宽度**（`Style::BorderWidth(float)` = 四边同值，`Style::BorderWidth(Thickness)` = 左/上/右/下独立，顺序同 `Thickness`）。**内描边**（画在盒内缘）。等宽时走单个圆角矩形描边（圆角精确）；分边时四条边各自成带、角部按直角对接（不做 CSS 斜接），**分边时圆角不生效**。要边框占盒（挤压内容）需配 `boxSizing: border-box` |
+| `borderColor` | Color | ✗ | Paint | ✓ | 透明 | 透明 = 无边框；跟随元素 `opacity` |
+| `borderStyle` | Enum（`dui::BorderStyle`） | ✗ | Paint | ✗ | Solid | **已落地（M5.57）**：`Solid` 实线 / `Dashed` 虚线（实 3w 空 3w）/ `Dotted` 点线（实 1 DIP 空 2w，CSS 未规定，取浏览器观感）。虚线在 CPU 侧沿路径切段描边（零 GPU 改动）；等宽时沿圆角矩形中心线（每角 8 段离散），分边时每条边独立起段 |
 | `shadow` | 标量组（`f`=blur DIP、`extra[0/1]`=offsetX/Y、`u`=颜色） | ✗ | Paint | ✗ | 无（颜色 0） | **已落地**：`Style::Shadow(blur, color, offsetX, offsetY)`；只投元素边框盒（圆角矩形），Shape 批 kind=3 的 SDF 衰减带近似高斯，无纹理/离屏。不支持 inset/spread/多阴影，不随元素 Opacity 变化 |
 
 ### 4.3.1 滚动条（dui::Scroller 自绘轨道/滑块；MVP 子集，运行时已接入）
@@ -101,14 +104,22 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 轨道（Track）与滑块（Thumb）各自独立一组；宽度 = 纵向条厚度，高度 = 横向条厚度
 （滑块长/轨道长仍由视口与内容比决定，不可直接设置）。
 
+**几何**：轨道**贴视口边缘**——纵向条占视口最右 `TrackWidth` DIP、横向条占最下 `TrackHeight` DIP，
+均沿另一轴铺满视口，**不留内缩间隙**；滚动条**叠加在内容之上**，布局不为它预留空间
+（内容宽度仍按整个视口算，被压住的部分需靠内容自身 padding 避让）。
+
 | 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `scrollbarTrackWidth/Height` | Length | ✗ | Paint | ✓ | 10 | 条厚（DIP） |
-| `scrollbarTrackBackgroundColor` | Color | ✗ | Paint | ✓ | 0x1F000000 | |
+| `scrollbarTrackWidth/Height` | Length | ✗ | Paint | ✓ | 8 | 条厚（DIP） |
+| `scrollbarTrackBackgroundColor` | Color | ✗ | Paint | ✓ | 0x14000000 | 轨道默认极浅（约 8% 黑） |
 | `scrollbarTrackCornerRadius` | Length | ✗ | Paint | ✓ | 0 | 默认直角 |
 | `scrollbarTrackBorderColor` | Color | ✗ | Paint | ✓ | 透明 | |
 | `scrollbarTrackBorderWidth` | Length | ✗ | Paint | ✓ | 0 | 无边框 |
-| `scrollbarThumb*`（同上 6 项） | 同上 | ✗ | Paint | ✓ | 厚 10 / 色 0x73000000 / 直角 / 无边框 | 滑块厚可异于轨道（居中） |
+| `scrollbarThumb*`（同上 6 项） | 同上 | ✗ | Paint | ✓ | 厚 8 / 色 0x30000000 / 直角 / 无边框 | 滑块厚可异于轨道（居中）；指针悬停在滑块上时加深（alpha ×1.6，RGB 不变），由 Scroller 自绘实现 |
+
+**悬停加深**：滑块默认色较浅（约 19% 黑）；指针落在滑块矩形上时加深到约 30% 黑。
+滑块是自绘图形、没有独立元素，因此不走状态变体 —— 由 `Scroller` 在命中测试时记录
+指针位置，配合容器自身的 Hover 状态判定，变化时标脏重绘（`Element::SetState` 为 virtual）。
 
 ### 4.4 布局
 
@@ -117,17 +128,17 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `display` | Enum | ✗ | Layout | ✗ | Flex | Flex / Grid / None |
 | `flexDirection` | Enum | ✗ | Layout | ✗ | Column | 块级流语义来源 |
 | `flexWrap` | Enum | ✗ | Layout | ✗ | NoWrap | NoWrap / Wrap（Wrap 仅 Row；运行时已实现，贪心断行） |
-| `justifyContent` | Enum | ✗ | Layout | ✗ | Start | |
-| `alignItems` | Enum | ✗ | Layout | ✗ | Stretch | |
-| `alignSelf` | Enum | ✗ | Layout | ✗ | Auto | 未设则取父 `alignItems` |
+| `justifyContent` | Enum（`dui::Justify`） | ✗ | Layout | ✗ | Start | **已落地**：`Start / Center / End / SpaceBetween / SpaceAround / SpaceEvenly`（CSS `justify-content` 全集）；剩余空间为负（溢出）时退化为 `Start` |
+| `alignItems` | Enum（`dui::Align`） | ✗ | Layout | ✗ | Stretch | **已落地**：`Stretch / Start / Center / End / Baseline`。`Start` 不拉伸（CSS `flex-start` 语义）；`Baseline` 按首行文本基线对齐，无基线的元素退化为外边距盒底边 |
+| `alignSelf` | Enum（`dui::Align`） | ✗ | Layout | ✗ | 未设 | **已落地**：单项覆盖父的 `alignItems`；**未设置**（链上没有该属性）即取父值（同 CSS `auto`） |
 | `flexGrow` | Float | ✗ | Layout | ✓ | 0 | |
 | `flexShrink` | Float | ✗ | Layout | ✓ | 1 | |
-| `flexBasis` | Length | ✗ | Layout | ✓ | Auto | |
-| `gap` / `rowGap` / `columnGap` | Length | ✗ | Layout | ✓ | 0 | |
+| `flexBasis` | Length（DIP） | ✗ | Layout | ✓ | 未设 | **已落地**：主轴基准尺寸，替代主轴上的 `width`/`height` 与内容自然尺寸；**按元素盒语义**（与 `width` 一致），非 CSS 的 content-box；测量期生效，故父的自然尺寸也按它算 |
+| `gap` / `rowGap` / `columnGap` | Length | ✗ | Layout | ✓ | 0 | **已落地**：`gap` 是通用值；`rowGap`（行间距）/ `columnGap`（列间距）未设则各自回落 `gap`。Flex：`columnGap` = Row 主轴项间距、`rowGap` = Column 主轴项间距与换行行间距；Grid：分别为行 / 列间距 |
 | `position` | Enum | ✗ | Layout | ✗ | Static | Static / Relative / Absolute / Fixed；非 Static 即成为后代 Absolute 的 CB（04-Layout §4.3） |
 | `left` / `top` / `right` / `bottom` | Float（DIP） | ✗ | Layout | ✓（`left`/`top`） | 未设 = Auto | 仅 Relative / Absolute / Fixed 生效；Static 忽略；Relative 只认 left/top |
 | `zIndex` | Int | ✗ | Layout | ✗ | 0 | 仅同一 CB 内的 `Absolute` 生效；按值升序绘制、同值按树序；Fixed / 流内忽略（04-Layout §4.3） |
-| `overflow` | Enum | ✗ | Layout·Paint | ✗ | Visible | Visible / Hidden / Scroll |
+| `overflow` | Enum（`dui::Overflow`） | ✗ | **Paint** | ✗ | Visible | **已落地**：`Visible` 不裁剪 / `Hidden` 把子内容裁到元素盒（CSS 裁 padding box；本框架边框内描边不占盒，故元素盒即 padding box）/ `Scroll` 与 `Hidden` 同义（滚动条由 `dui::Scroller` 控件负责，本属性不画滚动条）。裁剪在绘制期用 scissor 实现，**不改布局盒** |
 | `gridTemplateColumns` / `gridTemplateRows` | TrackList | ✗ | Layout | ✗ | 空 | 变长声明存 `Style`（`FindTracks` 沿派生链），不走 `StyleValue`；04-Layout §4.2 已落地 |
 | `gridRow` / `gridColumn` | Int | ✗ | Layout | ✗ | Auto | 显式放置（0 基）；已落地 |
 | `gridRowSpan` / `gridColumnSpan` | Int | ✗ | Layout | ✗ | 1 | 跨格；已落地 |
@@ -146,16 +157,19 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 
 | 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `visibility` | Enum | ✓ | Layout | ✗ | Visible | 隐藏但仍占位 |
+| `visibility` | Enum（`dui::Visibility`） | ✓ | Layout | ✗ | Visible | **已落地**：**继承属性**（同 CSS）；`Hidden` = 占位但不画、不命中；子元素可显式设 `Visible` 反转父的隐藏。命中测试没有 `StyleContext`，故可见性在布局期算好后落到元素上（`Element::Hidden()`），绘制与命中读同一份结果 |
 | `cursor` | Enum | ✓ | — | ✗ | Default | 由 Event 层读取 |
 
 ### 4.7 动画相关属性
 
-**没有动画元属性**。`transition` / `animation` 从未进入运行时属性表（`Prop` 枚举），早期草案的这两项已作废。命令式动画直接对普通属性补间；当前开放的是 `opacity` / `backgroundColor` / `color` / `selectionColor` / `caretColor`、§4.5 的四个 transform 标量，以及 `width` / `height` / `left` / `top`（布局尺寸与定位偏移对照，每帧重排），标签、插值与语义见 [05-Animation.md](./05-Animation.md) §2–§3。
+**没有动画元属性**。`transition` / `animation` 从未进入运行时属性表（`Prop` 枚举），早期草案的这两项已作废。命令式动画直接对普通属性补间；当前开放的是 `opacity` / `backgroundColor` / `color` / `selectionColor` / `caretColor`、§4.5 的四个 transform 标量，以及 `width` / `height` / `left` / `top`（布局尺寸与定位偏移对照，每帧重排）；多通道值 `padding` / `margin`（Thickness 四边）与 `cornerRadius`（四角）也开放 —— 四通道各自插值、共用一条时间轴，其中 `padding` / `margin` 每帧重排、`cornerRadius` 只重绘。标签、插值与语义见 [05-Animation.md](./05-Animation.md) §2–§3。
 
 ### 4.8 暂不做
 
-渐变/图片背景（需 Brush 与资源引用）、非等比缩放 / `TransformOrigin` / 矩阵形态 transform、多 Style 引用（class 列表，见 03-Style D3）、`will-change` 类提示。
+渐变/图片背景（需 Brush 与资源引用）、非等比缩放 / `TransformOrigin` / 矩阵形态 transform、多 Style 引用（class 列表，见 03-Style D3）、`will-change` 类提示、RTL `direction`（依赖文字排版层）。
+
+> **已在本轮补齐**（M5.55–M5.58）：`wordSpacing`（§4.1）、`textOverflow: ellipsis`（§4.1，单行）、`borderWidth` 分边宽度 / `borderStyle` 虚线点线（§4.3）、`boxSizing`（§4.2）。
+> 仍未做：**外描边**（CSS `outline`，本轮按约定不做）、分边宽度 + 圆角（分边时圆角不生效）、多行省略号（`-webkit-line-clamp`）。
 
 ---
 
@@ -169,7 +183,8 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 // 真实签名（已落地，Element/UI.h）
 void Widget::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) {
     const StyleValue radius = ResolveProperty(this, Prop::CornerRadius, ctx);
-    p.FillRoundedRect(Bounds(), radius.f, ResolveProperty(this, Prop::BackgroundColor, ctx).u, 1.f, scale);
+    const dui::CornerRadii r = ValueAsCornerRadii(radius);   // 四角：f=左上，extra=右上/右下/左下
+    p.FillRoundedRect(Bounds(), r, ResolveProperty(this, Prop::BackgroundColor, ctx).u, 1.f, scale);
 }
 ```
 
@@ -188,7 +203,7 @@ StyleValue opacity = ResolveProperty(element, Prop::Opacity);
 - **继承属性**：自元素向上找最近设置了该属性的祖先，O(树深)；调用频率低（事件类路径），不做缓存。
 - 两条路径都先查级联第 1 层动画值槽；transform 属性的遍历外读取由 `ElementTransform()` 完成，含该动画值槽（[10-Rendering.md](./10-Rendering.md) §6.4）。
 
-**写入口**（级联第 3 层）：`Element::Set(Prop, v)` 支持枚举 / 整型 / `Color`（`u`）、浮点（`f`）、`dui::Thickness`（`f` + `extra[3]`）、`const wchar_t*`（`family`，零拷贝指针）。`padding` / `cornerRadius` / `margin` 传标量时按四边同值展开（`IsThicknessProp()`）；同 `Prop` 的新值整体替换 `StyleValue`，不残留旧槽。字体族指针的生命周期契约见 [03-Style.md](./03-Style.md) §6.1。
+**写入口**（级联第 3 层）：`Element::Set(Prop, v)` 支持枚举 / 整型 / `Color`（`u`）、浮点（`f`）、`dui::Thickness`（`f` + `extra[3]`）、`dui::CornerRadii`（`f` + `extra[3]`，四角圆角）、`const wchar_t*`（`family`，零拷贝指针）。`padding` / `margin` 传标量时按四边同值展开（`IsThicknessProp()`），`cornerRadius` 传标量时按四角同值展开（`IsCornerRadiusProp()`）；同 `Prop` 的新值整体替换 `StyleValue`，不残留旧槽。字体族指针的生命周期契约见 [03-Style.md](./03-Style.md) §6.1。
 
 ### 5.3 动画值槽（级联第 1 层）
 
@@ -208,5 +223,5 @@ StyleValue opacity = ResolveProperty(element, Prop::Opacity);
 
 1. ~~`shadow` 是否进 MVP~~ 已落地（box-shadow 子集，见 §4.3）；`textDecoration` 是否进 MVP。
 2. `zIndex` 是否扩展到普通流（当前仅同一 CB 内的 Absolute，已落地，见 04-Layout §4.3）。
-3. `alignItems: Baseline` 是否纳入（文本混排场景常用）。
-4. 是否需要 `letterSpacing` 之外的 `wordSpacing`。
+3. ~~`alignItems: Baseline` 是否纳入~~ 已落地（M5.52：按首行文本基线对齐，`Text` / `TextBox` 提供基线）。
+4. ~~是否需要 `letterSpacing` 之外的 `wordSpacing`~~ 已落地（M5.55：按区间下发 `SetCharacterSpacing`，不必自绘）。

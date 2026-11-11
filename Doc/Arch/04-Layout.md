@@ -69,8 +69,8 @@ display: Flex; flexDirection: Column; alignItems: Stretch   ← 默认值
 └─────────────────────────────────────┘
 ```
 
-- `width` / `height` 指哪一盒由 `boxSizing` 决定；**默认 `BorderBox`**（与 CSS 默认 `content-box` 不同，但与业界实践一致，写界面更直觉）。
-- `padding` / `borderWidth` / `margin` 为 `Thickness`（四边可独立）。
+- `width` / `height` 指哪一盒由 `boxSizing` 决定（M5.58 落地，两个取值）：**默认 `PaddingBox`** —— `width` / `height` = **含内边距的元素盒宽**（与 CSS 默认 `content-box` 不同：框架的宽度一贯含内边距，写界面更直觉）；此时边框是**内描边**，画在盒内缘但**不占布局空间**（与内容重叠，这是框架的既有语义，默认行为零变化）。切到 **`BorderBox`** 则边框**占盒内空间**：内容区 = 盒 − 内边距 − 边框（等价 CSS `box-sizing: border-box` 的效果）。
+- `padding` / `borderWidth` / `margin` 为 `Thickness`（四边可独立）。边框**绘制**细节（分边宽度、虚线 / 点线）见 [15-Properties.md](./15-Properties.md) §4.3。
 - `cornerRadius`（[03-Style.md](./03-Style.md)）只影响绘制裁剪，不影响布局矩形。
 - **`margin` 运行时已落地（M5.22）**：`Style::Margin(float)` / `Margin(Thickness)` 声明四边外边距（左/上/右/下，DIP，默认 0）。`width` / `height` / `minWidth` / `maxWidth` 仍指元素盒；Measure 结果为**外边距盒**（元素盒 + margin），父布局的聚合、grow/shrink、Grid 轨道、Wrap 装箱与滚动容器 `extent` 都按它计算，Arrange 再从槽位收缩出 `Bounds()`。因此 margin 区域不画背景、也不响应命中；相邻 margin 直接叠加、不塌陷（§7-1）。
 
@@ -84,12 +84,16 @@ display: Flex; flexDirection: Column; alignItems: Stretch   ← 默认值
 | --- | --- |
 | 方向 | `flexDirection: Row / Column`；主轴方向受 `direction`（RTL）影响 |
 | 换行 | `flexWrap: NoWrap / Wrap`（对应 R2 的容器级行为） |
-| 主轴对齐 | `justifyContent: Start / Center / End / SpaceBetween / SpaceAround / SpaceEvenly` |
-| 交叉轴对齐 | `alignItems` / `alignSelf: Stretch / Start / Center / End / Baseline?`（Baseline 待定） |
-| 弹性 | `flexGrow` / `flexShrink` / `flexBasis` |
-| 间距 | `gap`（主轴）/ `rowGap`·`columnGap`（换行或 Grid） |
+| 主轴对齐 | `justifyContent: Start / Center / End / SpaceBetween / SpaceAround / SpaceEvenly`（**已落地**，M5.52） |
+| 交叉轴对齐 | `alignItems` / `alignSelf: Stretch / Start / Center / End / Baseline`（**已落地**，M5.52；`Baseline` 按首行文本基线对齐） |
+| 弹性 | `flexGrow` / `flexShrink` / `flexBasis`（`flexBasis` **已落地**，M5.52：主轴基准尺寸，按元素盒语义） |
+| 间距 | `gap`（通用）/ `rowGap`·`columnGap`（行列间距，未设则回落 `gap`；**已落地**，M5.52） |
 
 块级流 = `Column + Stretch` 默认组合；行内流 = `Row + Wrap`。
+
+- **交叉轴 `Stretch` 与 `Start` 的区别（M5.52 起）**：`Stretch` 把子项拉到容器交叉轴长度（显式尺寸优先），`Start` 用自然尺寸贴起始边、不拉伸。此前 `Start` 与 `Stretch` 同行为（都拉伸），已按 CSS `flex-start` 语义分开。
+- **`alignSelf` 未设置 = 取父 `alignItems`**（同 CSS `auto`）：框架不在 `u` 槽里存"Auto"哨兵，而是用"链上没有该属性"表示未设。
+- **`flexShrink` 与 `overflow` 的交互（易踩）**：默认 `flexShrink = 1`，父容器**内容总高超出视口**时，子项会被压缩到小于自然尺寸（与 CSS 一致）。若子项内容是文字且 `overflow: visible`（默认），**文字不会跟着盒子缩** —— 排版仍按自然尺寸绘制，于是文字"溢出块外"。两种正确做法：① 父容器改用 `dui::Scroller`（视口固定、内部滚动，内容不被压扁）；② 给溢出块显式 `overflow: hidden`（绘制期裁到元素盒，即"截断"）。用 `minHeight` / `minWidth` 给内容块兜底也可避免被压扁。排查见 `Pitfalls.md §4.1`。
 
 ### 4.2 Grid（运行时已落地）
 
@@ -107,7 +111,7 @@ child->Set(dui::Prop::GridColumnSpan, 2);
 - `TrackList` 是变长声明，实体存在 `Style` 内（`FindTracks` 沿派生链由近及远找），不走定长 `StyleValue`；因此不可动画、无状态变体、无 `Element::Set` 运行时覆盖。两个 `gridTemplate*` `Prop` 仅作名义声明与失效标志。
 - 放置：**按序自动放置** + 显式 `gridRow` / `gridColumn`（0 基）+ `gridRowSpan` / `gridColumnSpan`（默认 1）；显式格子被占时放宽为按序自动放置。行不足时追加隐式行（未声明 `gridTemplateRows` 时全部按 `Auto`）。不做命名区域。
 - 轨道求解：`Auto` 先取子项自然尺寸（跨格按均摊），再定 `Fixed` / `Percent`，最后把剩余空间按 `Flex` 份数分配；测量阶段（`MeasureGridContent`）与排布阶段共用 `ComputeGrid` 同一套规则，避免测量与排布尺寸不一致。
-- 行列间距统一用 `gap`（`rowGap`/`columnGap` 未做）；子项默认 `AlignItems::Stretch` 占满格子，`Start`/`Center` 用自然尺寸；`JustifyContent` 不参与 Grid（格子已定）。
+- 行列间距：`gap` 是通用值；`rowGap`（行间距）/ `columnGap`（列间距）未设则各自回落 `gap`（M5.52 已落地）。子项默认 `AlignItems::Stretch` 占满格子，`Start`/`Center`/`End` 用自然尺寸并按对应边对齐；`JustifyContent` 不参与 Grid（格子已定）。
 - 自然尺寸阶段没有确定容器尺寸，`Percent` / `Flex` 轨道保留内容下界；不设 `gridTemplateColumns` 时退化为单列。示例见 `Samples/Layout` 末段。
 
 ### 4.3 定位（运行时已落地）
@@ -223,6 +227,14 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
   （内容变短 / 视口变大时越界）。
 - 命中测试须手动补偿偏移（滚动不改 `Bounds()`）：`Event.cpp` 进入滚动容器时把
   指针换算到内容坐标（`+滚动偏移`），视口外归容器自身。
+- **滚动条几何**（`dui::Scroller` 自绘，非独立控件）：默认厚 **8 DIP**（轨道 / 滑块同厚，
+  可用 `Track*` / `Thumb*` 系列属性改），**贴视口边缘**——纵向条占视口最右、横向条占最下，
+  沿另一轴铺满视口，无内缩间隙。滚动条**叠加在内容之上**，布局不为它预留空间；
+  轨道同时是命中区（空白处按下 = 跳页，见 06-Events §3.1）。
+- **滑块配色**：滑块默认较浅（`0x30000000`，约 19% 黑；轨道 `0x14000000` 约 8%），
+  指针悬停在滑块上时加深（alpha ×1.6，约 30% 黑）；
+  滑块为自绘图形、无独立元素，故不走状态变体，由 `Scroller` 依据指针位置 + 容器
+  Hover 态自行判定并标脏重绘（属性默认值见 15-Properties §4.3.1）。
 
 ---
 
@@ -252,11 +264,11 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
 | `display` | Enum | `Flex`（默认）/ `Grid` / `None` |
 | `flexDirection` | Enum | Row / Column（默认 Column） |
 | `flexWrap` | Enum | NoWrap（默认）/ Wrap |
-| `justifyContent` | Enum | 主轴对齐 |
-| `alignItems` / `alignSelf` | Enum | 交叉轴对齐，默认 Stretch |
+| `justifyContent` | Enum | 主轴对齐（`Start`/`Center`/`End`/`SpaceBetween`/`SpaceAround`/`SpaceEvenly`，M5.52 全落地） |
+| `alignItems` / `alignSelf` | Enum | 交叉轴对齐（`Stretch`/`Start`/`Center`/`End`/`Baseline`；`alignSelf` 未设取父 `alignItems`） |
 | `flexGrow` / `flexShrink` | Float | 默认 0 / 1 |
-| `flexBasis` | Length | 默认 Auto |
-| `gap` / `rowGap` / `columnGap` | Length | 默认 0 |
+| `flexBasis` | Length | 默认未设（未设则按 `width`/`height` 与内容自然尺寸）；按元素盒语义 |
+| `gap` / `rowGap` / `columnGap` | Length | 默认 0；后两者未设则各自回落 `gap` |
 | `margin` | Thickness | 四边外边距；外边距盒参与占位、不塌陷（§3/§7-1），运行时已落地 |
 | `boxSizing` | Enum | BorderBox（默认）/ ContentBox |
 | `position` | Enum | Static（默认）/ Relative / Absolute / Fixed（运行时已实现） |
@@ -301,9 +313,9 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
 
 | 期 | 内容 |
 | --- | --- |
-| **P0** | 盒模型（含 box-sizing，**`margin` 已落地，§3**）、Flex 全量（§4.1）、**`position` 四值 + 四边定位（已落地，§4.3）**、auto/固定/百分比、min/max、`display: None` |
-| **P1** | **Grid（§4.2，已落地）**、`overflow: Scroll` + 滚动条、RTL（`direction` 与 flex 主轴联动，依赖 文字排版层） |
-| **P2** | 普通流的 `zIndex`、`alignItems: Baseline`、嵌套百分比与浏览器对齐的精化（§7-7） |
+| **P0** | 盒模型（含 box-sizing，**`margin` 已落地，§3**）、Flex 全量（§4.1，**M5.52 补齐 justifyContent 六取值 / alignSelf / alignItems::End·Baseline / flexBasis / 行列间距**）、**`position` 四值 + 四边定位（已落地，§4.3）**、auto/固定/百分比、min/max（**高度向已落地**）、`display: None` |
+| **P1** | **Grid（§4.2，已落地）**、`overflow: Scroll` + 滚动条（**裁剪部分已落地**，滚动条仍由 `dui::Scroller` 控件负责）、RTL（`direction` 与 flex 主轴联动，依赖 文字排版层） |
+| **P2** | 普通流的 `zIndex`、嵌套百分比与浏览器对齐的精化（§7-7） |
 
 ---
 
@@ -313,5 +325,5 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
 2. 默认值组合（`Column + Stretch`）是否作为全局默认 —— 影响所有控件的书写习惯。
 3. Grid 是否进 P0 —— 已按 P1 边界落地（§4.2），不再待确认。
 4. 富文本 / inline 混排是否进 MVP（影响 §4.4 与 ADR-017）。
-5. `alignItems: Baseline` 是否需要（文本混排场景常用，但实现涉及跨元素基线对齐）。
+5. ~~`alignItems: Baseline` 是否需要~~ 已落地（M5.52：`Text` / `TextBox` 提供首行基线，跨元素按基线对齐）。
 6. 滚动的具体形态：像素滚动 vs 行滚动、滚动条常显/悬浮。

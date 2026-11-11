@@ -45,12 +45,11 @@ Vec2 Svg::MeasureContent(const StyleContext&, const Vec2&) const {
     return intrinsic_;                      // 与纹理无关：首次布局就有尺寸
 }
 
-void Svg::EnsureRaster(const StyleContext& ctx, float scale) {
+void Svg::EnsureRaster(const StyleContext&, float scale) {
     if (data_.empty()) return;
-    const StyleValue pv = ResolveProperty(this, Prop::Padding, ctx);
-    const Rect b = Bounds();
-    const float wDip = b.w - pv.f - pv.extra[1];
-    const float hDip = b.h - pv.extra[0] - pv.extra[2];
+    const Rect content = ContentRectOf(this);
+    const float wDip = content.w;
+    const float hDip = content.h;
     if (wDip <= 0.f || hDip <= 0.f) return;
     const uint32_t pxW = static_cast<uint32_t>(wDip * scale + 0.5f);
     const uint32_t pxH = static_cast<uint32_t>(hDip * scale + 0.5f);

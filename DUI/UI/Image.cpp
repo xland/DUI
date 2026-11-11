@@ -272,11 +272,8 @@ Vec2 Image::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) co
 void Image::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) {
     const graphics::ImageTexture* t = AsTexture(tex_);
     if (t == nullptr) return;
-    // 内容盒 = 元素盒去掉 padding（与布局的 content box 一致）
-    const StyleValue pv = ResolveProperty(this, Prop::Padding, ctx);
-    const Rect b = Bounds();
-    const Rect content{b.x + pv.f, b.y + pv.extra[0],
-                       b.w - pv.f - pv.extra[1], b.h - pv.extra[0] - pv.extra[2]};
+    // 内容盒 = 元素盒去掉 padding（与布局的 content box 一致；border-box 时再去掉边框）
+    const Rect content = ContentRectOf(this);
     if (content.w <= 0.f || content.h <= 0.f) return;
 
     // 等比缩放并居中（object-fit: contain 语义）：盒子与自然比例不同时

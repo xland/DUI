@@ -48,6 +48,12 @@ constexpr float kSubPixelScale = 4.f;
 constexpr float kSubPixelStep  = 1.f / kSubPixelScale;
 constexpr int   kSubPixelPhases = static_cast<int>(kSubPixelScale);
 
+// 词分隔符（CSS word-spacing 的作用对象）：半角空格 + 全角空格。
+// 连续分隔符合并成一段下发 trailingSpacing（DWrite 按"字符之后加距"语义）。
+bool IsWordSeparator(wchar_t ch) {
+    return ch == L' ' || ch == 0x3000;
+}
+
 // Draw 的用户上下文（layout → renderer 回调携带）
 struct DrawCtx {
     Engine*            engine;
@@ -294,6 +300,12 @@ Engine::Engine() {
     factory_->CreateTextFormat(L"Microsoft YaHei", fonts_, DWRITE_FONT_WEIGHT_NORMAL,
                                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                                16.f, L"en-us", &baseFormat_);
+    // 不折行版（text-overflow: ellipsis 的单行排版）：与基座同设置，只关折行
+    factory_->CreateTextFormat(L"Microsoft YaHei", fonts_, DWRITE_FONT_WEIGHT_NORMAL,
+                               DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                               16.f, L"en-us", &noWrapFormat_);
+    if (noWrapFormat_ != nullptr)
+        noWrapFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
 }
 
 Engine::~Engine() {
@@ -301,6 +313,7 @@ Engine::~Engine() {
     if (renderParams_ != nullptr) renderParams_->Release();
     if (gdi_ != nullptr) gdi_->Release();
     if (baseFormat_ != nullptr) baseFormat_->Release();
+    if (noWrapFormat_ != nullptr) noWrapFormat_->Release();
     if (fonts_ != nullptr) fonts_->Release();
     loadedFonts_.clear();   // 释放各字体的面引用与集合
     // 内存字体加载器：字体文件引用在装载器注册期间才有效 → 先放字体再注销装载器
@@ -436,6 +449,9 @@ Paragraph* Engine::Shape(Paragraph* p, const ShapeInput& in) {
 
     if (p != nullptr && p->fontSize == in.fontSize && p->weight == in.weight &&
         p->lineHeight == in.lineHeight && p->maxWidth == in.maxWidth &&
+        p->letterSpacing == in.letterSpacing && p->wordSpacing == in.wordSpacing &&
+        p->noWrap == in.noWrap &&
+        p->italic == in.italic && p->underline == in.underline && p->strike == in.strike &&
         p->runCount == runCount &&
         (runCount == 0 || p->runVersion == in.runVersion) &&
         wcscmp(p->family.c_str(), fam != nullptr ? fam : L"") == 0 &&
@@ -451,12 +467,19 @@ Paragraph* Engine::Shape(Paragraph* p, const ShapeInput& in) {
     p->weight = in.weight;
     p->lineHeight = in.lineHeight;
     p->maxWidth = in.maxWidth;
+    p->letterSpacing = in.letterSpacing;
+    p->wordSpacing = in.wordSpacing;
+    p->noWrap = in.noWrap;
+    p->italic = in.italic;
+    p->underline = in.underline;
+    p->strike = in.strike;
     p->runs = (runCount > 0) ? in.runs : nullptr;
     p->runCount = runCount;
     p->runVersion = in.runVersion;
     const uint32_t len = static_cast<uint32_t>(p->text.size());
 
-    const HRESULT hr = factory_->CreateTextLayout(p->text.c_str(), len, baseFormat_,
+    const HRESULT hr = factory_->CreateTextLayout(p->text.c_str(), len,
+                                                  in.noWrap ? noWrapFormat_ : baseFormat_,
                                                   in.maxWidth, 0.f, &p->layout);
     if (SUCCEEDED(hr) && len > 0) {
         // ① 段落默认（整段一次设置）
@@ -475,6 +498,39 @@ Paragraph* Engine::Shape(Paragraph* p, const ShapeInput& in) {
             }
             // 开发者指定字体族（系统已安装任意字体）；未安装时 DWrite 自动回退默认
             p->layout->SetFontFamilyName(fam, all);
+        }
+        // 段落默认的斜体 / 装饰线（单样式路径；富文本由 run 覆盖，见 ApplyRuns）。
+        // 下划线与删除线由 DWrite 算出位置与厚度，走渲染器回调画线（不占行高）。
+        if (in.italic) p->layout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, all);
+        if (in.underline) p->layout->SetUnderline(TRUE, all);
+        if (in.strike) p->layout->SetStrikethrough(TRUE, all);
+        // 字距（03-Style letterSpacing = DIP）：DWrite 只收 em 的千分比，
+        // 故按当前字号换算（DIP/em = fontSize）。CSS 的 letter-spacing 是
+        // "字符之后加距" → 对应 DWrite 的 trailingSpacing。
+        // 词距（wordSpacing）：DWrite 无此接口，但 trailingSpacing **可按区间下发** ——
+        // 对"词分隔符"（半角/全角空格）区间额外加宽（同区间覆盖字距），
+        // 即 CSS word-spacing 语义；加宽后的宽度由 DWrite 自己算进 layout，
+        // 测量与折行天然一致（不用字形级自绘）。
+        if ((in.letterSpacing != 0.f || in.wordSpacing != 0.f) && in.fontSize > 0.f) {
+            IDWriteTextLayout1* l1 = nullptr;
+            if (SUCCEEDED(p->layout->QueryInterface(&l1))) {
+                const float ls = in.letterSpacing / in.fontSize * 1000.f;
+                if (in.letterSpacing != 0.f) l1->SetCharacterSpacing(0.f, ls, 0.f, all);
+                if (in.wordSpacing != 0.f) {
+                    const float ws = (in.letterSpacing + in.wordSpacing) / in.fontSize * 1000.f;
+                    // 连续分隔符合并成一段下发（DWrite 对重叠区间是"后者覆盖"）
+                    uint32_t i = 0;
+                    while (i < len) {
+                        if (!IsWordSeparator(p->text[i])) { ++i; continue; }
+                        uint32_t j = i;
+                        while (j < len && IsWordSeparator(p->text[j])) ++j;
+                        const DWRITE_TEXT_RANGE sp{i, j - i};
+                        l1->SetCharacterSpacing(0.f, ws, 0.f, sp);
+                        i = j;
+                    }
+                }
+                l1->Release();
+            }
         }
         // ② run 覆盖（仅富文本走这里；单样式完全不进）
         if (runCount > 0) ApplyRuns(p->layout, in, len);
@@ -495,7 +551,63 @@ Paragraph* Engine::Shape(Paragraph* p, const ShapeInput& in) {
     if (p->layout != nullptr) p->layout->GetMetrics(&m);
     // 空段落保持行高占位（与 M3 估算一致），避免布局塌陷
     p->size = {m.width, len > 0 ? m.height : in.fontSize * in.lineHeight};
+    // 首行基线（相对排版原点）：align-items: baseline 对齐用
+    p->baseline = 0.f;
+    if (p->layout != nullptr && len > 0) {
+        DWRITE_LINE_METRICS lm{};
+        UINT32 count = 0;
+        if (SUCCEEDED(p->layout->GetLineMetrics(&lm, 1, &count)) && count > 0) p->baseline = lm.baseline;
+    }
     return p;
+}
+
+// ---- 文本截断（text-overflow: ellipsis）-------------------------------------
+
+// 省略号（U+2026）在给定排版参数下的宽度（DIP）：用同一 ShapeInput 排一个只含
+// "…" 的段落 —— 缓存键稳定，稳态零 COM 开销。
+float Engine::MeasureEllipsis(Paragraph* cached, const ShapeInput& in) {
+    static const wchar_t kEllipsis[] = L"…";
+    ShapeInput e = in;
+    e.text = kEllipsis;
+    e.runs = nullptr;
+    e.runCount = 0;
+    e.maxWidth = 1e6f;
+    e.noWrap = true;
+    Paragraph* p = Shape(cached, e);
+    return p != nullptr ? p->size.x : 0.f;
+}
+
+// 已排版段落上"宽度 <= maxWidth 的最长前缀"字符数。
+// ① 二分 HitTestTextPosition 求宽度上界（第 n 个字符处的 x = 前缀 [0,n) 的宽度）；
+// ② HitTestPoint 校正到**簇边界** —— 否则可能切在字形簇中间（半个汉字）。
+uint32_t Engine::FitPrefixChars(const Paragraph* p, float maxWidth) {
+    if (p == nullptr || p->layout == nullptr) return 0;
+    const uint32_t len = static_cast<uint32_t>(p->text.size());
+    if (len == 0) return 0;
+    DWRITE_TEXT_METRICS m{};
+    if (FAILED(p->layout->GetMetrics(&m))) return len;
+    if (m.width <= maxWidth) return len;
+    auto xAt = [&](uint32_t n) -> float {
+        FLOAT x = 0.f, y = 0.f;
+        DWRITE_HIT_TEST_METRICS hm{};
+        if (FAILED(p->layout->HitTestTextPosition(n, TRUE, &x, &y, &hm))) return 1e9f;
+        return x;
+    };
+    uint32_t lo = 0, hi = len;
+    while (lo < hi) {
+        const uint32_t mid = lo + (hi - lo + 1) / 2;
+        if (xAt(mid) <= maxWidth) lo = mid; else hi = mid - 1;
+    }
+    if (lo > 0 && lo < len) {
+        // 簇边界校正：命中点落在哪个簇，就取到那个簇的起点
+        BOOL trailing = FALSE, inside = FALSE;
+        DWRITE_HIT_TEST_METRICS hm{};
+        if (SUCCEEDED(p->layout->HitTestPoint(maxWidth, p->baseline, &trailing, &inside, &hm)) &&
+            hm.textPosition < lo) {
+            lo = hm.textPosition;
+        }
+    }
+    return lo;
 }
 
 void Engine::ApplyRuns(IDWriteTextLayout* layout, const ShapeInput& in, uint32_t textLen) {

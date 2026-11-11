@@ -13,11 +13,19 @@ namespace dui {
 namespace {
 
 // 滚动条布局常量；外观（厚/色/圆角/边框）走样式（Track* / Thumb* 属性）
-constexpr float kBarGap = 2.f;          // 与视口边缘间距（DIP）
 constexpr float kMinThumb = 28.f;       // 滑块最小长度（DIP）
 
 bool InRect(const Rect& r, const Vec2& p) {
     return p.x >= r.x && p.x <= r.Right() && p.y >= r.y && p.y <= r.Bottom();
+}
+
+// 滑块悬停加深：只提 alpha（RGB 不变），比例 kThumbHoverBoost
+constexpr float kThumbHoverBoost = 1.6f;
+
+Color BoostAlpha(Color c, float k) {
+    const uint32_t a = (c >> 24) & 0xFFu;
+    const uint32_t na = std::min<uint32_t>(255u, static_cast<uint32_t>(a * k + 0.5f));
+    return (c & 0x00FFFFFFu) | (na << 24);
 }
 
 }  // namespace
@@ -62,8 +70,10 @@ void Scroller::ClampScroll() {
 
 Rect Scroller::Viewport() const {
     const Rect b = Bounds();   // 绝对 DIP（Arrange 结果）
-    return Rect{b.x + pad_.left, b.y + pad_.top,
-                b.w - pad_.left - pad_.right, b.h - pad_.top - pad_.bottom};
+    // border-box：边框占盒内空间 → 视口再扣边框宽度
+    return Rect{b.x + pad_.left + border_.left, b.y + pad_.top + border_.top,
+                b.w - pad_.left - pad_.right - border_.left - border_.right,
+                b.h - pad_.top - pad_.bottom - border_.top - border_.bottom};
 }
 
 float Scroller::MaxScrollX() const {
@@ -91,8 +101,8 @@ bool Scroller::HorizontalBarVisible() const {
 Rect Scroller::VerticalTrackRect() const {
     const Rect v = Viewport();
     const float t = BarThickness(true, false);
-    return Rect{v.Right() - t - kBarGap, v.y + kBarGap,
-                t, std::max(0.f, v.h - kBarGap * 2.f)};
+    // 贴边：轨道占视口最右 t DIP，纵向铺满视口高（不留内缩间隙）
+    return Rect{v.Right() - t, v.y, t, std::max(0.f, v.h)};
 }
 
 Rect Scroller::VerticalThumbRect() const {
@@ -109,8 +119,8 @@ Rect Scroller::VerticalThumbRect() const {
 Rect Scroller::HorizontalTrackRect() const {
     const Rect v = Viewport();
     const float t = BarThickness(false, false);
-    return Rect{v.x + kBarGap, v.Bottom() - t - kBarGap,
-                std::max(0.f, v.w - kBarGap * 2.f), t};
+    // 贴边：轨道占视口最下 t DIP，横向铺满视口宽（不留内缩间隙）
+    return Rect{v.x, v.Bottom() - t, std::max(0.f, v.w), t};
 }
 
 Rect Scroller::HorizontalThumbRect() const {
@@ -128,7 +138,14 @@ Rect Scroller::HorizontalThumbRect() const {
 // 交互
 // ---------------------------------------------------------------------------
 
-bool Scroller::HitScrollBar(const Vec2& pt, bool& vertical) const {
+bool Scroller::HitScrollBar(const Vec2& pt, bool& vertical) {
+    // 记录指针位置（容器自身空间，与 Bounds/滑块矩形同空间）供滑块悬停判定。
+    // 仅当点确实落在本容器盒内才记录：App 层按下路径按窗口绝对坐标调用，
+    // 嵌套容器里那套坐标与本容器空间不同，不能拿来判悬停。
+    if (InRect(Bounds(), pt)) {
+        barPointer_ = pt;
+        RefreshThumbHover();
+    }
     if (VerticalBarVisible() && InRect(VerticalTrackRect(), pt)) {
         vertical = true;
         return true;
@@ -138,6 +155,27 @@ bool Scroller::HitScrollBar(const Vec2& pt, bool& vertical) const {
         return true;
     }
     return false;
+}
+
+// 指针是否在滑块上：Hover 态 = 指针在本容器内（离开容器时状态被清），
+// 再用记录的指针位置判是否落在滑块矩形内
+bool Scroller::ThumbHovered() const {
+    if (!HasState(State::Hover)) return false;
+    return InRect(VerticalThumbRect(), barPointer_) || InRect(HorizontalThumbRect(), barPointer_);
+}
+
+// 滑块悬停态变化 → 标脏重绘（滑块为自绘，无状态变体，靠这里触发刷新）
+void Scroller::RefreshThumbHover() {
+    const bool hovered = ThumbHovered();
+    if (hovered == thumbHover_) return;
+    thumbHover_ = hovered;
+    InvalidatePaint();
+}
+
+// 悬停态变化（指针移入/移出容器）→ 滑块配色可能变 → 刷新
+void Scroller::SetState(State s, bool on) {
+    Panel::SetState(s, on);
+    if (s == State::Hover) RefreshThumbHover();
 }
 
 void Scroller::BeginBarDrag(bool vertical, Vec2 pt) {
@@ -191,6 +229,13 @@ void Scroller::EndBarDrag() {
 Vec2 Scroller::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) const {
     const StyleValue pv = ResolveProperty(this, Prop::Padding, ctx);
     pad_ = {pv.f, pv.extra[0], pv.extra[1], pv.extra[2]};
+    // border-box 盒模型：边框占盒内空间 → 视口要扣掉边框宽度
+    border_ = Thickness{};
+    if (ResolveProperty(this, Prop::BoxSizing, ctx).u ==
+        static_cast<uint32_t>(dui::BoxSizing::BorderBox)) {
+        const StyleValue bv = ResolveProperty(this, Prop::BorderWidth, ctx);
+        border_ = {bv.f, bv.extra[0], bv.extra[1], bv.extra[2]};
+    }
 
     // 主轴不限（内容可溢出 → 可滚动），交叉轴受视口约束（列表项拉满视口宽）
     const bool row = ResolveProperty(this, Prop::FlexDirection, ctx).u ==
@@ -210,7 +255,9 @@ void Scroller::PaintBar(graphics::Painter& p, const Rect& r, bool thumb, float s
     const Prop bw  = thumb ? Prop::ScrollbarThumbBorderWidth : Prop::ScrollbarTrackBorderWidth;
 
     const float radius = ResolveProperty(this, rad).f;
-    const Color color = ResolveProperty(this, bg).u;
+    Color color = ResolveProperty(this, bg).u;
+    // 滑块悬停 → 加深（只提 alpha）；轨道不变
+    if (thumb && ThumbHovered()) color = BoostAlpha(color, kThumbHoverBoost);
     if (color != 0) p.FillRoundedRect(r, radius, color, 1.f, scale);
 
     const float border = ResolveProperty(this, bw).f;

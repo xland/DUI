@@ -59,6 +59,21 @@ struct Thickness {
         : left(l), top(t), right(r), bottom(b) {}
 };
 
+// ---- 四角圆角半径（CSS border-radius 顺序：左上 / 右上 / 右下 / 左下）--------
+//  聚合形式：{all} / {左上, 右上, 右下, 左下}。绘制侧由 Graphics 逐角求 SDF。
+struct CornerRadii {
+    float tl = 0.f;
+    float tr = 0.f;
+    float br = 0.f;
+    float bl = 0.f;
+
+    CornerRadii() = default;
+    explicit CornerRadii(float all) noexcept
+        : tl(all), tr(all), br(all), bl(all) {}
+    CornerRadii(float tl_, float tr_, float br_, float bl_) noexcept
+        : tl(tl_), tr(tr_), br(br_), bl(bl_) {}
+};
+
 // ---- 2D 仿射变换（Paint 级 transform；10-Rendering §6.3）------------------
 //  Apply(x,y) = (a*x + c*y + tx, b*x + d*y + ty)；(a,b) / (c,d) 为 x / y 基向量像。
 //  A * B 表示"先 B 后 A"，与函数复合 A(B(p)) 一致。默认构造 = 恒等变换。

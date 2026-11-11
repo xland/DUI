@@ -47,10 +47,23 @@ uint32_t LerpColor(uint32_t from, uint32_t to, float t) {
 }
 
 StyleValue Interpolate(const StyleValue& from, const StyleValue& to,
-                       bool color, float t) {
+                       AnimKind kind, float t) {
     StyleValue v = from;
-    if (color) v.u = LerpColor(from.u, to.u, t);
-    else v.f = from.f + (to.f - from.f) * t;
+    switch (kind) {
+    case AnimKind::Color:
+        v.u = LerpColor(from.u, to.u, t);
+        break;
+    case AnimKind::Quad:
+        // 四通道（Thickness 四边 / CornerRadii 四角）：各通道独立线性插值，
+        // 共用同一条时间轴与缓动（CSS transition 的"同一属性一条时间轴"语义）
+        v.f = from.f + (to.f - from.f) * t;
+        for (int i = 0; i < 3; ++i)
+            v.extra[i] = from.extra[i] + (to.extra[i] - from.extra[i]) * t;
+        break;
+    default:
+        v.f = from.f + (to.f - from.f) * t;
+        break;
+    }
     return v;
 }
 
@@ -121,7 +134,7 @@ void CancelAnimation(const std::shared_ptr<AnimState>& state) noexcept {
 // Element：启动与推进
 // ---------------------------------------------------------------------------
 
-AnimationHandle Element::StartAnimation(Prop p, bool color, const StyleValue& to,
+AnimationHandle Element::StartAnimation(Prop p, AnimKind kind, const StyleValue& to,
                                         const AnimConfig& cfg) {
     // 同 (元素, 属性) 唯一：旧动画（含已完成、仍保留终值者）整体作废，
     // 不触发其完成回调；新动画的起点自然取到当前显示值。
@@ -146,7 +159,7 @@ AnimationHandle Element::StartAnimation(Prop p, bool color, const StyleValue& to
     slot.prop = p;
     slot.from = ResolveProperty(this, p);   // 遍历外路径，含层 1 当前显示值
     slot.to = to;
-    slot.color = color;
+    slot.kind = kind;
     slot.durationMs = cfg.durationMs != 0 ? cfg.durationMs : 1u;
     slot.easing = cfg.easing;
     slot.state = state;
@@ -165,7 +178,7 @@ void Element::TickAnimations(uint64_t nowMs) {
         float t = static_cast<float>(elapsed) / static_cast<float>(a.durationMs);
         if (t > 1.f) t = 1.f;
 
-        const StyleValue v = Interpolate(a.from, a.to, a.color, ApplyEasing(a.easing, t));
+        const StyleValue v = Interpolate(a.from, a.to, a.kind, ApplyEasing(a.easing, t));
         bool found = false;
         for (StyleValue& cur : animated_) {
             if (cur.prop == a.prop) { cur = v; found = true; break; }

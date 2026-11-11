@@ -7,6 +7,7 @@
 //
 //  root 用 Row + FlexWrap(Wrap) 自动排成示例网格；FontSize / Color 是继承
 //  属性，由 root 一次设好下传，所以单个示例里不需要重复写外观配置。
+//  示例 11 / 12 演示多通道补间：Thickness 四边（每帧重排）与四角圆角（只重绘）。
 //  GIF 帧动画与播放控制见 Samples/Image；三类时间行为共用 App 层一个定时器。
 // ============================================================================
 
@@ -179,6 +180,44 @@ void DemoCombo(dui::Panel* root) {
     });
 }
 
+// ---- 11 间距：Thickness 四边同时补间（每帧重排） -----------------------------
+// padding / margin 是 kFlagLayout → 补间期间每帧重排整棵子树：内边距把内容挤动，
+// 外边距把兄弟项推开（与示例 9 的 Width 同一代价）；四边共用一条时间轴，一起动。
+void DemoSpacing(dui::Panel* root) {
+    dui::Panel* col = Demo(root, L"11 间距：Padding / Margin");
+    dui::Panel* card = col->AddChild<dui::Panel>(dui::Style()
+        .Width(160.f).Height(56.f).Padding(4.f)
+        .Background(0xFF2D7FF9).CornerRadius(6.f));
+    card->AddChild<dui::Text>(L"内容");
+    AddButton(col, L"撑开", [card] {
+        card->Animate(dui::Padding, dui::Thickness(20.f), { .durationMs = 600 });
+        card->Animate(dui::Margin,  dui::Thickness(16.f), { .durationMs = 600 });
+    });
+    AddButton(col, L"收回", [card] {
+        card->Animate(dui::Padding, dui::Thickness(4.f), { .durationMs = 600 });
+        card->Animate(dui::Margin,  dui::Thickness(0.f), { .durationMs = 600 });
+    });
+    col->AddChild<dui::Text>(L"四边一起动：每帧重排");
+}
+
+// ---- 12 四角：CornerRadii 四通道各自插值（只重绘，不重排） -------------------
+// 目标值四角不同（左上/右下大、右上/左下小）→ 能看出四个通道各自插值；
+// cornerRadius 是 kFlagPaint → 只重绘，布局完全不动。
+void DemoCorner(dui::Panel* root) {
+    dui::Panel* col = Demo(root, L"12 四角：CornerRadius");
+    dui::Panel* card = col->AddChild<dui::Panel>(dui::Style()
+        .Width(160.f).Height(56.f)
+        .Background(0xFF2D7FF9).CornerRadius(4.f));
+    AddButton(col, L"圆角化", [card] {
+        card->Animate(dui::CornerRadius, dui::CornerRadii{28.f, 4.f, 28.f, 4.f},
+            { .durationMs = 700 });
+    });
+    AddButton(col, L"复位", [card] {
+        card->Animate(dui::CornerRadius, dui::CornerRadii(4.f), { .durationMs = 700 });
+    });
+    col->AddChild<dui::Text>(L"四角各自插值：只重绘");
+}
+
 class AnimationWindow final : public dui::Window {
 public:
     AnimationWindow()
@@ -209,6 +248,8 @@ protected:
         DemoScale(root);
         DemoSize(root);
         DemoCombo(root);
+        DemoSpacing(root);
+        DemoCorner(root);
     }
 };
 

@@ -286,6 +286,18 @@ struct RichEditor::Impl {
     float        layoutLine = 0.f;
     String       layoutFamily;
     StyleContext lastCtx{};
+    // 段落默认（元素级 fontStyle / textDecoration）：run 级只在显式为真时覆盖，
+    // 未设的 run 沿用本值 → 整个编辑器可一键斜体 / 加下划线。
+    // baseDeco 是 dui::TextDecoration 位标志。
+    bool         baseItalic = false;
+    uint32_t     baseDeco = 0;
+    float        baseLetterSpacing = 0.f;
+    float        baseWordSpacing = 0.f;
+    bool         layoutItalic = false;
+    uint32_t     layoutDeco = 0;
+    float        layoutLetterSpacing = -1.f;
+    float        layoutWordSpacing = -1.f;
+    const Element* host = nullptr;   // 宿主元素（查元素自身的 textDecoration）
 
     // 段落池：编辑后重建时按文本复用（引擎自己判定 layout 是否真的重建）
     std::vector<text::Paragraph*> poolMain;
@@ -327,7 +339,8 @@ struct RichEditor::Impl {
 
     text::Paragraph* MakePara(text::Paragraph*& slot, const wchar_t* text, float size,
                               uint32_t weight, float line, const wchar_t* family,
-                              float maxWidth, const std::vector<text::TextRun>* runs);
+                              float maxWidth, const std::vector<text::TextRun>* runs,
+                              bool applyBase);
 
     void Paint(graphics::Painter& p, const StyleContext& ctx, float scale, Vec2 origin,
                bool showCaret, Color caretColor, Color selectionColor) const;
@@ -620,7 +633,8 @@ void RichEditor::Impl::BuildItem(const Block& block, const String& marker, int d
 
 text::Paragraph* RichEditor::Impl::MakePara(text::Paragraph*& slot, const wchar_t* text, float size,
                                           uint32_t weight, float line, const wchar_t* family,
-                                          float maxWidth, const std::vector<text::TextRun>* runs) {
+                                          float maxWidth, const std::vector<text::TextRun>* runs,
+                                          bool applyBase) {
     text::ShapeInput in;
     in.text = text != nullptr ? text : L"";
     in.fontSize = size;
@@ -628,6 +642,14 @@ text::Paragraph* RichEditor::Impl::MakePara(text::Paragraph*& slot, const wchar_
     in.lineHeight = line > 0.f ? line : 1.2f;
     in.maxWidth = maxWidth;
     in.family = (family != nullptr && family[0] != L'\0') ? family : nullptr;
+    // 段落默认（仅正文段落 applyBase=true；行号 / 项目符号 / 图片替代文本不跟随）
+    if (applyBase) {
+        in.italic = baseItalic;
+        in.underline = dui::HasDecoration(baseDeco, dui::TextDecoration::Underline);
+        in.strike = dui::HasDecoration(baseDeco, dui::TextDecoration::LineThrough);
+        in.letterSpacing = baseLetterSpacing;
+        in.wordSpacing = baseWordSpacing;
+    }
     if (runs != nullptr && !runs->empty()) {
         in.runs = runs->data();
         in.runCount = static_cast<uint32_t>(runs->size());
@@ -692,7 +714,7 @@ void RichEditor::Impl::PlaceItem(Item& it, float width, float& y) {
         if (tex == nullptr && !block.altText.empty()) {
             if (it.auxPara == nullptr) it.auxPara = Take(poolAux, block.altText.c_str());
             it.auxPara = MakePara(it.auxPara, block.altText.c_str(), baseSize * 0.85f, 400u,
-                                  it.lineHeight, it.family.c_str(), kNoWrapWidth, nullptr);
+                                  it.lineHeight, it.family.c_str(), kNoWrapWidth, nullptr, false);
         }
         y += imageH + (hasMargin ? st.margin.bottom : 0.f);
         return;
@@ -715,10 +737,10 @@ void RichEditor::Impl::PlaceItem(Item& it, float width, float& y) {
             it.auxPara = Take(poolAux, it.numberText.c_str());
         }
         it.para = MakePara(it.para, it.text.c_str(), it.fontSize, it.weight, it.lineHeight,
-                           it.family.c_str(), kNoWrapWidth, nullptr);
+                           it.family.c_str(), kNoWrapWidth, nullptr, true);
         if (it.lineNumbers) {
             it.auxPara = MakePara(it.auxPara, it.numberText.c_str(), it.fontSize, it.weight,
-                                  it.lineHeight, it.family.c_str(), kNoWrapWidth, nullptr);
+                                  it.lineHeight, it.family.c_str(), kNoWrapWidth, nullptr, false);
         }
 
         const float textH = it.para != nullptr ? it.para->size.y : it.fontSize * it.lineHeight;
@@ -739,7 +761,7 @@ void RichEditor::Impl::PlaceItem(Item& it, float width, float& y) {
 
     const float maxW = wrap ? std::max(0.f, availW - gutter) : kNoWrapWidth;
     it.para = MakePara(it.para, it.text.c_str(), it.fontSize, it.weight, it.lineHeight,
-                       it.family.c_str(), maxW, it.runs.empty() ? nullptr : &it.runs);
+                       it.family.c_str(), maxW, it.runs.empty() ? nullptr : &it.runs, true);
 
     const float textH = it.para != nullptr ? it.para->size.y : it.fontSize * it.lineHeight;
     const float textW = it.para != nullptr ? it.para->size.x : 0.f;
@@ -753,7 +775,7 @@ void RichEditor::Impl::PlaceItem(Item& it, float width, float& y) {
     if (!it.marker.empty()) {
         if (it.markerPara == nullptr) it.markerPara = Take(poolMarker, it.marker.c_str());
         it.markerPara = MakePara(it.markerPara, it.marker.c_str(), it.fontSize, it.weight,
-                                 it.lineHeight, it.family.c_str(), kNoWrapWidth, nullptr);
+                                 it.lineHeight, it.family.c_str(), kNoWrapWidth, nullptr, false);
         const float markerW = it.markerPara != nullptr ? it.markerPara->size.x : 0.f;
         it.markerX = it.textBox.x - kMarkerGapRight - markerW;
     }
@@ -1102,13 +1124,23 @@ void RichEditor::Impl::EnsureLayout(const StyleContext& ctx, float width) {
     const float line = ctx.lineHeight > 0.f ? ctx.lineHeight : 1.2f;
     const wchar_t* family = !doc.defaultFont.empty() ? doc.defaultFont.c_str() : ctx.family;
     const wchar_t* fam = (family != nullptr) ? family : L"";
+    // 段落默认：斜体是继承属性 → ctx 已带父计算值；装饰线不继承 → 查元素自身链
+    const bool italic = ctx.fontStyle == static_cast<uint32_t>(dui::FontStyle::Italic);
+    const uint32_t deco = ResolveProperty(host, Prop::TextDecoration, ctx).u;
+    const float letterSpacing = ctx.letterSpacing;
+    const float wordSpacing = ctx.wordSpacing;
 
     if (laidOut && width == layoutWidth && base == layoutBase && line == layoutLine &&
-        layoutFamily == fam) {
+        layoutFamily == fam && layoutItalic == italic && layoutDeco == deco &&
+        layoutLetterSpacing == letterSpacing && layoutWordSpacing == wordSpacing) {
         return;
     }
 
     Discard(true);
+    baseItalic = italic;          // MakePara 在 Place 期读它 → 必须先于排版
+    baseDeco = deco;
+    baseLetterSpacing = letterSpacing;
+    baseWordSpacing = wordSpacing;
     Build(ctx, base, line, fam);
     Place(width);
     FlushPool();
@@ -1117,6 +1149,10 @@ void RichEditor::Impl::EnsureLayout(const StyleContext& ctx, float width) {
     layoutBase = base;
     layoutLine = line;
     layoutFamily = fam;
+    layoutItalic = italic;
+    layoutDeco = deco;
+    layoutLetterSpacing = letterSpacing;
+    layoutWordSpacing = wordSpacing;
     laidOut = true;
 }
 
@@ -2110,6 +2146,7 @@ RichEditor::Impl::KeyResult RichEditor::Impl::HandleKey(int key, bool shift, boo
 // ---------------------------------------------------------------------------
 
 RichEditor::RichEditor() : impl_(std::make_unique<Impl>()) {
+    impl_->host = this;
     SetFocusable(true);
 }
 
@@ -2153,9 +2190,8 @@ bool RichEditor::HasSelection() const noexcept {
 }
 
 Vec2 RichEditor::ContentOrigin() const {
-    const Thickness pad = ValueAsThickness(ResolveProperty(this, Prop::Padding));
-    const Rect box = Bounds();
-    return Vec2{box.x + pad.left, box.y + pad.top};
+    const Rect content = ContentRectOf(this);
+    return Vec2{content.x, content.y};
 }
 
 Vec2 RichEditor::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) const {
@@ -2170,9 +2206,8 @@ Vec2 RichEditor::MeasureContent(const StyleContext& ctx, const Vec2& contentAvai
 }
 
 void RichEditor::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) {
-    const Thickness pad = ValueAsThickness(ResolveProperty(this, Prop::Padding, ctx));
-    const Rect box = Bounds();
-    const float width = box.w - pad.left - pad.right;
+    const Rect content = ContentRectOf(this);
+    const float width = content.w;
     impl_->EnsureLayout(ctx, width > 0.f ? width : 0.f);
 
     const Color selectionColor = ResolveProperty(this, Prop::SelectionColor, ctx).u;
@@ -2181,16 +2216,13 @@ void RichEditor::OnPaint(graphics::Painter& p, const StyleContext& ctx, float sc
     if (TryResolveElement(this, Prop::CaretColor, caretValue)) caretColor = caretValue.u;
 
     const bool showCaret = editable_ && HasFocus() && impl_->caretVisible;
-    impl_->Paint(p, ctx, scale, Vec2{box.x + pad.left, box.y + pad.top}, showCaret, caretColor,
+    impl_->Paint(p, ctx, scale, Vec2{content.x, content.y}, showCaret, caretColor,
                  selectionColor);
 }
 
 bool RichEditor::ContentClipRect(Rect& out) const {
     if (!impl_->overflowX) return false;   // 常规情况不加裁剪单元（省一次绘制切换）
-    const Thickness pad = ValueAsThickness(ResolveProperty(this, Prop::Padding));
-    out = Rect{ContentOrigin().x, ContentOrigin().y,
-               std::max(0.f, Bounds().w - pad.left - pad.right),
-               std::max(0.f, Bounds().h - pad.top - pad.bottom)};
+    out = ContentRectOf(this);
     return true;
 }
 

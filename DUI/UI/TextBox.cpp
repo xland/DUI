@@ -10,16 +10,13 @@
 #include <algorithm>
 #include <cmath>
 
+#include "Core/Clipboard.h"
 #include "Graphics/Graphics.h"
 #include "Text/TextEngine.h"
 
 namespace dui {
 
 namespace {
-
-// 剪贴板服务（平台实现由 App 层注入；UI 层不依赖 Platform，01-Layering §1）
-ClipboardReadFn  g_clipRead = nullptr;
-ClipboardWriteFn g_clipWrite = nullptr;
 
 constexpr size_t kMaxUndo = 100;
 constexpr float kMinBoxWidth = 120.f;      // 单行输入框最小自然宽（DIP）
@@ -72,19 +69,6 @@ int LineOf(const std::vector<text::LineInfo>& lines, uint32_t index) {
 }
 
 }  // namespace
-
-void SetClipboardService(ClipboardReadFn read, ClipboardWriteFn write) {
-    g_clipRead = read;
-    g_clipWrite = write;
-}
-
-bool ReadClipboardText(String& out) {
-    return g_clipRead != nullptr && g_clipRead(out);
-}
-
-bool WriteClipboardText(const String& text) {
-    return g_clipWrite != nullptr && g_clipWrite(text);
-}
 
 // ---------------------------------------------------------------------------
 // 构造 / 析构
@@ -348,8 +332,8 @@ void TextBox::DeleteForward() {
 void TextBox::Copy() const {
     if (!HasSelection()) return;
     const String s = SelectedText();
-    if (s.empty() || g_clipWrite == nullptr) return;
-    g_clipWrite(s);
+    if (s.empty()) return;
+    Clipboard::WriteText(s);
 }
 
 void TextBox::Cut() {
@@ -358,7 +342,7 @@ void TextBox::Cut() {
     const uint32_t s = SelectionStart();
     const uint32_t e = SelectionEnd();
     const String sel = text_.substr(s, e - s);
-    if (g_clipWrite != nullptr) g_clipWrite(sel);
+    Clipboard::WriteText(sel);
     text_.erase(s, e - s);
     caret_ = anchor_ = s;
     goalX_ = -1.f;
@@ -369,8 +353,7 @@ void TextBox::Cut() {
 
 void TextBox::Paste() {
     String clip;
-    if (g_clipRead == nullptr || !g_clipRead(clip)) return;
-    if (clip.empty()) return;
+    if (!Clipboard::ReadText(clip) || clip.empty()) return;
     if (multiline_) {
         clip = NormalizeNewlines(clip);
     } else {

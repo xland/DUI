@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "Core/Clipboard.h"
 #include "Graphics/Graphics.h"
 #include "Graphics/ImageCodec.h"
 #include "RichText/RichDocEdit.h"
@@ -1703,12 +1704,12 @@ String RichEdit::Impl::SelectedText() const {
 
 void RichEdit::Impl::CopySelection() const {
     if (!HasSelection()) return;
-    WriteClipboardText(SelectedText());
+    Clipboard::WriteText(SelectedText());
 }
 
 bool RichEdit::Impl::CutSelection() {
     if (!HasSelection()) return false;
-    WriteClipboardText(SelectedText());
+    Clipboard::WriteText(SelectedText());
     PushUndo(false);
     DeleteSelectionNoUndo();
     return true;
@@ -1716,7 +1717,7 @@ bool RichEdit::Impl::CutSelection() {
 
 bool RichEdit::Impl::PasteClipboard() {
     String raw;
-    if (!ReadClipboardText(raw) || raw.empty()) return false;
+    if (!Clipboard::ReadText(raw) || raw.empty()) return false;
 
     // 换行归一：\r\n / \r → \n（块内不留 \n，换行即块边界）
     String text;

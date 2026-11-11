@@ -70,15 +70,7 @@ Scroller* FindScroller(Element* e);
 // 沿祖先链找最近的可聚焦元素（点击取得焦点用；Event.cpp）
 Element* FindFocusable(Element* e);
 
-// ---------------------------------------------------------------------------
-// 剪贴板服务（UI 层不依赖 Platform，01-Layering §1）：
-//   平台实现（CF_UNICODETEXT）由 App 层在启动时注入；未注入时剪贴板操作失败。
-// ---------------------------------------------------------------------------
-using ClipboardReadFn = bool (*)(String& out);
-using ClipboardWriteFn = bool (*)(const String& text);
-void SetClipboardService(ClipboardReadFn read, ClipboardWriteFn write);
-// 控件层便捷入口（走上面注入的服务；未注入时返回 false）
-bool ReadClipboardText(String& out);
-bool WriteClipboardText(const String& text);
+// 剪贴板：dui::Clipboard（Core 层功能服务，Core/Clipboard.h）——
+// 2026-11-11 起自本头的函数指针注入迁移而来，UI 控件与业务统一走 Core
 
 }  // namespace dui

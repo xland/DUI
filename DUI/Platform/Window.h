@@ -55,10 +55,6 @@ public:
     virtual void OnResized() = 0;
 };
 
-// 剪贴板（CF_UNICODETEXT）：App 层注入到 UI 层（UI 不依赖 Platform）
-bool GetClipboardText(String& out);
-bool SetClipboardText(const String& text);
-
 class NativeWindow {
 public:
     NativeWindow() = default;

@@ -120,7 +120,7 @@ DirectWrite 仅支持 ttf/otf/ttc；woff/woff2 需先转 ttf。`Shape` 里族名
 - 自造 BMP 头精确 14+40 字节（`biPlanes`/`biBitCount` 各 2 字节），多写 6 字节越界写坏堆（`free_dbg` 报堆损坏）。
 
 ### 4.5 公共头边界
-`DUI.h` 与 UI 层公共头**不得引入 windows.h**：平台细节走 pimpl（如 `TextBox::para_`、`Image` 的 `shared_ptr<void>`）或前向声明（`graphics::Painter`）；import lib 用 `#pragma comment(lib)` 随编译单元携带。剪贴板等平台服务由 App 层经函数指针对注入 UI 层（分层单向依赖）。
+~~`DUI.h` 与 UI 层公共头不得引入 windows.h~~ **约束已取消**（2026-11-11）：公共头允许 windows.h（M5.27 起已实际引入）；d3d11 / dwrite 等重图形头仍只随实现层头出现。功能类能力归 Core 且允许直接用系统 API —— 剪贴板在 `Core/Clipboard`（原「App 层注入 UI 函数指针」方案废除）。import lib 用 `#pragma comment(lib)` 随编译单元携带，不动 `DUI.props`。
 
 ### 4.6 API 冻结的执行方式（M4 教训）
 公共 API 未设计的能力（如事件 Phase）不能私自实现——先改示例与文档，再动实现。M4 曾因此推迟隧道阶段，M6 随 `dui::Phase::Tunnel` 设计落地。

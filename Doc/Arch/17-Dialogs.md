@@ -74,7 +74,7 @@ IFileOpenDialog / IFileSaveDialog + IShellItem(IShellItemArray)   /   MessageBox
 
 1. **公共头无 `windows.h`**：`App/Dialog.h` 只 include `Core/Core.h`、`<vector>`、`<span>`、`<cstddef>`；owner 句柄以 `void*` 在层间传递（沿用 `Window::native_` / `NativeHandle()` 的 pimpl 惯例）。
 2. **Platform 不反向依赖 App/UI**（01-Layering §1）：Platform 内部头自带 POD 参数结构，不 include `App/Dialog.h`。`App/Dialog.cpp` 把公共 `std::span<const FileTypeFilter>` 转成 `std::vector<platform::NativeFileFilter>`（元素类型不同，不在 Platform 层 include App 头），一次小分配、非热路径；公共枚举转成 Platform 层可识别的整数编码 / 内部枚举。
-3. **只有 App 层做组装**：四种对话框由业务直接调用，落点在 App 层，**不复制剪贴板那套「UI 层函数指针注入」**（`UI/UI.h:73-75`）—— 注入是为「UI 层控件内部要用平台能力」准备的，此处调用方本身就在 App 层，直接依赖 Platform 即可，少一层间接。若将来 UI 控件内部需要弹窗，再补注入接口。
+3. **只有 App 层做组装**：四种对话框由业务直接调用，落点在 App 层。若将来 UI 控件内部需要弹窗，走 Core 功能服务或补注入接口（剪贴板已于 2026-11-11 下沉 `Core/Clipboard`，原 UI 层函数指针注入方案废除）。
 4. **无异常 / 无 RTTI**（ADR-007，`/EHs-c- /GR-`）：错误走 `bool + out 参数` / `DialogResult`，不抛；`std::vector` / `std::span` 均为头文件模板，分配失败按项目既有惯例（进程 terminate），不额外造异常路径。
 5. **链接库**：`ole32.lib` / `shell32.lib`（以及按需 `uuid.lib`）用 `#pragma comment(lib, ...)` 写在 `Platform/Dialog.cpp` 内，**不改根目录 `DUI.props`**（照 `windowscodecs.lib` 惯例，16-Image §2.1）。
 6. **UI 单线程**（ADR-012 / 07-Threading §3.1）：只允许在 UI 线程、且 `Application::Run` 建好 HWND 之后调用；禁止在后台线程直接调用（不提供内部跨线程转发）。

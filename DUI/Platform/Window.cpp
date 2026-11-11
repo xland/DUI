@@ -448,42 +448,4 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-// ---------------------------------------------------------------------------
-// 剪贴板（CF_UNICODETEXT）
-// ---------------------------------------------------------------------------
-
-bool GetClipboardText(String& out) {
-    out.clear();
-    if (!OpenClipboard(nullptr)) return false;
-    bool ok = false;
-    if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
-        if (const wchar_t* p = static_cast<const wchar_t*>(GlobalLock(h))) {
-            out = p;
-            GlobalUnlock(h);
-            ok = true;
-        }
-    }
-    CloseClipboard();
-    return ok;
-}
-
-bool SetClipboardText(const String& text) {
-    if (!OpenClipboard(nullptr)) return false;
-    EmptyClipboard();
-    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
-    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
-    bool ok = false;
-    if (mem != nullptr) {
-        void* p = GlobalLock(mem);
-        if (p != nullptr) {
-            std::memcpy(p, text.c_str(), bytes);
-            GlobalUnlock(mem);
-            ok = SetClipboardData(CF_UNICODETEXT, mem) != nullptr;
-        }
-        if (!ok) GlobalFree(mem);   // 未交给系统 → 自行释放
-    }
-    CloseClipboard();
-    return ok;
-}
-
 }  // namespace dui::platform

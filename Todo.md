@@ -36,9 +36,9 @@ cd /d <项目根>
 5. **SetStyle 一律拷贝持有**（经 `ownedStyle_`）：链式临时可直传不悬空；派生链 `parent_` 与字体族指针仍指向外部，生命周期由调用方保证（建议字面量）。
 6. **状态位契约**：`SetState` 相同值幂等；标脏帧末合并。
 7. **DPI 红线**：不做 System aware 回退、不做位图缩放、非整数档自绘、描边像素对齐（12-Windowing §7.1）。
-8. **公共头无 windows.h**：平台细节 pimpl 或前向声明；import lib 用 `#pragma comment(lib)` 随编译单元携带，不动 `DUI.props`。
+8. **公共头允许 windows.h**（2026-11-11 取消「公共头无 windows.h」约束；M5.27 起已实际引入）。仍保持：d3d11 / dwrite 等重图形头只随实现层头出现、不进 UI 公共头；import lib 用 `#pragma comment(lib)` 随编译单元携带，不动 `DUI.props`。
 9. **属性表只追加不重排已有 ID**；变长结构（TrackList）不走定长 `StyleValue`，相应地不可动画 / 无状态变体 / 无运行时 `Set`。
-10. **分层单向依赖**：Platform 不依赖 App/UI（事件经 `NativeWindowHost` 接口上抛）；UI 层不碰 D3D；剪贴板等平台服务由 App 层注入。
+10. **分层单向依赖**：Platform 不依赖 App/UI（事件经 `NativeWindowHost` 接口上抛）；UI 层不碰 D3D。功能类能力（剪贴板、任务队列等）归 Core，允许直接用系统 API（2026-11-11 起剪贴板在 `Core/Clipboard`，原「App 层注入 UI 函数指针」方案已废除）。
 11. **没道理的问题先查 `Doc/Pitfalls.md`**，再上网搜。
 
 ---
@@ -152,6 +152,7 @@ cd /d <项目根>
 | M5.29 | 11-09 | 事件对象统一：删除 `ClickEvent`，`OnClick` 回调改收 `PointerEvent&`（`pos` = 抬起处、`button` = Left）；`click` / `tunnelClick` 槽并入惰性 `Handlers`，`DispatchClick` 复用 `PhasedDispatch`（删手写双阶段派发与 `friend`，未绑 Click 的元素少占 64B）；9 个示例 + `Doc/Dialogs.md` / `06-Events.md` 签名同步，运行时语义不变 |
 | M5.30 | 11-09 | 新增 `dui::Svg`（派生 `Image`）：WIC 无内置 SVG 解码器，改走 Direct2D 内置 SVG（`ID2D1DeviceContext5`，Win10 1703+）按显示尺寸 × DPI 光栅成 BGRA8 → `TextureStore`，渲染核心零改动；`LoadSvgFile` / `LoadSvgMemory`、viewBox 固有尺寸、尺寸/DPI 变化重光栅；`App/Frame.cpp` 纹理同步移到收集之后；示例并入 `Samples/Image`（含 `icon.svg`）；ADR-017 / `16-Image.md` / `00-Overview` 同步 |
 | M5.31 | 11-09 | 元素阴影（方案 1：SDF 衰减带）：新增 `Prop::Shadow` + `Style::Shadow(blur, color, offsetX, offsetY)`（f/u/extra 槽装下，无需 ShadowRef）；`Painter::ShadowRoundRect` 走 Shape 批新增 `kind=3`，把 1px AA 过渡带换成以元素边界为中心的 S 形衰减带（d=0 处 cov=0.5，对齐高斯边界半强度），quad 外扩 blur；`Collector::DrawShadow` 在背景之前绘制（透明背景也有投影，不影响命中）；零纹理/零离屏/零缓存，未设阴影元素零开销；示例并入 `Samples/Style` |
+| M5.32 | 11-11 | 剪贴板下沉为 Core 公共能力：新增 `Core/Clipboard`（静态类直接 Win32：`ReadText/WriteText` CF_UNICODETEXT + `HasFormat/ReadFormat/WriteFormat` 任意格式 mime+字节，"image/png"→注册格式 PNG、"image/dib"→CF_DIB），同批补图像读写 `Clipboard::Image`（BGRA8 straight alpha 顶向下，与 `graphics::DecodedImage` 同约定）↔ CF_DIB（读支持 32/24bpp 标准 BGRA 布局、BI_RGB alpha 全 0 视为不透明，系统自动从 CF_DIBV5 合成；写 32bpp 顶向下 BI_RGB），`RichEdit` 复制/剪切/粘贴切换调用；废除「UI 层函数指针注入 + App 装配」方案（`UI/UI.h` 注入段、`TextBox.cpp` 管道、`Platform` 两函数、`App.cpp` 接线全删）；同步取消「Core 不依赖 Win32」约束（`01-Layering` 改为"功能服务层"定位）与 `Pitfalls §4.5` 旧公共头边界条目 |
 
 ---
 

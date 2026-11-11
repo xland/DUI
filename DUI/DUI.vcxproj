@@ -107,6 +107,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Core\Dispatcher.cpp" />
+    <ClCompile Include="Core\Clipboard.cpp" />
     <ClCompile Include="Core\Utf8.cpp" />
     <ClCompile Include="Core\Json.cpp" />
     <ClCompile Include="Text\GlyphAtlas.cpp" />

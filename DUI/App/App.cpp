@@ -428,9 +428,6 @@ int Application::Run(Window& window) {
     dispatcher_.SetWakeTarget(native.Handle(), kWakeMessage);
     Dispatcher::SetUi(&dispatcher_);
 
-    // 剪贴板：平台实现注入 UI 层（UI 不依赖 Platform，01-Layering §1）
-    SetClipboardService(&platform::GetClipboardText, &platform::SetClipboardText);
-
     // 原生窗口已建、尚未显示：业务在这里搭界面，构建过程不可见
     window.OnCreate();
     native.Show();

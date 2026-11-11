@@ -9,12 +9,12 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ 
 ```
 
 - **单向依赖**，下层不得引用上层，禁止跨层调用。
-- **Core 不依赖 Win32**，保证其可独立测试、可被裁剪。
-- 只有 App 层做组装；UI 层只依赖 Text 与 Graphics 的抽象接口，不依赖具体后端实现。
+- **Core 是功能服务层**：与界面无关的功能能力（任务队列、剪贴板、JSON、转码…）都在 Core，允许直接使用系统 API（Win32）——2026-11-11 取消「Core 不依赖 Win32」约束；可裁剪性由静态库按未引用裁剪保证（ADR-016），不依赖分层纯度。
+- 只有 App 层做组装。
 
 ## 2. 模块清单
 
-### Core（无平台依赖）
+### Core
 
 | 模块 | 职责 |
 | --- | --- |
@@ -25,6 +25,8 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ 
 | Log / Assert | 日志与断言，Release 下可整体编译掉 |
 | Ref | 非原子引用计数与作用域句柄；可引用对象仅 UI 线程持有（ADR-025） |
 | Time | 时间戳、计时器、动画时钟基础 |
+| Dispatcher / Threading | UI 任务队列 + 后台线程池（含 PostMessage 唤醒） |
+| Clipboard | 系统剪贴板：文本（CF_UNICODETEXT）+ 任意格式（mime + 字节） |
 
 ### Platform（Win32）
 
@@ -35,7 +37,7 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ 
 | Input | 鼠标/键盘/触摸/触控笔 → 归一化输入事件 |
 | Dpi | 显示器信息、DPI 变化、DIP↔像素换算（见 [12-Windowing.md](./12-Windowing.md)） |
 | Ime | 输入法候选窗定位与组合串处理 |
-| Clipboard / DragDrop | 剪贴板与拖放 |
+| DragDrop | 拖放（剪贴板已下沉 Core，2026-11-11） |
 | Cursor | 光标资源管理 |
 | Threading | 后台线程池、Dispatcher 任务队列、UI 线程回投（见 [07-Threading.md](./07-Threading.md)） |
 

@@ -27,12 +27,6 @@
     <Filter Include="源文件\App">
       <UniqueIdentifier>{a1b2c3d4-0005-4c8d-9e6a-2b5d8f10a3cc}</UniqueIdentifier>
     </Filter>
-    <Filter Include="头文件\Platform">
-      <UniqueIdentifier>{a1b2c3d4-0006-4c8d-9e6a-2b5d8f10a3cd}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\Platform">
-      <UniqueIdentifier>{a1b2c3d4-0007-4c8d-9e6a-2b5d8f10a3ce}</UniqueIdentifier>
-    </Filter>
     <Filter Include="头文件\Graphics">
       <UniqueIdentifier>{a1b2c3d4-0008-4c8d-9e6a-2b5d8f10a3cf}</UniqueIdentifier>
     </Filter>
@@ -116,17 +110,14 @@
     <ClInclude Include="App\App.h">
       <Filter>头文件\App</Filter>
     </ClInclude>
-    <ClInclude Include="App\Dialog.h">
-      <Filter>头文件\App</Filter>
+    <ClInclude Include="Core\Window.h">
+      <Filter>头文件\Core</Filter>
     </ClInclude>
-    <ClInclude Include="App\Menu.h">
-      <Filter>头文件\App</Filter>
+    <ClInclude Include="Core\Dialog.h">
+      <Filter>头文件\Core</Filter>
     </ClInclude>
-    <ClInclude Include="Platform\Window.h">
-      <Filter>头文件\Platform</Filter>
-    </ClInclude>
-    <ClInclude Include="Platform\Dialog.h">
-      <Filter>头文件\Platform</Filter>
+    <ClInclude Include="Core\Menu.h">
+      <Filter>头文件\Core</Filter>
     </ClInclude>
     <ClInclude Include="Graphics\Graphics.h">
       <Filter>头文件\Graphics</Filter>
@@ -217,17 +208,17 @@
     <ClCompile Include="App\Dialog.cpp">
       <Filter>源文件\App</Filter>
     </ClCompile>
-    <ClCompile Include="App\Menu.cpp">
-      <Filter>源文件\App</Filter>
+    <ClCompile Include="Core\Menu.cpp">
+      <Filter>源文件\Core</Filter>
     </ClCompile>
     <ClCompile Include="App\Frame.cpp">
       <Filter>源文件\App</Filter>
     </ClCompile>
-    <ClCompile Include="Platform\Window.cpp">
-      <Filter>源文件\Platform</Filter>
+    <ClCompile Include="Core\Window.cpp">
+      <Filter>源文件\Core</Filter>
     </ClCompile>
-    <ClCompile Include="Platform\Dialog.cpp">
-      <Filter>源文件\Platform</Filter>
+    <ClCompile Include="Core\Dialog.cpp">
+      <Filter>源文件\Core</Filter>
     </ClCompile>
     <ClCompile Include="Graphics\Graphics.cpp">
       <Filter>源文件\Graphics</Filter>

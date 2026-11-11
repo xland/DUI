@@ -8,7 +8,7 @@
 #include "App/App.h"
 
 #include "Graphics/Graphics.h"
-#include "Platform/Window.h"
+#include "Core/Window.h"
 #include "UI/Scroller.h"
 
 #include <ole2.h>
@@ -39,9 +39,9 @@ LPCWSTR ToWinCursor(dui::Cursor c) {
 // 平台事件 → dui::Window 事件的适配器（Window 的 friend，App.h 声明）。
 // Platform 层不依赖 App/UI（01-Layering §1），因此由本层做桥接。
 // 注意：必须与 App.h 的 friend 声明同为 dui::WindowHostAdapter（不能进匿名命名空间）。
-class WindowHostAdapter final : public platform::NativeWindowHost {
+class WindowHostAdapter final : public NativeWindowHost {
 public:
-    WindowHostAdapter(Window& window, const platform::NativeWindow& native,
+    WindowHostAdapter(Window& window, const NativeWindow& native,
                       graphics::Device& device)
         : window_(window), native_(native), device_(device) {}
 
@@ -284,7 +284,7 @@ private:
     }
 
     Window&  window_;
-    const platform::NativeWindow& native_;
+    const NativeWindow& native_;
     graphics::Device& device_;
     bool*    framePending_ = nullptr;
     Element* hover_ = nullptr;
@@ -304,32 +304,32 @@ Window::~Window() = default;
 
 HWND Window::NativeHandle() const noexcept {
     if (native_ == nullptr) return nullptr;
-    return static_cast<platform::NativeWindow*>(native_)->Handle();
+    return static_cast<NativeWindow*>(native_)->Handle();
 }
 
 // 窗口操作（无边框窗口的自绘标题栏按钮）
 void Window::Minimize() {
-    auto* native = static_cast<platform::NativeWindow*>(native_);
+    auto* native = static_cast<NativeWindow*>(native_);
     if (native != nullptr) native->Minimize();
 }
 
 void Window::MaximizeOrRestore() {
-    auto* native = static_cast<platform::NativeWindow*>(native_);
+    auto* native = static_cast<NativeWindow*>(native_);
     if (native != nullptr) native->MaximizeOrRestore();
 }
 
 void Window::Close() {
-    auto* native = static_cast<platform::NativeWindow*>(native_);
+    auto* native = static_cast<NativeWindow*>(native_);
     if (native != nullptr) native->RequestClose();
 }
 
 bool Window::IsMaximized() const {
-    auto* native = static_cast<platform::NativeWindow*>(native_);
+    auto* native = static_cast<NativeWindow*>(native_);
     return native != nullptr && native->IsMaximized();
 }
 
 Vec2 Window::ClientSizeDip() const {
-    auto* native = static_cast<platform::NativeWindow*>(native_);
+    auto* native = static_cast<NativeWindow*>(native_);
     if (native == nullptr) return {};
     return native->ClientSizeDip();
 }
@@ -345,7 +345,7 @@ constexpr uintptr_t kTickTimerId = 1;
 }
 
 void Window::SyncTickTimer() {
-    auto* native = static_cast<platform::NativeWindow*>(native_);
+    auto* native = static_cast<NativeWindow*>(native_);
     if (native == nullptr) return;
     auto& clock = AnimationClock::Instance();
     const bool need = clock.NeedsTick() && !native->IsMinimized();
@@ -376,7 +376,7 @@ void Window::OnTimer(uintptr_t id) {
 // 注意：这里不碰任何 IMM API —— 在 IME 消息处理期间调用 ImmGetContext 会重建
 // 输入上下文、打断正在进行的组合（中文打不出来）。
 void Window::SyncImeCaret() {
-    auto* native = static_cast<platform::NativeWindow*>(native_);
+    auto* native = static_cast<NativeWindow*>(native_);
     if (native == nullptr) return;
     Rect dip{};
     if (!QueryInsertionPoint(dip)) {
@@ -407,7 +407,7 @@ int Application::Run(Window& window) {
     }
 
     graphics::Device device;
-    platform::NativeWindow native;
+    NativeWindow native;
     WindowHostAdapter host(window, native, device);
 
     // 建 HWND（隐藏、按显示器 DPI 定尺寸）

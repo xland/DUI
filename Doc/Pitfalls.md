@@ -126,10 +126,10 @@ DirectWrite 仅支持 ttf/otf/ttc；woff/woff2 需先转 ttf。`Shape` 里族名
 公共 API 未设计的能力（如事件 Phase）不能私自实现——先改示例与文档，再动实现。M4 曾因此推迟隧道阶段，M6 随 `dui::Phase::Tunnel` 设计落地。
 
 ### 4.7 `MessageBox` 与 Win32 同名宏（M7）
-`winuser.h`（UNICODE）定义 `#define MessageBox MessageBoxW`。成员方法 `Window::MessageBox` 若直接声明：含 `windows.h` 的 TU 会把声明/调用替换成 `MessageBoxW`，不含的 TU 仍是 `MessageBox` → 跨 TU 符号不一致（LNK2019 / ODR）。修法：`App/Dialog.h` 顶部与 `Platform/Dialog.h` 末尾各 `#undef MessageBox`，`App/Dialog.cpp` 在全部 include 后再 `#undef` 一次；另给 `Window::MessageBoxW` 兼容别名（业务不主动调用），兜住「DUI.h 先、windows.h 后」的包含顺序。副作用：含 `DUI.h` 后调 Win32 原生弹窗要写 `::MessageBoxW`。`Samples/Dialog/MacroCompat.cpp` 是两种顺序的编译期守卫。
+`winuser.h`（UNICODE）定义 `#define MessageBox MessageBoxW`。成员方法 `Window::MessageBox` 若直接声明：含 `windows.h` 的 TU 会把声明/调用替换成 `MessageBoxW`，不含的 TU 仍是 `MessageBox` → 跨 TU 符号不一致（LNK2019 / ODR）。修法：`App.h` 顶部与 `Core/Dialog.h` 末尾各 `#undef MessageBox`，`App/Dialog.cpp` 在全部 include 后再 `#undef` 一次；另给 `Window::MessageBoxW` 兼容别名（业务不主动调用），兜住「DUI.h 先、windows.h 后」的包含顺序。副作用：含 `DUI.h` 后调 Win32 原生弹窗要写 `::MessageBoxW`。`Samples/Dialog/MacroCompat.cpp` 是两种顺序的编译期守卫。
 
 ### 4.8 同工程内同名 .cpp 的 obj 冲突（M7）
-`App/Dialog.cpp` 与 `Platform/Dialog.cpp` 同一库工程里同名 → MSB8027「两个或更多文件将生成到同一位置的输出」。修法：在 `DUI.vcxproj` 给后者加 `<ObjectFileName>$(IntDir)Platform_Dialog.obj</ObjectFileName>`，不必改文件名；IntDir 按工程名隔离只能解决**跨工程**冲突，同工程仍会互踩。
+`App/Dialog.cpp` 与 `Core/Dialog.cpp` 同一库工程里同名 → MSB8027「两个或更多文件将生成到同一位置的输出」。修法：在 `DUI.vcxproj` 给后者加 `<ObjectFileName>$(IntDir)Core_Dialog.obj</ObjectFileName>`，不必改文件名；IntDir 按工程名隔离只能解决**跨工程**冲突，同工程仍会互踩。
 
 ### 4.9 单行注释行尾反斜杠吞掉下一行（M7）
 `...;  // C:\` 结尾的 `\` 触发行继续（C4010），下一行也被当成注释 → 紧随其后的变量声明消失（C2065 未声明标识符）。注释不要以反斜杠结尾，改成文字描述。
@@ -142,6 +142,6 @@ DirectWrite 仅支持 ttf/otf/ttc；woff/woff2 需先转 ttf。`Shape` 里族名
 - UI 线程 COM **必须 STA**（`Application::Run` 用 `OleInitialize` 建立，见 ADR-027）；MTA 下 `Show()` 死锁，详见 §4.11。
 
 ### 4.11 Common Item Dialog 在 MTA 下死锁（M7.1，实测）
-现象：`Samples/Dialog` 点击「打开文件…/保存文件…/选择文件夹…」后进程 Not Responding，且枚举不到任何对话框窗口（卡在 `IFileDialog::Show` 内部）；`MessageBoxW` 完全正常。根因：UI 线程被 `CoInitializeEx(COINIT_MULTITHREADED)` 建成 MTA，Common Item Dialog / Shell 扩展按 STA 假设工作。修法：`Application::Run` 起始 `OleInitialize(nullptr)`（必须早于 WIC 的 MTA 初始化），`Platform/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验。
+现象：`Samples/Dialog` 点击「打开文件…/保存文件…/选择文件夹…」后进程 Not Responding，且枚举不到任何对话框窗口（卡在 `IFileDialog::Show` 内部）；`MessageBoxW` 完全正常。根因：UI 线程被 `CoInitializeEx(COINIT_MULTITHREADED)` 建成 MTA，Common Item Dialog / Shell 扩展按 STA 假设工作。修法：`Application::Run` 起始 `OleInitialize(nullptr)`（必须早于 WIC 的 MTA 初始化），`Core/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验。
 **二次踩坑**：`OleInitialize` 得到的是 **main STA（`APTTYPE_MAINSTA`）**，只判断 `APTTYPE_STA` 会把合法单元误判成错误 → 弹窗静默不出现、但进程响应正常（比死锁更难发现）。必须同时放行 `APTTYPE_STA` / `APTTYPE_MAINSTA`。
 诊断手法：自动 `PostMessage` 注入点击 → `EnumWindows` 按 PID 找 `#32770` + `Get-Process.Responding`；能区分「弹窗没开」「卡在 Show」「关闭后没回主循环」三种情况。

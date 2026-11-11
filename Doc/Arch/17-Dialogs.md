@@ -20,7 +20,7 @@ A–J 按建议定案；K / L / I 为本次反馈的修订。
 | D | 结果三态 | 新增 `DialogResult<T>`（`Ok / Cancelled / Error`）；现有 `Result<T>` 无法区分「取消」与「出错」，不复用。消息框返回 `MessageResult` 枚举 |
 | E | 一期范围 | 文件：标题/初始路径/过滤器/默认项/多选；保存：标题/初始路径/过滤器/默认扩展名；路径：标题/初始路径、单选；消息：4 图标 × 7 按钮组 + 默认按钮 + 2 个便捷糖 |
 | F | 消息框实现 | **`MessageBoxW`**（user32，零额外清单依赖）；`TaskDialogIndirect` 需 comctl32 v6 清单，留二期 |
-| G | COM apartment | **UI 线程固定 STA**（`Application::Run` 起始 `OleInitialize`，见 ADR-027 / §9）。原方案复用 WIC 的 MTA 实测让 `IFileDialog::Show` 死锁，已改正；`Platform/Dialog.cpp` 另做单元校验，非 STA 直接返回 `Error`，不再静默挂死 |
+| G | COM apartment | **UI 线程固定 STA**（`Application::Run` 起始 `OleInitialize`，见 ADR-027 / §9）。原方案复用 WIC 的 MTA 实测让 `IFileDialog::Show` 死锁，已改正；`Core/Dialog.cpp` 另做单元校验，非 STA 直接返回 `Error`，不再静默挂死 |
 | H | 示例 | 新建 `Samples/Dialog`（四个能力按钮 + 便捷糖 + 结果文本），挂 `DUI.slnx` |
 | I | 保存文件对话框 | **做**（本次确认）：`IFileSaveDialog`，返回单个路径，规格见 §4 / §5.2 |
 | J | 文档编号 | `Doc/Arch/17-Dialogs.md` + `Doc/Dialogs.md` |
@@ -61,32 +61,34 @@ A–J 按建议定案；K / L / I 为本次反馈的修订。
 业务代码（Window 派生类，OnCreate / OnClick）
    │  OpenFile / SaveFile / OpenFolder / MessageBox
    ▼
-App/Dialog.h        公共 API（无 windows.h；App.h include，DUI.h 聚合）
-App/Dialog.cpp      Window 成员方法：取 owner HWND、span→平台 POD、枚举映射、三态封装、焦点抑制
+业务代码（Window 派生类，OnCreate / OnClick）
+   │  OpenFile / SaveFile / OpenFolder / MessageBox
    ▼
-Platform/Dialog.h   内部头（可含 windows.h / shobjidl_core.h，不进 DUI.h）
-Platform/Dialog.cpp COM / Win32 实现、HRESULT → 错误串、资源释放
+App/Dialog.cpp      Window 成员方法薄封装：取 owner HWND、对话框深度计数（焦点抑制）
+   ▼
+Core/Dialog.h       公共服务头：公共类型（选项 / DialogResult / 枚举）+ 服务函数
+Core/Dialog.cpp     COM / Win32 实现、HRESULT → DialogResult、资源释放
    ▼
 IFileOpenDialog / IFileSaveDialog + IShellItem(IShellItemArray)   /   MessageBoxW
 ```
 
 约束（逐条对照既有约定）：
 
-1. **公共头无 `windows.h`**：`App/Dialog.h` 只 include `Core/Core.h`、`<vector>`、`<span>`、`<cstddef>`；owner 句柄以 `void*` 在层间传递（沿用 `Window::native_` / `NativeHandle()` 的 pimpl 惯例）。
-2. **Platform 不反向依赖 App/UI**（01-Layering §1）：Platform 内部头自带 POD 参数结构，不 include `App/Dialog.h`。`App/Dialog.cpp` 把公共 `std::span<const FileTypeFilter>` 转成 `std::vector<platform::NativeFileFilter>`（元素类型不同，不在 Platform 层 include App 头），一次小分配、非热路径；公共枚举转成 Platform 层可识别的整数编码 / 内部枚举。
-3. **只有 App 层做组装**：四种对话框由业务直接调用，落点在 App 层。若将来 UI 控件内部需要弹窗，走 Core 功能服务或补注入接口（剪贴板已于 2026-11-11 下沉 `Core/Clipboard`，原 UI 层函数指针注入方案废除）。
-4. **无异常 / 无 RTTI**（ADR-007，`/EHs-c- /GR-`）：错误走 `bool + out 参数` / `DialogResult`，不抛；`std::vector` / `std::span` 均为头文件模板，分配失败按项目既有惯例（进程 terminate），不额外造异常路径。
-5. **链接库**：`ole32.lib` / `shell32.lib`（以及按需 `uuid.lib`）用 `#pragma comment(lib, ...)` 写在 `Platform/Dialog.cpp` 内，**不改根目录 `DUI.props`**（照 `windowscodecs.lib` 惯例，16-Image §2.1）。
+1. **公共头无 `windows.h` 类型泄漏**：`Core/Dialog.h` 含 `windows.h`（宏防护见 §4.4）但公共类型只用 `void*` owner；UI 层以 `NativeHandle()` 私有通道传递（2026-11-11 起「公共头无 windows.h」约束已取消，见 `Pitfalls §4.5`）。
+2. **Core 不反向依赖 App/UI**（01-Layering §1）：公共服务函数收 `void* owner`，不接触 `dui::Window`。原「App 层转 POD / 枚举映射」转换层已随公共类型下沉 Core 而移除（2026-11-11）。
+3. **Window 成员方法是薄封装**：`App/Dialog.cpp` 只做 owner 取值 + `dialogDepth_` 失活抑制（§6.2），业务也可直接调 Core 自由函数（`PickFiles` 等）。
+4. **无异常 / 无 RTTI**（ADR-007，`/EHs-c- /GR-`）：错误走 `DialogResult`，不抛；`std::vector` / `std::span` 均为头文件模板，分配失败按项目既有惯例（进程 terminate），不额外造异常路径。
+5. **链接库**：`ole32.lib` / `shell32.lib`（以及按需 `uuid.lib`）用 `#pragma comment(lib, ...)` 写在 `Core/Dialog.cpp` 内，**不改根目录 `DUI.props`**（照 `windowscodecs.lib` 惯例，16-Image §2.1）。
 6. **UI 单线程**（ADR-012 / 07-Threading §3.1）：只允许在 UI 线程、且 `Application::Run` 建好 HWND 之后调用；禁止在后台线程直接调用（不提供内部跨线程转发）。
 
-工程落点：新增 `DUI/App/Dialog.h`、`DUI/App/Dialog.cpp`、`DUI/Platform/Dialog.h`、`DUI/Platform/Dialog.cpp`；`DUI/App/App.h` include `App/Dialog.h`（`Window` 的方法签名需要类型）、`DUI/DUI.h` 增一行 `#include "App/Dialog.h"`；`DUI/DUI.vcxproj` 与 `.filters` 登记 4 个文件。
+工程落点：`DUI/Core/Dialog.h/.cpp`（原 `DUI/Platform/Dialog.*` → Core 内部头 → 2026-11-11 二次整合为公共服务，`DUI/App/Dialog.h` 公共类型并入其中后删除）；`DUI/App/Dialog.cpp` 保留 Window 成员方法薄封装；`DUI/DUI.h` `#include "Core/Dialog.h"`；`DUI/DUI.vcxproj` 与 `.filters` 登记。
 
 ---
 
 ## 4. 公共 API 规格（冻结候选）
 
 ```cpp
-// DUI/App/Dialog.h —— 公共头，不含 windows.h
+// DUI/Core/Dialog.h —— 公共服务头（含 windows.h；公共类型不含 Win32 类型）
 namespace dui {
 
 enum class DialogStatus { Ok, Cancelled, Error };
@@ -181,11 +183,11 @@ bool          Confirm(const wchar_t* text, const wchar_t* title = nullptr); // Q
 
 - **取消不是错误**：`HRESULT_FROM_WIN32(ERROR_CANCELLED)`（`0x800704C7`）单独映射到 `Cancelled`，业务不必写「空结果就算失败」的猜测逻辑；保存对话框里「覆盖确认时选否」由系统内部消化，不会变成框架的 `Cancelled`。
 - `Error()` 格式示例：`L"打开对话框失败 (HRESULT 0x80040154)"`；不泄漏 Win32 类型到公共头。
-- `DialogResult<T>` 实现全内联在 `App/Dialog.h`，不新增 .cpp 符号；风格对齐 `Core/Core.h:108-123` 的 `Result<T>`。
+- `DialogResult<T>` 实现全内联在 `Core/Dialog.h`，不新增 .cpp 符号；风格对齐 `Core/Core.h:108-123` 的 `Result<T>`。
 
 ### 4.3 参数生命周期与调用时机
 
-- `title` / `initialPath` / `defaultExtension` / `filters[].name|pattern`：仅在**调用期间**需有效（Platform 层在 `Show()` 返回前用完；不持有指针）。字面量或调用点同生命周期的局部数组均可，勿传临时 `String::c_str()` 后立刻销毁。
+- `title` / `initialPath` / `defaultExtension` / `filters[].name|pattern`：仅在**调用期间**需有效（Core 对话框实现在 `Show()` 返回前用完；不持有指针）。字面量或调用点同生命周期的局部数组均可，勿传临时 `String::c_str()` 后立刻销毁。
 - 必须在 `Application::Run` 之后（HWND 已建）调用；`OnCreate()` 里 HWND 已建但窗口未显示，此时弹窗会阻断 `Show()`，**允许但不推荐**。
 - 调用是**同步阻塞**的：从函数返回时对话框已关闭，结果可立即使用，无需回调 / `Then()`。
 
@@ -198,17 +200,19 @@ bool          Confirm(const wchar_t* text, const wchar_t* title = nullptr); // Q
 
 实现期固定写法：
 
-1. `App/Dialog.h` **顶部**与 `Platform/Dialog.h` **末尾**各做一次 `#ifdef MessageBox / #undef MessageBox / #endif`，`App/Dialog.cpp` 在全部 include 后再 `#undef` 一次，保证框架所有 TU 看到真名。副作用：包含 `DUI.h` 的业务 TU 也不再有该宏 —— 业务若要调 Win32 原生弹窗，用显式 `::MessageBoxW(...)`（文档写明）。
+1. `App.h` **顶部**与 `Core/Dialog.h` **末尾**各做一次 `#ifdef MessageBox / #undef MessageBox / #endif`，`App/Dialog.cpp` 在全部 include 后再 `#undef` 一次，保证框架所有 TU 看到真名。副作用：包含 `DUI.h` 的业务 TU 也不再有该宏 —— 业务若要调 Win32 原生弹窗，用显式 `::MessageBoxW(...)`（文档写明）。
 2. `Window` 额外提供兼容别名 `Window::MessageBoxW`（声明在 `App.h`、**定义在 `App/Dialog.cpp`**，不能写成类内 inline 转发，否则宏仍生效时 `MessageBox(o)` 会被替换成 `MessageBoxW(o)` 造成递归）；只用于「业务在 `DUI.h` 之后才 include `windows.h`，宏被重新定义」的情形；业务代码不主动调用。
 3. 验收 ✅：`Samples/Dialog/main.cpp`（windows.h 先）与 `MacroCompat.cpp`（DUI.h 先、windows.h 后）都调用 `MessageBox(...)`，Debug / Release 均链接通过。
 
 ---
 
-## 5. Platform 层实现规格
+## 5. Core 侧实现规格
+
+> 2026-11-11 起本节的内部 POD（`NativeFileFilter` / `MsgIcon` / `MsgButtons` / `NativeMessageResult`）已并入公共类型——公共枚举即实现枚举，`FileTypeFilter` 与 `COMDLG_FILTERSPEC` 同构直接重解释，转换层不复存在。以下保留历史规格供对照。
 
 ```cpp
-// DUI/Platform/Dialog.h —— 内部头（不进 DUI.h）
-namespace dui::platform {
+// DUI/Core/Dialog.h —— 内部头（不进 DUI.h）
+namespace dui {
 struct NativeFileFilter { const wchar_t* name; const wchar_t* pattern; };
 
 // true = 成功（out 有效）；false = 取消或失败，用 cancelled / error 区分
@@ -253,7 +257,7 @@ NativeMessageResult ShowMessageBox(void* owner, const wchar_t* text, const wchar
 
 ### 5.3 消息框
 
-- `App/Dialog.cpp` 把公共 `MessageIcon / MessageButtons` 映射成 `platform::MsgIcon / MsgButtons`（`defaultButton` 传整数）；`Platform/Dialog.cpp` `switch` 成 `MB_ICON* / MB_* / MB_DEFBUTTON*`，调用 `::MessageBoxW(owner, text, title, flags)`，把 `ID*` 映射成 `NativeMessageResult`，App 层再映射成公共 `MessageResult`。公共头因此**不隐含任何 Win32 常量值**。
+- 公共 `MessageIcon / MessageButtons` 即实现枚举；`Core/Dialog.cpp` `switch` 成 `MB_ICON* / MB_* / MB_DEFBUTTON*`，调用 `::MessageBoxW(owner, text, title, flags)`，把 `ID*` 直接映射成公共 `MessageResult`。公共头因此**不隐含任何 Win32 常量值**（枚举值是框架自定义的连续编码）。
 - `owner` 为 HWND → 系统自动禁用宿主窗口并把对话框居中于宿主；`owner == nullptr`（未 Run）→ 直接返回 `Failed`，不弹桌面级窗口。
 - `MessageBoxW` 返回 0 = 失败 → `MessageResult::Failed`。
 
@@ -279,7 +283,7 @@ NativeMessageResult ShowMessageBox(void* owner, const wchar_t* text, const wchar
 
 弹窗会让宿主收到 `WM_ACTIVATE(WA_INACTIVE)` → `WindowHostAdapter::OnActivated(false)` 置 `pendingDeactivate_`（`App.cpp:258-264`）→ 主循环恢复时 `TakeDeactivate()` 可能清掉焦点（`App.cpp:439-442`），表现为「文本框聚焦时打开文件对话框，取消后光标/选区不见了」。
 
-**推荐方案（本期一并做）**：`Window` 加私有计数 `int dialogDepth_ = 0`，`App/Dialog.cpp` 在调用 Platform 前后 `++ / --`；`OnActivated(false)` 里若 `window_.dialogDepth_ > 0` 则直接返回、不置 `pendingDeactivate_`（`WindowHostAdapter` 已是 `Window` 的 friend）。语义：系统对话框期间宿主失活属同一应用的模态流程，不按「切到别的应用」处理。备选：调用前后手动存取 `UI/Focus.h` 的焦点元素并恢复（改动更散）。**须实测确认，见 §7 D4。**
+**推荐方案（本期一并做）**：`Window` 加私有计数 `int dialogDepth_ = 0`，`App/Dialog.cpp` 在调用 Core 对话框服务前后 `++ / --`；`OnActivated(false)` 里若 `window_.dialogDepth_ > 0` 则直接返回、不置 `pendingDeactivate_`（`WindowHostAdapter` 已是 `Window` 的 friend）。语义：系统对话框期间宿主失活属同一应用的模态流程，不按「切到别的应用」处理。备选：调用前后手动存取 `UI/Focus.h` 的焦点元素并恢复（改动更散）。**须实测确认，见 §7 D4。**
 
 ### 6.3 owner / 无边框窗口 / DPI
 
@@ -304,7 +308,7 @@ NativeMessageResult ShowMessageBox(void* owner, const wchar_t* text, const wchar
 
 实现备注：
 
-- `App/Dialog.cpp` 与 `Platform/Dialog.cpp` 同名触发 MSB8027 → 在 `DUI.vcxproj` 给后者加 `<ObjectFileName>$(IntDir)Platform_Dialog.obj</ObjectFileName>`（`Pitfalls §4.8`）。
+- `App/Dialog.cpp` 与 `Core/Dialog.cpp` 同名触发 MSB8027 → 在 `DUI.vcxproj` 给后者加 `<ObjectFileName>$(IntDir)Core_Dialog.obj</ObjectFileName>`（`Pitfalls §4.8`）。
 - `Samples/Dialog/main.cpp`（windows.h 先）与 `MacroCompat.cpp`（DUI.h 先、windows.h 后）覆盖 `MessageBox` 宏的两种 TU 顺序，Debug/Release 均链接通过（`Pitfalls §4.7`）。
 - **M7.1**：初版 MTA 让文件类弹窗死锁，已改 STA（ADR-027 / `Pitfalls §4.11`）；`OleInitialize` 是 main STA，单元校验须放行 `APTTYPE_MAINSTA`。
 - 已按 `Todo.md §6` 同步 `Todo.md` / `00-Overview §6` / `README.md` / `02-Decisions.md`，新踩坑写入 `Doc/Pitfalls.md §4.7–4.11`。

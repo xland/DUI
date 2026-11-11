@@ -232,12 +232,12 @@
 
 ## ADR-016 工程结构
 
-**已定（工程已创建）**：`DUI.slnx` 下两个工程 —— **DUI（库）+ Samples（示例）**，将来可能增加更多子工程。源码按 `Core / Platform / Graphics / Text / UI / App` 分层。
+**已定（工程已创建）**：`DUI.slnx` 下两个工程 —— **DUI（库）+ Samples（示例）**，将来可能增加更多子工程。源码按 `Core / Graphics / Text / UI / App` 分层（原 `Platform/` 层 2026-11-11 并入 Core）。
 
 ```
 DUI.slnx                 解决方案
 DUI/                     库工程（静态库 .lib）
-  Core/ Platform/ Graphics/ Text/ UI/ App/
+  Core/ Graphics/ Text/ UI/ App/
 Samples/                 示例工程（可按示例数量增子工程）
 Doc/Arch/                文档
 ```
@@ -429,7 +429,7 @@ Doc/Arch/                文档
 | --- | --- | --- |
 | 初始化 | `Application::Run` 起始调用 `OleInitialize(nullptr)`，建立 **STA（主 STA / `APTTYPE_MAINSTA`）**，进程级持有不配对 Uninitialize | STA + OLE 是 Win32 UI 线程的常规形态，覆盖 Shell 拖放 / 扩展 |
 | 顺序 | 必须早于任何可能初始化 COM 的组件（尤其 WIC 的 MTA 尝试） | COM 单元在本线程一旦建立不能改；WIC 随后请求 MTA 只返回 `RPC_E_CHANGED_MODE`，COM 仍可用，WIC 在 STA 下同样工作 |
-| 兜底 | `Platform/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验，放行 `APTTYPE_STA` / `APTTYPE_MAINSTA`，其余返回 `Error` | 自定义宿主若先把 UI 线程建成 MTA，宁可显式报错也不挂界面 |
+| 兜底 | `Core/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验，放行 `APTTYPE_STA` / `APTTYPE_MAINSTA`，其余返回 `Error` | 自定义宿主若先把 UI 线程建成 MTA，宁可显式报错也不挂界面 |
 | 背景线程 | 不变：不初始化 COM；WIC 若在工作线程首次使用，其自身的 MTA 初始化照旧 | 后台只碰纯数据（ADR-022 / 07-Threading §3.1） |
 
 **不采用**：专用 STA 线程 + 跨线程 owner + 同步等待（复杂度高、owner 归属易错）。

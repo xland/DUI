@@ -177,7 +177,7 @@ protected:
 };
 ```
 
-框架侧的实现要点（Platform 层，公共 API 不暴露 windows.h）：
+框架侧的实现要点（Core 窗口壳 `Core/Window`，公共 API 不暴露 windows.h）：
 
 | 关注点 | 做法 |
 | --- | --- |

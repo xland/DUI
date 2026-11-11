@@ -32,7 +32,7 @@
     <Manifest>
       <!-- Per-Monitor V2 DPI 感知清单（12-Windowing §2）：合并进每个 exe；
            库工程（StaticLibrary）不产出清单，此设置对其无效果 -->
-      <AdditionalManifestFiles>$(MSBuildThisFileDirectory)DUI\Platform\DUI.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
+      <AdditionalManifestFiles>$(MSBuildThisFileDirectory)DUI\Core\DUI.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
     </Manifest>
   </ItemDefinitionGroup>
 </Project>

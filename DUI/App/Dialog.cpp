@@ -1,19 +1,19 @@
 // ============================================================================
-//  DUI/App/Dialog.cpp — Window 的四个系统对话框入口（17-Dialogs）
+//  DUI/App/Dialog.cpp — Window 的对话框 / 菜单入口（17-Dialogs）
 //
-//  App 层组装：取 owner HWND（私有通道）、公共 span/枚举 → 平台 POD 转换、
-//  三态封装；调用期间维护 dialogDepth_，让宿主失活不清编辑控件焦点（§6.2）。
+//  UI 层薄封装：owner HWND（私有通道）+ 对话框深度计数（dialogDepth_：宿主
+//  失活不清编辑控件焦点，§6.2）。实现在 Core/Dialog.{h,cpp}、Core/Menu.cpp。
 // ============================================================================
 
 #include "App/App.h"
 
-#include "Platform/Dialog.h"
-
 #include <utility>
-#include <vector>
 
-// winuser.h 的 #define MessageBox MessageBoxW 会在包含 Platform/Dialog.h 后
-// 重新出现；本 TU 必须看到 Window::MessageBox 真名（另见 17-Dialogs §4.4）。
+#include "Core/Dialog.h"
+#include "Core/Menu.h"
+
+// winuser.h 的 #define MessageBox MessageBoxW 会在包含 Core/Dialog.h 后重新
+// 出现；本 TU 必须看到 Window::MessageBox 真名（另见 17-Dialogs §4.4）。
 #ifdef MessageBox
 #undef MessageBox
 #endif
@@ -21,54 +21,6 @@
 namespace dui {
 
 namespace {
-
-std::vector<platform::NativeFileFilter> ToNativeFilters(
-    std::span<const FileTypeFilter> filters) {
-    std::vector<platform::NativeFileFilter> out;
-    out.reserve(filters.size());
-    for (const FileTypeFilter& f : filters) out.push_back({f.name, f.pattern});
-    return out;
-}
-
-platform::MsgIcon ToNativeIcon(MessageIcon icon) {
-    switch (icon) {
-    case MessageIcon::Information: return platform::MsgIcon::Information;
-    case MessageIcon::Warning:     return platform::MsgIcon::Warning;
-    case MessageIcon::Error:       return platform::MsgIcon::Error;
-    case MessageIcon::Question:    return platform::MsgIcon::Question;
-    case MessageIcon::None:        return platform::MsgIcon::None;
-    default:                       return platform::MsgIcon::None;
-    }
-}
-
-platform::MsgButtons ToNativeButtons(MessageButtons buttons) {
-    switch (buttons) {
-    case MessageButtons::Ok:                  return platform::MsgButtons::Ok;
-    case MessageButtons::OkCancel:            return platform::MsgButtons::OkCancel;
-    case MessageButtons::YesNo:               return platform::MsgButtons::YesNo;
-    case MessageButtons::YesNoCancel:         return platform::MsgButtons::YesNoCancel;
-    case MessageButtons::RetryCancel:         return platform::MsgButtons::RetryCancel;
-    case MessageButtons::AbortRetryIgnore:    return platform::MsgButtons::AbortRetryIgnore;
-    case MessageButtons::CancelRetryContinue: return platform::MsgButtons::CancelRetryContinue;
-    default:                                  return platform::MsgButtons::Ok;
-    }
-}
-
-MessageResult FromNative(platform::NativeMessageResult r) {
-    switch (r) {
-    case platform::NativeMessageResult::Ok:        return MessageResult::Ok;
-    case platform::NativeMessageResult::Cancel:    return MessageResult::Cancel;
-    case platform::NativeMessageResult::Yes:       return MessageResult::Yes;
-    case platform::NativeMessageResult::No:        return MessageResult::No;
-    case platform::NativeMessageResult::Retry:     return MessageResult::Retry;
-    case platform::NativeMessageResult::Abort:     return MessageResult::Abort;
-    case platform::NativeMessageResult::Ignore:    return MessageResult::Ignore;
-    case platform::NativeMessageResult::TryAgain:  return MessageResult::TryAgain;
-    case platform::NativeMessageResult::Continue:  return MessageResult::Continue;
-    case platform::NativeMessageResult::Failed:    return MessageResult::Failed;
-    default:                                      return MessageResult::Failed;
-    }
-}
 
 const String kNoWindowError = L"窗口尚未创建（需在 Application::Run 之后调用）";
 
@@ -78,79 +30,46 @@ DialogResult<std::vector<String>> Window::OpenFile(const OpenFileOptions& option
     void* owner = NativeHandle();
     if (owner == nullptr) return DialogResult<std::vector<String>>::Failed(kNoWindowError);
 
-    const std::vector<platform::NativeFileFilter> filters = ToNativeFilters(options.filters);
-    std::vector<String> paths;
-    bool cancelled = false;
-    String error;
-
     ++dialogDepth_;
-    const bool ok = platform::PickFiles(
-        owner, options.title, options.initialPath,
-        filters.empty() ? nullptr : filters.data(), filters.size(), options.filterIndex,
-        options.multiSelect, paths, cancelled, error);
+    DialogResult<std::vector<String>> r = PickFiles(owner, options);
     --dialogDepth_;
-
-    if (ok) return DialogResult<std::vector<String>>::Succeeded(std::move(paths));
-    if (cancelled) return DialogResult<std::vector<String>>::Cancelled();
-    return DialogResult<std::vector<String>>::Failed(std::move(error));
+    return r;
 }
 
 DialogResult<String> Window::SaveFile(const SaveFileOptions& options) {
     void* owner = NativeHandle();
     if (owner == nullptr) return DialogResult<String>::Failed(kNoWindowError);
 
-    const std::vector<platform::NativeFileFilter> filters = ToNativeFilters(options.filters);
-    String path;
-    bool cancelled = false;
-    String error;
-
     ++dialogDepth_;
-    const bool ok = platform::SaveFile(
-        owner, options.title, options.initialPath,
-        filters.empty() ? nullptr : filters.data(), filters.size(), options.filterIndex,
-        options.defaultExtension, path, cancelled, error);
+    const DialogResult<String> r = dui::SaveFile(owner, options);   // 成员名遮蔽，显式限定
     --dialogDepth_;
-
-    if (ok) return DialogResult<String>::Succeeded(std::move(path));
-    if (cancelled) return DialogResult<String>::Cancelled();
-    return DialogResult<String>::Failed(std::move(error));
+    return r;
 }
 
 DialogResult<String> Window::OpenFolder(const OpenFolderOptions& options) {
     void* owner = NativeHandle();
     if (owner == nullptr) return DialogResult<String>::Failed(kNoWindowError);
 
-    String path;
-    bool cancelled = false;
-    String error;
-
     ++dialogDepth_;
-    const bool ok = platform::PickFolder(owner, options.title, options.initialPath,
-                                         path, cancelled, error);
+    const DialogResult<String> r = PickFolder(owner, options);
     --dialogDepth_;
-
-    if (ok) return DialogResult<String>::Succeeded(std::move(path));
-    if (cancelled) return DialogResult<String>::Cancelled();
-    return DialogResult<String>::Failed(std::move(error));
+    return r;
 }
 
 MessageResult Window::MessageBox(const MessageOptions& options) {
     void* owner = NativeHandle();
     if (owner == nullptr) return MessageResult::Failed;
 
-    const wchar_t* caption = options.title;
-    if (caption == nullptr || *caption == L'\0') {
-        caption = (options_.title != nullptr && *options_.title != L'\0')
+    MessageOptions o = options;
+    if (o.title == nullptr || *o.title == L'\0') {
+        o.title = (options_.title != nullptr && *options_.title != L'\0')
                       ? options_.title : L"提示";
     }
 
     ++dialogDepth_;
-    const platform::NativeMessageResult r = platform::ShowMessageBox(
-        owner, options.text != nullptr ? options.text : L"", caption,
-        ToNativeIcon(options.icon), ToNativeButtons(options.buttons),
-        options.defaultButton);
+    const MessageResult r = ShowMessageBox(owner, o);
     --dialogDepth_;
-    return FromNative(r);
+    return r;
 }
 
 // Win32 同名宏兼容别名（业务不要主动调用）：某些 TU 在 DUI.h 之后才包含
@@ -175,6 +94,28 @@ bool Window::Confirm(const wchar_t* text, const wchar_t* title) {
     o.icon = MessageIcon::Question;
     o.buttons = MessageButtons::YesNo;
     return MessageBox(o) == MessageResult::Yes;
+}
+
+// ---------------------------------------------------------------------------
+// 系统原生弹出菜单（实现在 Core/Menu.cpp；这里的两件事属于 Window：
+// owner 句柄 + 与对话框相同的 dialogDepth_ 失活抑制）
+// ---------------------------------------------------------------------------
+
+void Window::ShowMenu(const Menu& menu) {
+    // 默认弹在当前鼠标位置；与客户区 DIP 重载走同一条路径
+    POINT pt{};
+    ::GetCursorPos(&pt);
+    ::ScreenToClient(NativeHandle(), &pt);
+    ShowMenu(menu, Vec2{pt.x / Scale(), pt.y / Scale()});
+}
+
+void Window::ShowMenu(const Menu& menu, Vec2 posDip) {
+    const float s = Scale();
+    // 菜单弹出期间宿主会收到 WM_ACTIVATE(WA_INACTIVE)，与系统对话框一样不算
+    // 「切到别的应用」，抑制失活清焦点（17-Dialogs §6.2）
+    ++dialogDepth_;
+    ShowPopupMenu(menu, NativeHandle(), Vec2{posDip.x * s + 0.5f, posDip.y * s + 0.5f});
+    --dialogDepth_;
 }
 
 }  // namespace dui

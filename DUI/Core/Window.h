@@ -1,8 +1,8 @@
 // ============================================================================
-//  DUI/Platform/Window.h — 平台窗口封装（内部头，不进 DUI.h）
+//  DUI/Core/Window.h — 窗口壳服务（内部头，不进 DUI.h）
 //
-//  分层（01-Layering §1）：Platform 是最底层，不得反向依赖 App/UI ——
-//  窗口事件经 NativeWindowHost 抽象上抛，由 App 层适配到 dui::Window
+//  分层（01-Layering §1）：Core 不得反向依赖 App/UI —— 窗口事件经
+//  NativeWindowHost 抽象上抛，由 App 层适配到 dui::Window
 //  （适配器在 App/App.cpp）。
 //
 //  窗口每实例状态（含 this）存 GWLP_USERDATA（12-Windowing：单窗口单缩放）。
@@ -14,7 +14,7 @@
 
 #include "Core/Core.h"
 
-namespace dui::platform {
+namespace dui {
 
 // 平台窗口 → 上层的事件接口（App 层实现；protected 虚函数由宿主回调）
 class NativeWindowHost {
@@ -119,4 +119,4 @@ private:
     int caretHeight_ = 0;         // 当前 caret 位图高度（变化时重建）
 };
 
-}  // namespace dui::platform
+}  // namespace dui

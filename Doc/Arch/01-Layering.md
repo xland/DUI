@@ -5,11 +5,11 @@
 ## 1. 依赖规则
 
 ```
-App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ Core
+App ──→ UI ──→ Text ──→ Graphics ──→ Core
 ```
 
 - **单向依赖**，下层不得引用上层，禁止跨层调用。
-- **Core 是功能服务层**：与界面无关的功能能力（任务队列、剪贴板、JSON、转码…）都在 Core，允许直接使用系统 API（Win32）——2026-11-11 取消「Core 不依赖 Win32」约束；可裁剪性由静态库按未引用裁剪保证（ADR-016），不依赖分层纯度。
+- **Core 是功能服务层**：与界面无关的功能能力（窗口壳、系统对话框、任务队列、剪贴板、JSON、转码…）都在 Core，允许直接使用系统 API（Win32）——2026-11-11 取消「Core 不依赖 Win32」约束，同日原 Platform 层并入 Core（原「Platform 不依赖 App/UI」改为「Core 不依赖 App/UI」，窗口事件仍经 `NativeWindowHost` 抽象上抛）。可裁剪性由静态库按未引用裁剪保证（ADR-016），不依赖分层纯度。
 - 只有 App 层做组装。
 
 ## 2. 模块清单
@@ -26,20 +26,11 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ 
 | Ref | 非原子引用计数与作用域句柄；可引用对象仅 UI 线程持有（ADR-025） |
 | Time | 时间戳、计时器、动画时钟基础 |
 | Dispatcher / Threading | UI 任务队列 + 后台线程池（含 PostMessage 唤醒） |
-| Clipboard | 系统剪贴板：文本（CF_UNICODETEXT）+ 任意格式（mime + 字节） |
-
-### Platform（Win32）
-
-| 模块 | 职责 |
-| --- | --- |
-| Window | HWND 封装、窗口样式、创建/销毁 |
-| MessageLoop | 消息泵、消息翻译与分发 |
-| Input | 鼠标/键盘/触摸/触控笔 → 归一化输入事件 |
-| Dpi | 显示器信息、DPI 变化、DIP↔像素换算（见 [12-Windowing.md](./12-Windowing.md)） |
-| Ime | 输入法候选窗定位与组合串处理 |
-| DragDrop | 拖放（剪贴板已下沉 Core，2026-11-11） |
-| Cursor | 光标资源管理 |
-| Threading | 后台线程池、Dispatcher 任务队列、UI 线程回投（见 [07-Threading.md](./07-Threading.md)） |
+| Clipboard | 系统剪贴板：文本（CF_UNICODETEXT）、图像（CF_DIB ↔ BGRA8）+ 任意格式（mime + 字节） |
+| Window | 窗口壳服务：RegisterClass / CreateWindowExW、消息过程、DPI 换算、IME 插入点 caret（事件经 `NativeWindowHost` 抽象上抛，App 层适配） |
+| Dialog | 系统对话框公共服务：公共类型（选项 / `DialogResult`）+ Win32/COM 实现（IFileDialog / MessageBoxW）；`Window::OpenFile` 等成员方法只是薄封装（UI 层） |
+| Menu | 系统原生弹出菜单（TrackPopupMenuEx，链式构造）；`Window::ShowMenu` 是薄封装（UI 层） |
+| DragDrop | 拖放（远期；随窗口壳落 Core） |
 
 ### Graphics（Direct3D 11 + DXGI）
 
@@ -82,7 +73,7 @@ App ──→ UI ──→ Text ──→ Graphics ──→ Platform ──→ 
 | --- | --- |
 | Application | 进程级初始化、全局资源、退出流程 |
 | Theme | 默认主题与资源（颜色、字号、图标），属性默认值兜底（见 [03-Style.md](./03-Style.md)） |
-| HighWindow | 高层窗口基类（组合 Platform.Window + UI + Graphics；派生类重写 `OnCreate` / `OnDpiChanged`，见 [12-Windowing.md](./12-Windowing.md) §6） |
+| HighWindow | 高层窗口基类（组合 Core.Window + UI + Graphics；派生类重写 `OnCreate` / `OnDpiChanged`，见 [12-Windowing.md](./12-Windowing.md) §6） |
 
 ## 3. 一帧的生命周期
 

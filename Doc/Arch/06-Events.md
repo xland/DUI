@@ -21,7 +21,7 @@
 
 - 单线程（ADR-012）：事件分发在 UI 线程同步完成，无队列、无锁。
 - 无异常（ADR-007 **已定**）/ 无 RTTI（同条 ADR 草案，待拍板）：事件按具体类型分发，绑定槽用 `std::function` 且按需分配（见 §4.2 / D1）。
-- 输入归一化在 Platform 层完成（Win32 消息 → 归一化事件，[01-Layering.md](./01-Layering.md) §2），UI 层不接触 `HWND`/`WPARAM`。
+- 输入归一化在 Core 窗口壳完成（Win32 消息 → 归一化事件，[01-Layering.md](./01-Layering.md) §2），UI 层不接触 `HWND`/`WPARAM`。
 - 动画 transform（[05-Animation.md](./05-Animation.md) §6）必须参与命中测试 —— 事件与绘制的坐标变换保持一致。
 
 ---
@@ -64,7 +64,7 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 | 文本 | `TextInput / Composition*` | IME 组合串事件，与 Text 编辑联动（见 [11-Text.md](./11-Text.md) §5） |
 | 生命周期 | `Loaded / Unloaded` | 元素进入/离开可见树（注册全局资源、启动动画的钩子） |
 
-> 触摸/触控笔在 Platform 层归一化为指针事件 + 压力/倾斜扩展字段，UI 层不区分设备类型（与 [01-Layering.md](./01-Layering.md) 输入归一化一致）。
+> 触摸/触控笔在 Core 窗口壳归一化为指针事件 + 压力/倾斜扩展字段，UI 层不区分设备类型（与 [01-Layering.md](./01-Layering.md) 输入归一化一致）。
 
 ### 3.1 滚轮与滚动条拖拽（M5.6 落地）
 

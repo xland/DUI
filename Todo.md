@@ -38,7 +38,7 @@ cd /d <项目根>
 7. **DPI 红线**：不做 System aware 回退、不做位图缩放、非整数档自绘、描边像素对齐（12-Windowing §7.1）。
 8. **公共头允许 windows.h**（2026-11-11 取消「公共头无 windows.h」约束；M5.27 起已实际引入）。仍保持：d3d11 / dwrite 等重图形头只随实现层头出现、不进 UI 公共头；import lib 用 `#pragma comment(lib)` 随编译单元携带，不动 `DUI.props`。
 9. **属性表只追加不重排已有 ID**；变长结构（TrackList）不走定长 `StyleValue`，相应地不可动画 / 无状态变体 / 无运行时 `Set`。
-10. **分层单向依赖**：Platform 不依赖 App/UI（事件经 `NativeWindowHost` 接口上抛）；UI 层不碰 D3D。功能类能力（剪贴板、任务队列等）归 Core，允许直接用系统 API（2026-11-11 起剪贴板在 `Core/Clipboard`，原「App 层注入 UI 函数指针」方案已废除）。
+10. **分层单向依赖**：Core 不依赖 App/UI（窗口事件经 `NativeWindowHost` 接口上抛）；UI 层不碰 D3D。功能类能力（窗口壳、对话框、剪贴板、任务队列等）归 Core，允许直接用系统 API（2026-11-11 起 Platform 层整体并入 Core，原「App 层注入 UI 函数指针」方案已废除）。
 11. **没道理的问题先查 `Doc/Pitfalls.md`**，再上网搜。
 
 ---
@@ -153,6 +153,8 @@ cd /d <项目根>
 | M5.30 | 11-09 | 新增 `dui::Svg`（派生 `Image`）：WIC 无内置 SVG 解码器，改走 Direct2D 内置 SVG（`ID2D1DeviceContext5`，Win10 1703+）按显示尺寸 × DPI 光栅成 BGRA8 → `TextureStore`，渲染核心零改动；`LoadSvgFile` / `LoadSvgMemory`、viewBox 固有尺寸、尺寸/DPI 变化重光栅；`App/Frame.cpp` 纹理同步移到收集之后；示例并入 `Samples/Image`（含 `icon.svg`）；ADR-017 / `16-Image.md` / `00-Overview` 同步 |
 | M5.31 | 11-09 | 元素阴影（方案 1：SDF 衰减带）：新增 `Prop::Shadow` + `Style::Shadow(blur, color, offsetX, offsetY)`（f/u/extra 槽装下，无需 ShadowRef）；`Painter::ShadowRoundRect` 走 Shape 批新增 `kind=3`，把 1px AA 过渡带换成以元素边界为中心的 S 形衰减带（d=0 处 cov=0.5，对齐高斯边界半强度），quad 外扩 blur；`Collector::DrawShadow` 在背景之前绘制（透明背景也有投影，不影响命中）；零纹理/零离屏/零缓存，未设阴影元素零开销；示例并入 `Samples/Style` |
 | M5.32 | 11-11 | 剪贴板下沉为 Core 公共能力：新增 `Core/Clipboard`（静态类直接 Win32：`ReadText/WriteText` CF_UNICODETEXT + `HasFormat/ReadFormat/WriteFormat` 任意格式 mime+字节，"image/png"→注册格式 PNG、"image/dib"→CF_DIB），同批补图像读写 `Clipboard::Image`（BGRA8 straight alpha 顶向下，与 `graphics::DecodedImage` 同约定）↔ CF_DIB（读支持 32/24bpp 标准 BGRA 布局、BI_RGB alpha 全 0 视为不透明，系统自动从 CF_DIBV5 合成；写 32bpp 顶向下 BI_RGB），`RichEdit` 复制/剪切/粘贴切换调用；废除「UI 层函数指针注入 + App 装配」方案（`UI/UI.h` 注入段、`TextBox.cpp` 管道、`Platform` 两函数、`App.cpp` 接线全删）；同步取消「Core 不依赖 Win32」约束（`01-Layering` 改为"功能服务层"定位）与 `Pitfalls §4.5` 旧公共头边界条目 |
+| M5.33 | 11-11 | **Platform 层并入 Core**（链路变为 App→UI→Text→Graphics→Core）：`Platform/Window.{h,cpp}`、`Dialog.{h,cpp}`、`DUI.manifest` 五件 git mv 至 `Core/`；`namespace dui::platform` 拍平为 `dui`（App 层 57 处引用同步；`App/Dialog.cpp` 的 `SaveFile` 调用因成员方法遮蔽改显式限定 `dui::SaveFile`；`App.h` 前向声明 `NativeWindow` 移出匿名 namespace）；`DUI.props` manifest 路径、vcxproj/filters（`ObjectFileName` 改 `Core_Dialog.obj` 保 MSB8027 规避）；文档同步：`01-Layering` 链图/模块表删 Platform 节、`Todo` 约定 #10（「Core 不依赖 App/UI」）、`Pitfalls §4.7/4.8/4.11`、`02-Decisions`、`06-Events`、`12-Windowing`、`17-Dialogs` 当前结构引用（历史记录行保留） |
+| M5.34 | 11-11 | **Menu / Dialog 并入 Core 公共服务**（App 层只留 Window 方法薄封装）：`App/Menu.{h,cpp}` git mv 至 `Core/`（新增 `ShowPopupMenu` 服务函数，`Window::ShowMenu` 只做坐标换算 + `dialogDepth_`）；`App/Dialog.h` 公共类型（`DialogResult` / 选项 / 枚举）并入 `Core/Dialog.h` 后删除——公共服务函数直接收公共类型返回 `DialogResult`，原「App 层 POD/枚举转换层」（`ToNativeFilters` / `ToNativeIcon` 等 ~50 行）消失，`FileTypeFilter` 与 `COMDLG_FILTERSPEC` 同构直接重解释；`App/Dialog.cpp` 收缩为 owner 取值 + 深度计数薄封装（含从 Menu.cpp 移来的 `ShowMenu` 方法）；`DUI.h`/`App.h` include 更新、vcxproj/filters 登记 |
 
 ---
 

@@ -1,14 +1,13 @@
 // ============================================================================
-//  DUI/App/Menu.cpp — 系统原生弹出菜单
+//  DUI/Core/Menu.cpp — 系统原生弹出菜单
 //
 //  HMENU 由 CreatePopupMenu 构建，子菜单挂在同一棵菜单树上；命令 ID 全局连续
 //  编号，TrackPopupMenuEx(TPM_RETURNCMD) 返回后按 ID 查回调并调用。
 //  DestroyMenu 递归销毁整棵树，故子菜单无需单独释放。
+//  Window::ShowMenu 成员方法（owner 句柄 / dialogDepth_）在 App/Dialog.cpp。
 // ============================================================================
 
-#include "App/Menu.h"
-
-#include "App/App.h"
+#include "Core/Menu.h"
 
 #include <windows.h>
 
@@ -87,7 +86,7 @@ void AppendItems(HMENU h, const Menu& m, std::vector<Command>& cmds) {
     }
 }
 
-void TrackMenu(const Menu& menu, HWND hwnd, POINT pt) {
+void TrackMenu(const Menu& menu, HWND hwnd, const POINT& pt) {
     HMENU h = ::CreatePopupMenu();
     std::vector<Command> cmds;
     AppendItems(h, menu, cmds);
@@ -103,24 +102,11 @@ void TrackMenu(const Menu& menu, HWND hwnd, POINT pt) {
 
 }  // namespace
 
-void Window::ShowMenu(const Menu& menu) {
-    // 默认弹在当前鼠标位置；与客户区 DIP 重载走同一条路径
-    POINT pt{};
-    ::GetCursorPos(&pt);
-    ::ScreenToClient(NativeHandle(), &pt);
-    ShowMenu(menu, Vec2{pt.x / Scale(), pt.y / Scale()});
-}
-
-void Window::ShowMenu(const Menu& menu, Vec2 posDip) {
-    const float s = Scale();
-    POINT pt{static_cast<LONG>(posDip.x * s + 0.5f),
-             static_cast<LONG>(posDip.y * s + 0.5f)};
-    ::ClientToScreen(NativeHandle(), &pt);
-    // 菜单弹出期间宿主会收到 WM_ACTIVATE(WA_INACTIVE)，与系统对话框一样不算
-    // 「切到别的应用」，抑制失活清焦点（17-Dialogs §6.2）
-    ++dialogDepth_;
-    TrackMenu(menu, NativeHandle(), pt);
-    --dialogDepth_;
+void ShowPopupMenu(const Menu& menu, void* owner, Vec2 posScreenPx) {
+    if (owner == nullptr) return;
+    POINT pt{static_cast<LONG>(posScreenPx.x + 0.5f),
+             static_cast<LONG>(posScreenPx.y + 0.5f)};
+    TrackMenu(menu, static_cast<HWND>(owner), pt);
 }
 
 }  // namespace dui

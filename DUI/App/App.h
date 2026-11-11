@@ -28,15 +28,13 @@
 #endif
 
 #include "Core/Dispatcher.h"
+#include "Core/Dialog.h"
+#include "Core/Menu.h"
 #include "UI/UI.h"
-#include "App/Dialog.h"
-#include "App/Menu.h"
 
 namespace dui {
 
-namespace platform {
-class NativeWindow;      // App/Frame.cpp 组装层使用（避免依赖 Platform 内部头）
-}
+class NativeWindow;          // Core/Window.h：App/Frame.cpp 组装层使用（避免依赖内部头）
 namespace graphics {
 class Device;
 }
@@ -101,7 +99,7 @@ public:
     // 原生窗口句柄：OnCreate 起有效（此时 HWND 已建、窗口尚未显示）。
     HWND NativeHandle() const noexcept;
 
-    // ---- 系统原生弹出菜单（App/Menu.h）------------------------------------
+    // ---- 系统原生弹出菜单（Core/Menu.h）------------------------------------
     // 同步模态：菜单弹出期间框架主消息循环挂起，返回后执行选中项回调。
     // 不传位置 → 弹在当前鼠标位置；posDip 为客户区 DIP 坐标。
     // 框架不自动挂钩右键：何时弹出由业务决定（如 OnPointerUp 里判断
@@ -148,7 +146,7 @@ private:
 
     WindowOptions options_;
     float scale_ = 1.f;
-    void* native_ = nullptr;           // platform::NativeWindow*（平台窗口对象；公共头不带 windows.h）
+    void* native_ = nullptr;           // NativeWindow*（Core 窗口壳服务对象）
     std::unique_ptr<Panel> root_;
     uintptr_t tickTimer_ = 0;          // UI 统一节拍定时器（0 = 未启动）
     unsigned  tickPeriodMs_ = 0;       // 当前周期（变化时才重设 SetTimer）
@@ -181,7 +179,7 @@ private:
 
     // 帧路径（App/Frame.cpp）：尺寸同步 → 失效检查 → 重排 → 收集 → 光栅 → Present。
     // static：不依赖实例状态，供 Run 主循环与 OnResized 就地渲染共用
-    static void RenderFrame(Window& window, const platform::NativeWindow& native, graphics::Device& device);
+    static void RenderFrame(Window& window, const NativeWindow& native, graphics::Device& device);
 
     Dispatcher dispatcher_;   // UI 任务队列（07-Threading：[调度] 步排空）
     String lastError_;

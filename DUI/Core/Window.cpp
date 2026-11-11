@@ -1,11 +1,11 @@
 // ============================================================================
-//  DUI/Platform/Window.cpp — RegisterClass + CreateWindowExW + 窗口过程
+//  DUI/Core/Window.cpp — RegisterClass + CreateWindowExW + 窗口过程
 //
 //  M2 范围（Todo）：建窗/销毁/OnClosing；WM_DPICHANGED 记录 scale +
 //  应用系统建议矩形，完整七步流程（ResizeBuffers/字形重光栅）M5 落地。
 // ============================================================================
 
-#include "Platform/Window.h"
+#include "Core/Window.h"
 
 #include <cstring>
 #include <dwmapi.h>
@@ -14,7 +14,7 @@
 // 不必改根目录 DUI.props 的公共编译基线。
 #pragma comment(lib, "dwmapi.lib")
 
-namespace dui::platform {
+namespace dui {
 
 namespace {
 
@@ -448,4 +448,4 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-}  // namespace dui::platform
+}  // namespace dui

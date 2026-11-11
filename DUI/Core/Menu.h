@@ -1,5 +1,5 @@
 // ============================================================================
-//  DUI/App/Menu.h — 系统原生弹出菜单（TrackPopupMenuEx）
+//  DUI/Core/Menu.h — 系统原生弹出菜单（TrackPopupMenuEx；Core 层 OS 服务）
 //
 //  只做弹出菜单：不提供菜单栏、快捷键解析，也不自动挂钩 WM_CONTEXTMENU ——
 //  何时弹出、弹在哪由业务决定。菜单是 USER32 的独立窗口，不受宿主窗口
@@ -42,5 +42,9 @@ public:
 private:
     std::vector<Item> items_;
 };
+
+// 弹出菜单（同步模态；TrackPopupMenuEx）。owner 为 HWND（void* 传递），
+// posScreenPx 为屏幕物理像素坐标。菜单弹出期间系统接管消息泵。
+void ShowPopupMenu(const Menu& menu, void* owner, Vec2 posScreenPx);
 
 }  // namespace dui

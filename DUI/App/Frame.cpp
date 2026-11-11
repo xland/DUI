@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "Graphics/Graphics.h"
-#include "Platform/Window.h"
+#include "Core/Window.h"
 #include "Text/TextEngine.h"
 #include "UI/Scroller.h"
 
@@ -347,7 +347,7 @@ private:
 // 帧路径（10-Rendering §2，按需全量光栅）：
 // 尺寸同步 → 失效检查（布局脏才重排；只重绘的帧跳过 Measure/Arrange）
 // → 图集页同步 → 收集顶点 → 光栅 → Present。
-void Application::RenderFrame(Window& window, const platform::NativeWindow& native,
+void Application::RenderFrame(Window& window, const NativeWindow& native,
                               graphics::Device& device) {
     const Vec2 px = native.ClientSizePx();
     if (px.x <= 0.f || px.y <= 0.f) return;   // 最小化：不进帧

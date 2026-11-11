@@ -18,7 +18,7 @@
 #include "RichText/RichDoc.h"
 #include "RichText/CssValue.h"
 #include "RichText/RichDocJson.h"
-#include "App/Dialog.h"
+#include "Core/Dialog.h"
 #include "App/Menu.h"
 #include "App/App.h"
 

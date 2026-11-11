@@ -85,10 +85,9 @@
 DUI.slnx                 解决方案：x64 单一平台，十九个工程（1 库 + 18 示例）
 DUI/                     库工程（DUI.vcxproj，静态库）
   DUI.h                  公共入口（业务代码唯一 include）
-  Core/                  Result、String/Color/Rect/Thickness、协程 Task<T>/Task<void> + PostUi 安全回投
+  Core/                  Result、String/Color/Rect/Thickness、协程 Task<T>/Task<void> + PostUi 安全回投 + NativeWindow（HWND 封装、窗口过程、DPI 感知清单，M2；原 Platform 层 2026-11-11 并入）+ 系统对话框 Dialog 公共服务（类型 + Win32/COM 实现，M7；2026-11-11 起类型并入 Core）+ 原生弹出菜单 Menu（M5.34）+ 剪贴板 Clipboard（M5.32）+ Dispatcher/Threading
   UI/                    Style（声明集 + 链式构造合一）、Element、Panel、Text/Button、Icon（内置矢量图标）、TextBox/TextArea、Image/Gif/Svg、Canvas/Scroller、Focus、事件（M1 骨架）
-  App/                   Application、Window/WindowOptions（M1 骨架）+ 系统对话框公共 API/装配（Dialog.h/.cpp，M7）+ 系统原生弹出菜单（Menu.h/.cpp）
-  Platform/              NativeWindow（HWND 封装、窗口过程、DPI 感知清单）（M2）+ 系统对话框 Win32/COM 实现（Dialog.h/.cpp，M7）
+  App/                   Application、Window/WindowOptions（M1 骨架）+ 系统对话框/菜单的 Window 成员方法薄封装（Dialog.cpp，M7）
   Graphics/              Device（D3D11/Flip Model/BGRA8）+ Painter（有序绘制指令 + 状态槽 / SDF 圆角矩形 / 字形 / 形状 / 图像）（M3/M5/M5.6/B2）+ ImageCodec（WIC）/ SvgRaster（Direct2D SVG 光栅化）
   Text/                  DWrite 排版 + GlyphAtlas 灰度图集（M5）
 Samples/                 示例工程（每个示例一个子目录 = 一个工程）

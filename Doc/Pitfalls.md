@@ -74,6 +74,14 @@
 
 补充（2026-11-11）：**LNK4020「xxx.pdb 中的类型记录已损坏」是辅助警告**——MS 文档明确它是其它生成问题的伴随现象：先修真正的错误/警告，清空 Build 目录重编通常即可消除；并行构建时"库工程正在重写 PDB、示例链接步骤同时读旧类型流"也会触发。产物（exe）本身不受影响，只影响调试器里部分符号/类型的显示。
 
+**LNK4020 的真正成因与修法（2026-11-11 定位并修复）**：
+- **现象**：只在**并行链接多个 exe** 时出现（VS 里"生成解决方案"、命令行 `msbuild DUI.slnx /m`），且是**每个 .obj 一条**（说明整个类型流读坏，而非单个对象陈旧）；单工程链接、串行链接都不出现。
+- **机制**：Release 的库开了 **/GL**（`WholeProgramOptimization`），库的调试信息放在**共享 PDB**（`$(IntDir)$(ProjectName).pdb`，VC targets 再把 `_LibPdb = $(OutDir)$(TargetName).pdb` 复制一份到输出目录）。链接示例时 **link.exe 会把 LTCG 的原生代码信息回写进库这个 PDB**；并行链接时多个 link.exe **并发改写同一份 PDB** → 类型流被写坏 → 其余链接器读到损坏的类型流 → 每个 .obj 报一条 LNK4020。
+- **判据**：并行构建前后对比库 PDB 的**大小**——链接后变小（本例 3,567,616 → 3,248,128 字节）即说明它被回写重整过。
+- **修法**：**库改用 `/Z7`**（`<DebugInformationFormat>OldStyle</DebugInformationFormat>`）——调试信息内嵌进 .obj，链接器从 .obj 直读类型记录，不再存在可写的共享 PDB，竞态消失；顺带让库自包含（便于分发）。代价：lib 体积 +40%（44 MB → 61.6 MB），**exe 体积不变**（调试信息照旧进 exe 自己的 PDB，实测 8.5 MB）。
+- **Debug 配置不受影响**：没开 /GL → 无 LTCG 回写 → 无竞态（并行全量构建已验证零警告）。
+- 注意 `/Z7` 的枚举值是 `OldStyle`（`Embedded` 不是合法值，MSBuild 会报"元素 DebugInformationFormat 具有无效值"）。
+
 ### 2.10 颜色约定 0xAARRGGBB（M5.10）
 低字节 R、高字节 A。`0xFF000000` 是不透明黑不是白；白色写 `0xFFFFFFFF`。
 

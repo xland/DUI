@@ -66,6 +66,12 @@
     <ClCompile>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
+      <!-- /Z7：调试信息内嵌 .obj，不生成共享 PDB。
+           原因：链接示例时 link.exe 会把 LTCG 的原生代码信息**回写**库的这个共享
+           PDB；VS 并行链接多个示例时多个 link.exe 并发改写同一份 PDB → 类型流被
+           写坏 → 其余链接器报 LNK4020「类型记录已损坏」（每个 .obj 一条）。
+           内嵌后链接器从 .obj 直读类型记录，库也自包含（可分发），竞态消失。 -->
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>

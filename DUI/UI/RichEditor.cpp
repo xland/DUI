@@ -304,6 +304,13 @@ struct RichEditor::Impl {
     bool IsImageAt(size_t index) const;
     bool EraseImageAt(size_t index);
     bool LeaveImageToText();
+    // 文档顺序里 block 之后的第一个块（跨容器 / 跨层级）；没有则 nullptr
+    Block* NextBlockAfter(Block* block);
+    static Block* NextBlockRec(std::vector<Block>& vec, Block* block, bool& found);
+    // 摘掉一个不可编辑的装饰块（分割线）：光标落到 caretAfter
+    bool EraseDecorBlock(Block* target, Cursor caretAfter);
+    // 图后按 Del：处理图片右边的块（分割线删掉 / 后邻图片删掉 / 文本块则光标移进去）
+    bool DeleteAfterImage(size_t index);
 
     void EnsureLayout(const StyleContext& ctx, float width);
     void Build(const StyleContext& ctx, float base, float line, const wchar_t* family);
@@ -331,6 +338,21 @@ struct RichEditor::Impl {
     Vec2  TextOriginDoc(const Item& it) const;
     float AlignDx(const Item& it) const;
     bool  CaretRectOf(Cursor c, Rect& docRect) const;
+    // 光标位（文本位置 / 图片的图前图后）都是"贴在某处的一小条矩形"，
+    // 点到它的距离取平方比较（点落在矩形内为 0）
+    static float DistToRect(Vec2 p, const Rect& r) {
+        const float dx = (p.x < r.x) ? (r.x - p.x) : ((p.x > r.Right()) ? p.x - r.Right() : 0.f);
+        const float dy = (p.y < r.y) ? (r.y - p.y) : ((p.y > r.Bottom()) ? p.y - r.Bottom() : 0.f);
+        return dx * dx + dy * dy;
+    }
+    // 矩形向上延伸到 top（图片的竖线要盖住"图片这一行"上方的相邻块内容）
+    static Rect ExtendUp(Rect r, float top) {
+        if (top < r.y) {
+            r.h += r.y - top;
+            r.y = top;
+        }
+        return r;
+    }
     void  EnsureLines() const;
     int   LineIndexOf(Cursor c) const;
     float CaretXDoc() const;
@@ -884,7 +906,42 @@ RichEditor::Impl::Cursor RichEditor::Impl::HitTestDoc(Vec2 pt) const {
                 index = text::Engine::Get().HitTestPoint(it.para, Vec2{pt.x - o.x, pt.y - o.y});
             }
             index = richtext::SnapBoundary(it.text, index);
-            return Cursor{i, index};
+            Cursor best{i, index};
+
+            // 与**相邻图片块**的光标位按"就近"竞争：图前 / 图后 是贴在图片左右缘的
+            // 两条竖线。文字窄、图片又大又居中时，点文字右侧的空白往往离图片更近 ——
+            // 示例里代码块只有几行短字、图片居中占满大半，点代码块右侧空白若仍吸到
+            // 代码行尾，光标会莫名跳进代码块；按就近取才落在图片右缘（图后）。
+            Rect bestRect{};
+            if (CaretRectOf(best, bestRect)) {
+                float bestDist = DistToRect(pt, bestRect);
+                for (int step = -1; step <= 1; step += 2) {
+                    if (step < 0 && i == 0) continue;
+                    const size_t j = (step < 0) ? i - 1 : i + 1;
+                    if (j >= editables.size()) continue;
+                    if (!IsImageAt(j)) continue;
+                    for (uint32_t off = 0; off < 2; ++off) {
+                        Rect bar{};
+                        if (!CaretRectOf(Cursor{j, off}, bar)) continue;
+                        // 相邻图片的竖线向本块方向延伸：下方的图片向上盖到本块内容底，
+                        // 上方的图片向下盖到本块内容顶 —— 图片"这一行"含相邻块那一条
+                        if (step > 0) {
+                            bar = ExtendUp(bar, band.Bottom());
+                        } else {
+                            const float bottom = band.y;
+                            if (bottom > bar.Bottom()) {
+                                bar.h += bottom - bar.Bottom();
+                            }
+                        }
+                        const float d = DistToRect(pt, bar);
+                        if (d < bestDist) {
+                            bestDist = d;
+                            best = Cursor{j, off};
+                        }
+                    }
+                }
+            }
+            return best;
         }
         prevBottom = band.Bottom();
         hasPrev = true;
@@ -1147,6 +1204,67 @@ bool RichEditor::Impl::EraseImageAt(size_t index) {
     return true;
 }
 
+// 文档顺序里 block 之后的第一个块（跨容器 / 跨层级）：没有则 nullptr。
+// 用于块边界上的操作（Del 删右邻的分割线等）—— editables 只含可编辑块，
+// 分割线这种装饰块不在其中，得按文档树走。
+Block* RichEditor::Impl::NextBlockAfter(Block* block) {
+    bool found = false;
+    return NextBlockRec(doc.blocks, block, found);
+}
+
+Block* RichEditor::Impl::NextBlockRec(std::vector<Block>& vec, Block* block, bool& found) {
+    for (Block& b : vec) {
+        if (found) return &b;                       // 已经越过目标 → 这就是下一个
+        if (&b == block) { found = true; continue; }
+        if (!b.children.empty()) {
+            // 目标可能在自己的子树里：递归找，找到后 found 置位，外层继续往下走
+            Block* next = NextBlockRec(b.children, block, found);
+            if (next != nullptr) return next;
+        }
+    }
+    return nullptr;
+}
+
+// 摘掉一个不可编辑的装饰块（分割线）：它不在 editables 里，光标位置不受影响
+bool RichEditor::Impl::EraseDecorBlock(Block* target, Cursor caretAfter) {
+    Spot spot{};
+    if (!FindSpot(target, spot)) return false;
+    PushUndo(false);
+    spot.container->erase(spot.container->begin() + static_cast<ptrdiff_t>(spot.index));
+    ++version;
+    Rebuild();
+    caret = anchor = ClampToDoc(caretAfter);
+    caretVisible = true;
+    return true;
+}
+
+// 图后按 Del：光标在图片的右边界，Del 删掉图片**右边**的块
+//   · 分割线（不可编辑的装饰块）→ 删掉它，光标留在图后
+//   · 图片 → 删掉它（同「段尾 Del 删后邻图片」）
+//   · 文本块 → 图片没法与正文合并（会把图片变成文本块），光标移进该块开头
+bool RichEditor::Impl::DeleteAfterImage(size_t index) {
+    Block* next = NextBlockAfter(editables[index].block);
+    if (next == nullptr) return false;
+
+    if (next->kind == BlockKind::Rule) return EraseDecorBlock(next, Cursor{index, 1});
+
+    if (next->kind == BlockKind::Image) {
+        const size_t nextIndex = IndexOf(next);
+        if (nextIndex == kNoEditable) return false;
+        return EraseImageAt(nextIndex);
+    }
+
+    // 文本块 / 列表：光标移进右邻第一个可编辑文本块的开头（不吞内容）
+    for (size_t i = index + 1; i < editables.size(); ++i) {
+        if (IsImageAt(i)) continue;
+        caret = anchor = Cursor{i, 0};
+        caretVisible = true;
+        lastEditTyping = false;
+        return true;
+    }
+    return false;
+}
+
 // 光标在图片上而后续操作需要文本块（输入 / 回车 / 粘贴）时，把光标挪到文本块：
 // 图后 → 后面最近的文本块开头（没有则退到前面文本块末尾）；
 // 图前 → 前面最近的文本块末尾（没有则落到后面文本块开头）。
@@ -1396,7 +1514,29 @@ bool RichEditor::Impl::DeleteBackward() {
     }
 
     Cursor c = ClampToDoc(caret);
-    if (IsImageAt(c.block)) return EraseImageAt(c.block);
+
+    // 图片的两个光标位。退格只删光标**左边紧邻**的东西：
+    //   · 图后（offset 1）左边紧邻的就是图片 → 删图
+    //   · 图前（offset 0）左边紧邻的是前一个块 → 删前块的内容
+    if (IsImageAt(c.block)) {
+        if (c.offset > 0) return EraseImageAt(c.block);
+
+        // 图前：紧邻的前一块是分割线（不可编辑的装饰块）→ 删掉它
+        // （与「图后 Del 删后邻装饰块」对称）
+        {
+            Spot spot{};
+            if (FindSpot(editables[c.block].block, spot) && spot.index > 0) {
+                Block* prev = &spot.container->at(spot.index - 1);
+                if (prev->kind == BlockKind::Rule) return EraseDecorBlock(prev, c);
+            }
+        }
+        if (c.block == 0) return false;
+        // 前一块是图片 → 删掉它
+        if (IsImageAt(c.block - 1)) return EraseImageAt(c.block - 1);
+        // 前一块是文本 / 代码块 → 删掉它的最后一个字符：光标挪到前一块末尾再退格
+        caret = anchor = EndCursor(c.block - 1);
+        return DeleteBackward();
+    }
     if (c.offset > 0) {
         const String text = editables[c.block].item->text;
         const uint32_t from = NextIndex(text, c.offset, -1);
@@ -1447,8 +1587,12 @@ bool RichEditor::Impl::DeleteForward() {
     }
 
     const Cursor c = ClampToDoc(caret);
-    // 图前（offset 0）：Del 删掉身后的图片；图后（offset 1）：图片已在身后，改删下一块
-    if (IsImageAt(c.block) && c.offset == 0) return EraseImageAt(c.block);
+    // 图片的两个光标位：图前（offset 0）Del 删掉身后的图片；图后（offset 1）
+    // 是图片的**右边界**，Del 删掉图片后面的块（分割线这类装饰块）
+    if (IsImageAt(c.block)) {
+        if (c.offset == 0) return EraseImageAt(c.block);
+        return DeleteAfterImage(c.block);
+    }
     const String text = editables[c.block].item->text;
     if (c.offset < text.size()) {
         const uint32_t to = NextIndex(text, c.offset, 1);
@@ -1461,6 +1605,13 @@ bool RichEditor::Impl::DeleteForward() {
         return true;
     }
 
+    // 段尾：右邻块（文档顺序）。右邻若是分割线（不可编辑的装饰块）→ 删掉它，
+    // 光标留在段尾；它不在 editables 里，只能按文档树找
+    Block* current = editables[c.block].block;
+    if (Block* next = NextBlockAfter(current)) {
+        if (next->kind == BlockKind::Rule) return EraseDecorBlock(next, c);
+    }
+
     if (c.block + 1 >= editables.size()) return false;
     if (IsImageAt(c.block + 1)) return EraseImageAt(c.block + 1);   // 段尾 Del 删后邻图片
 
@@ -1468,7 +1619,6 @@ bool RichEditor::Impl::DeleteForward() {
     if (editables[c.block].block->kind == BlockKind::Code) return false;
     if (editables[c.block + 1].block->kind == BlockKind::Code) return false;
 
-    Block* current = editables[c.block].block;
     Block* next = editables[c.block + 1].block;
     Spot currentSpot{};
     Spot nextSpot{};

@@ -84,6 +84,9 @@ struct Paragraph {
     uint64_t runVersion = 0;
     Vec2     size;               // 排版结果（DIP）
     float    baseline = 0.f;      // 首行基线（相对排版原点，DIP）—— align-items: baseline 用
+    float    firstLineHeight = 0.f;  // 首行行高（DIP）—— 布局的 min-size:auto 内容下限
+    float    inkCenter = 0.f;     // 墨迹中心（相对基线，向上为正）—— 视觉居中补偿用
+    bool     inkValid = false;    // 墨迹中心是否有效（多行 / 测量失败 → false）
 };
 
 // 行信息（编辑控件用；一次遍历取全部行）
@@ -147,6 +150,11 @@ public:
     // bullet 类字符（•/●）的字形墨迹贴着基线，直接绘制会明显偏下；测量后
     // 可把圆点补偿到行高中心。字体缺该字形或度量失败 → 返回 false。
     bool GlyphInkCenterDip(Paragraph* p, wchar_t ch, float& outCenterDip);
+
+    // 整段墨迹的上下缘（相对基线，DIP，向上为正）：单行文本"视觉居中"补偿用。
+    // 行盒居中 ≠ 视觉居中 —— 墨迹重心比行盒中心低 1~2 DIP，布局据此补偿。
+    // 多行 / 字体缺字 / 度量失败 → 返回 false。
+    bool GlyphRunInkBoundsDip(Paragraph* p, float& outTopDip, float& outBottomDip);
 
 private:
     Engine();

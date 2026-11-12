@@ -14,6 +14,8 @@ Vec2 Text::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) con
         // DWrite 不可用：M3 占位估算兜底（CJK 1em、其余 0.55em）
         float units = 0.f;
         for (const wchar_t ch : text_) units += (ch >= 0x2E80) ? 1.0f : 0.55f;
+        singleLineHeight_ = ctx.fontSize * ctx.lineHeight;
+        inkValid_ = false;
         return {units * ctx.fontSize, ctx.fontSize * ctx.lineHeight};
     }
     const float maxW = contentAvail.x > 0.f ? contentAvail.x : 1e6f;   // 不限宽
@@ -59,6 +61,9 @@ Vec2 Text::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) con
         fullPara_ = en.Shape(static_cast<text::Paragraph*>(fullPara_), in);
         const text::Paragraph* para = static_cast<text::Paragraph*>(fullPara_);
         baseline_ = para != nullptr ? para->baseline : -1.f;
+        singleLineHeight_ = para != nullptr ? para->firstLineHeight : 0.f;
+        inkCenter_ = para != nullptr ? para->inkCenter : 0.f;
+        inkValid_ = para != nullptr ? para->inkValid : false;
         return para != nullptr ? para->size : Vec2{};
     }
 
@@ -68,8 +73,11 @@ Vec2 Text::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) con
     in.noWrap = true;
     fullPara_ = en.Shape(static_cast<text::Paragraph*>(fullPara_), in);
     const text::Paragraph* full = static_cast<text::Paragraph*>(fullPara_);
-    if (full == nullptr) { truncated_ = false; return Vec2{}; }
+    if (full == nullptr) { truncated_ = false; singleLineHeight_ = 0.f; inkValid_ = false; return Vec2{}; }
     baseline_ = full->baseline;
+    singleLineHeight_ = full->firstLineHeight;
+    inkCenter_ = full->inkCenter;
+    inkValid_ = full->inkValid;
     if (full->size.x <= wrapW) { truncated_ = false; return full->size; }   // 放得下
 
     // ② 省略号宽度 + "能放下的最长前缀"（簇边界安全）→ 截断文本再排一次
@@ -82,6 +90,9 @@ Vec2 Text::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) con
     truncPara_ = en.Shape(static_cast<text::Paragraph*>(truncPara_), in);
     truncated_ = true;
     const text::Paragraph* tp = static_cast<text::Paragraph*>(truncPara_);
+    singleLineHeight_ = tp != nullptr ? tp->firstLineHeight : full->firstLineHeight;
+    inkCenter_ = tp != nullptr ? tp->inkCenter : full->inkCenter;
+    inkValid_ = tp != nullptr ? tp->inkValid : full->inkValid;
     return tp != nullptr ? tp->size : full->size;
 }
 

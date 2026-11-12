@@ -40,6 +40,23 @@ Thickness ElementBorderBox(const Element* e, const StyleContext& ctx) {
     return {v.f, v.extra[0], v.extra[1], v.extra[2]};
 }
 
+// 内容决定尺寸的最小高度（CSS min-height: auto 的近似，纵向）：
+// 文本类元素的高度由内容决定，收缩时不应被压到内容高度以下 ——
+// 否则盒子被压扁、文字仍按整段绘制，文字就画到了自己盒子外面。
+// 仅对**未显式指定 Height** 的文本生效（显式高度是用户意图，尊重之）。
+// 返回外边距盒口径的主轴下限；0 = 无下限。
+float ContentMinHeight(const Element* e, const StyleContext& ctx) {
+    if (e->GetKind() != Kind::Text) return 0.f;
+    StyleValue v;
+    if (TryResolve(e, Prop::Height, ctx, v)) return 0.f;
+    const float lineH = static_cast<const Text*>(e)->SingleLineHeight();
+    if (lineH <= 0.f) return 0.f;
+    const Thickness pad = ElementPadding(e, ctx);
+    const Thickness bw  = ElementBorderBox(e, ctx);
+    const Thickness mg  = ElementMargin(e, ctx);
+    return lineH + pad.top + pad.bottom + bw.top + bw.bottom + mg.top + mg.bottom;
+}
+
 // 每层递归独立的可见子项缓冲（跨帧复用；单线程 UI，ADR-012。Arena 化列 M6）。
 // 两层陷阱：
 //   1. 不能全递归共享一份：子项循环内会递归 ArrangeElement，递归 clear/push_back
@@ -432,6 +449,12 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
                 const float take = (-freeSpace) * (s * m0 / weight);
                 float& m = row ? c->measured_.x : c->measured_.y;
                 m = m0 > take ? m0 - take : 0.f;
+                if (!row) {
+                    // 内容下限（CSS min-height:auto）：纵向不把文本压到单行行高以下，
+                    // 否则文字按整段绘制 → 溢出自己的盒子（"文本超出父元素"）
+                    const float minContent = ContentMinHeight(c, ctx);
+                    if (m < minContent) m = minContent;
+                }
                 StyleValue v;
                 if (row && TryResolve(c, Prop::MinWidth, ctx, v)) {
                     // m 是外边距盒主轴；MinWidth 指元素盒，故补上左右 margin
@@ -521,27 +544,30 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
             PlaceLine(start, n, lineY, lineH);
         }
     } else {
-    // 主轴排列（CSS justify-content）：剩余空间怎么分
+    // 主轴排列（CSS justify-content）：剩余空间怎么分。
+    // 剩余空间按**最终主轴尺寸**算（grow/shrink 之后）—— 用收缩前的旧值会把
+    // 内容整体推出容器（grow 后再居中，偏移没有对应空间）。
     float pos = row ? content.x : content.y;
     float step = gap;
-    if (n > 0 && freeSpace > 0.f) {
+    if (n > 0) {
+        float used = gap * (n > 1 ? n - 1 : 0);
+        for (Element* c : items) used += row ? c->measured_.x : c->measured_.y;
+        const float rest = mainContent - used;      // 可为负（内容比容器大）
         switch (static_cast<Justify>(just)) {
         case Justify::Center:
-            pos += freeSpace * 0.5f;
+            pos += rest * 0.5f;      // 负空间同样居中（CSS：溢出时两侧溢出）
             break;
         case Justify::End:
-            pos += freeSpace;
+            pos += rest;             // 负空间 → 末端对齐（溢出到起始侧）
             break;
         case Justify::SpaceBetween:      // 首尾贴边，间距均分剩余空间
-            if (n > 1) step = gap + freeSpace / (n - 1);
+            if (n > 1 && rest > 0.f) step = gap + rest / (n - 1);
             break;
         case Justify::SpaceAround:       // 每项两侧各分一半剩余空间
-            step = gap + freeSpace / n;
-            pos += freeSpace / (2.f * n);
+            if (rest > 0.f) { step = gap + rest / n; pos += rest / (2.f * n); }
             break;
         case Justify::SpaceEvenly:       // 每项两侧各分一份（含首尾）
-            step = gap + freeSpace / (n + 1);
-            pos += freeSpace / (n + 1);
+            if (rest > 0.f) { step = gap + rest / (n + 1); pos += rest / (n + 1); }
             break;
         default:                         // Start
             break;
@@ -584,8 +610,27 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
             cross = crossLen;             // Stretch（默认）
         }
         const Vec2 off = RelativeOffset(c, ctx);   // 相对定位：布局盒偏移
-        const Rect childSlot = row ? Rect{pos + off.x, content.y + crossPos + off.y, main, cross}
-                                   : Rect{content.x + crossPos + off.x, pos + off.y, cross, main};
+        // 视觉居中补偿：行盒居中 ≠ 墨迹居中 —— DWrite 的 PROPORTIONAL 行距把
+        // baseline 压在 ascent×factor 处（雅黑 1.27 em），而汉字墨迹只到 0.83 em，
+        // 行盒居中时文字视觉偏下 1~2 DIP。主轴（Column + justify:center）或
+        // 交叉轴（Row + align-items:center）居中时，按墨迹中心落位。
+        float slotY = row ? content.y + crossPos + off.y : pos + off.y;
+        if (c->GetKind() == Kind::Text) {
+            const bool mainCenter =
+                !row && just == static_cast<uint32_t>(Justify::Center);
+            const bool crossCenter =
+                row && a == static_cast<uint32_t>(Align::Center);
+            if (mainCenter || crossCenter) {
+                const Text* t = static_cast<const Text*>(c);
+                const float inkC = t->InkCenterFromBoxTop();   // 相对排版原点（内容盒顶）
+                const Thickness cpad = ElementPadding(c, ctx);
+                const Thickness cbw  = ElementBorderBox(c, ctx);
+                const float origin = content.y + content.h * 0.5f - inkC;   // 排版原点 y
+                slotY = origin - cpad.top - cbw.top + off.y;                  // 元素盒顶
+            }
+        }
+        const Rect childSlot = row ? Rect{pos + off.x, slotY, main, cross}
+                                   : Rect{content.x + crossPos + off.x, slotY, cross, main};
         ArrangeElement(c, childSlot, ctx, depth + 1);
         pos += main + step;
         extent.x = std::max(extent.x, childSlot.Right() - content.x);

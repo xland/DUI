@@ -2,7 +2,7 @@
 
 > **配套工程**：`Samples/Layout/main.cpp`（Flex / 尺寸 / 对齐 / Grid / 换行）、`Samples/Position/main.cpp`（Relative / Absolute / Fixed / zIndex）、`Samples/Scroller/main.cpp`（滚动容器）。
 > **截图**：`Doc/Layout/`，按 `LNN-M.png` 命名（NN = 章号，M = 该章第几个示例），均为**按示例代码实机运行**后 1:1 截取。
-> **相关文档**：[Styles.md](Styles.md)（颜色 / 圆角 / 边框 / 文本 / 继承属性）、[Pitfalls.md](Pitfalls.md) §4（布局与样式）。
+> **相关文档**：[Styles.md](Styles.md)（颜色 / 圆角 / 边框 / 文本 / 继承属性）、[Input.md](Input.md)（输入控件）、[Event.md](Event.md)（事件绑定与命中）、[Pitfalls.md](Pitfalls.md) §4（布局与样式）。
 
 ---
 
@@ -86,8 +86,15 @@ dui::Panel* demo = cell->AddChild<dui::Panel>(dui::Style()
 
 两点注意：
 
-- **只有存在剩余空间时才生效**；子项总宽超出容器时退化为 `Start`（溢出，不压缩）。
+- **剩余空间按子项的最终尺寸算**：先 `grow` / `shrink` 定下子项尺寸，再把剩下的空间分掉。`Center` / `End` 在空间不足（剩余为负）时**照样生效** —— 内容仍居中 / 贴末端，并向另一侧溢出（同 CSS）；`SpaceBetween` 等在空间不足时退化为 `Start`。
 - `SpaceBetween` 等分布的是**剩余空间**，不是子项之间的固定间距 —— 子项自己的宽度仍按 §3 算。
+
+> **面板里的文字不会自动垂直居中**：`Column` 容器的主轴是垂直方向，默认 `Start` 就是"从上往下贴"，文字排在内容盒顶部；`AlignItems` 只管交叉轴（水平方向）。要垂直居中得显式写 `JustifyContent(dui::Justify::Center)`。
+>
+> 另外要给内容盒留够高度：内容盒高 = `Height` − 上下 `Padding`，而**文字的实际行高比 `FontSize` 大不少**（默认 `LineHeight = 1.2`，配上雅黑的行距系数，实际 ≈ `FontSize × 1.58`：13 DIP → **20.6 DIP**，14 DIP → **22.2 DIP**）。内容盒比行高还矮时 `Center` 仍会把文字**居中**，但文字会溢出内容盒（上下各溢出一点）—— 想让文字稳稳待在盒子里，就把内容盒留够一行行高（如 14 DIP 文字配 `Height 48 + Padding 10` → 内容盒 28 DIP > 22.2 DIP）。
+
+> **居中按"墨迹"算，不是按"行盒"算**：行盒（`FontSize × 1.58`）里上下留白本来就不对称 —— DWrite 的比例行距把基线压在 `ascent × 1.2`（雅黑 = 1.27 em），而汉字墨迹只到 0.83 em，于是**行盒居中时文字视觉偏下 1~2 DIP**。框架在**居中排布**（主轴 `justify-content: center` 或交叉轴 `align-items: center`）且文本是**单行**时，会实测整段墨迹范围、按墨迹中心落位，所以肉眼看到的是真居中。多行文本、顶部对齐（`Start`）的文本不做补偿 —— 保持行盒语义与基线一致。
+
 
 ### 2.3 交叉轴：`AlignItems` / `AlignSelf`
 
@@ -191,6 +198,8 @@ dui::Style s = dui::Style()
 第一行三个 320 DIP 的盒子超出容器宽度 → 一起收缩到放得下为止；第二行中间那个 `FlexShrink(0)` 不参与收缩，保持 320 DIP，把右边的邻居挤到容器外（默认 `overflow: visible`，所以看得见）。
 
 > **默认 `FlexShrink = 1`**：不写也会收缩。要"固定宽度"必须显式写 `FlexShrink(0.f)`。
+>
+> 纵向收缩时，**文本子项有内容下限**（同 CSS `min-height: auto`，取排版出来的首行行高）：不会被压到比一行还矮 —— 否则盒子被压扁、文字仍按整段绘制，文字就从自己的盒子里"漏"出来（见 §7.4）。显式写了 `Height` 的文本按你的意图走，不受此下限保护。
 
 ### 3.4 `FlexBasis`：主轴基准尺寸
 
@@ -405,7 +414,7 @@ dui::Panel* hidden = row->AddChild<dui::Panel>(dui::Style()
 
 ### 7.2 内容超高：放进 `Scroller`
 
-内容高度超过视口时，直接挂在根容器上会被 `FlexShrink` 压扁 —— 而文字**默认不裁剪**（`overflow: visible`），于是文字溢出到块外（见 [Pitfalls.md](Pitfalls.md) §4.1）。
+内容高度超过视口时，直接挂在根容器上会被 `FlexShrink` 压扁 —— 而内容**默认不裁剪**（`overflow: visible`），于是溢出到块外（见 [Pitfalls.md](Pitfalls.md) §4.1）。
 
 正确做法是放进 `dui::Scroller`：视口固定，内容在视口内滚动，滚动条由框架自绘。
 
@@ -431,6 +440,40 @@ sc->AddChild<dui::Text>(L"滚动内容第 1 行", dui::Style().Height(28.f));
 | `Set(颜色 / 圆角 / 阴影 / 边框 / 透明度 / transform / TextAlign / Overflow / 滚动条外观)` | **只重绘** |
 
 也就是说：改视觉外观不会触发重排（不会动几何），改布局属性一定会。
+
+### 7.4 内容溢出：父容器默认**不裁剪**
+
+`Overflow` 默认是 `Visible`（= CSS 默认），**父容器不会裁剪子元素**：子元素内容比父容器大时直接画到外面（压在边框上）。
+
+```cpp
+dui::Panel* box = root->AddChild<dui::Panel>(dui::Style()
+    .Height(60.f).Padding(12.f)
+    .Background(0xFFFFFFFF).BorderWidth(1.f).BorderColor(0xFFD0D7DE));
+box->AddChild<dui::Text>(L"很长很长的一段文字……", dui::Style().FontSize(14.f));
+// ↑ 内容盒只有 36 DIP，装不下一行 22.2 DIP 的字 + 第二行 → 文字压到下边框上
+```
+
+三种应对方式：
+
+| 场景 | 做法 |
+| --- | --- |
+| 内容可能变长（日志、状态栏、列表项） | 父容器加 `Overflow::Hidden`（裁到元素盒 = padding box）；或干脆不定高，让内容把容器撑开 |
+| 单行放不下、想要"…" | 文本 `TextOverflow::Ellipsis`（继承属性，单行截断加省略号） |
+| 内容确实要能滚 | 放进 `dui::Scroller`（见 §7.2） |
+
+```cpp
+dui::Panel* box = root->AddChild<dui::Panel>(dui::Style()
+    .Height(120.f).Padding(12.f)
+    .Overflow(dui::Overflow::Hidden)        // ← 裁到盒子，文字不再越界
+    .Background(0xFFFFFFFF).BorderWidth(1.f).BorderColor(0xFFD0D7DE));
+```
+
+**为什么默认不裁剪**：与 CSS / WPF / Qt 一致（都是 `visible`）；而且隐式裁剪会把"内容放不下"这类**布局错误静默吞掉** —— 看到"文字被切了一半"比看到"文字压在边框上"更难排查。真要裁剪时一行样式就能打开，不必改全局默认。
+
+> 顺带记住两个尺寸：
+>
+> - **行高 ≈ `FontSize × 1.58`**（默认 `LineHeight = 1.2` × 雅黑行距系数）：14 DIP → 22.2 DIP，13 DIP → 20.6 DIP。定高容器放一行字，内容盒高要 ≥ 行高（`Height` ≥ 行高 + 上下 `Padding`）。
+> - 定高容器里的**文本子项不会被压到比一行还矮**（框架给文本加了内容下限，同 CSS `min-height: auto`）；但**容器本身仍会被 `FlexShrink` 压扁**（默认 shrink = 1），内容放不下时整体溢出。此时要么给容器 `Overflow::Hidden`，要么把长内容放进 `dui::Scroller`（见 §7.2）。
 
 ---
 
@@ -478,6 +521,8 @@ sc->AddChild<dui::Text>(L"滚动内容第 1 行", dui::Style().Height(28.f));
 | 长度 | 支持 `%` / `auto` | **只有 float DIP** |
 | `min` / `max` 冲突 | `min` 胜 | **`max` 胜**（夹紧顺序 min → max） |
 | `flex-shrink` 基准 | shrink 因子 × flex base size | **`shrink × 当前尺寸`** 加权（近似） |
+| `min-height: auto`（内容下限） | 生效 | **文本类生效**（取首行行高；显式写了 `Height` 的不受限） |
+| `justify-content` 空间不足时 | `Center`/`End` 仍生效，向另一侧溢出 | **同 CSS**（`Space*` 退化为 `Start`） |
 | `flex-wrap` | 行列都支持 | **仅 `Row`** |
 | 换行时的 grow / shrink | 仍生效 | **不生效** |
 | `position: relative` 的 `right`/`bottom` | 生效 | **无效**（只认 `Left`/`Top` 偏移） |
@@ -494,5 +539,6 @@ sc->AddChild<dui::Text>(L"滚动内容第 1 行", dui::Style().Height(28.f));
 ## 10. 相关文档
 
 - [Styles.md](Styles.md)：颜色 / 圆角 / 边框 / 阴影 / 文本 / 继承属性 / 级联优先级。
+- [Event.md](Event.md)：事件绑定、命中顺序与状态位。
 - [Pitfalls.md](Pitfalls.md) §4.1：flex-shrink 压扁容器导致文字溢出块外。
 - [Arch/04-Layout.md](Arch/04-Layout.md)：布局模块的设计规格（度量、仲裁、属性表）。

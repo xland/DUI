@@ -94,6 +94,9 @@ display: Flex; flexDirection: Column; alignItems: Stretch   ← 默认值
 - **交叉轴 `Stretch` 与 `Start` 的区别（M5.52 起）**：`Stretch` 把子项拉到容器交叉轴长度（显式尺寸优先），`Start` 用自然尺寸贴起始边、不拉伸。此前 `Start` 与 `Stretch` 同行为（都拉伸），已按 CSS `flex-start` 语义分开。
 - **`alignSelf` 未设置 = 取父 `alignItems`**（同 CSS `auto`）：框架不在 `u` 槽里存"Auto"哨兵，而是用"链上没有该属性"表示未设。
 - **`flexShrink` 与 `overflow` 的交互（易踩）**：默认 `flexShrink = 1`，父容器**内容总高超出视口**时，子项会被压缩到小于自然尺寸（与 CSS 一致）。若子项内容是文字且 `overflow: visible`（默认），**文字不会跟着盒子缩** —— 排版仍按自然尺寸绘制，于是文字"溢出块外"。两种正确做法：① 父容器改用 `dui::Scroller`（视口固定、内部滚动，内容不被压扁）；② 给溢出块显式 `overflow: hidden`（绘制期裁到元素盒，即"截断"）。用 `minHeight` / `minWidth` 给内容块兜底也可避免被压扁。排查见 `Pitfalls.md §4.1`。
+- **文本的内容下限（CSS `min-height: auto` 的近似）**：纵向收缩时，**未显式指定 `height` 的文本子项不会被压到比一行行高更矮**（下限取排版出来的首行行高；多行文本仍可收缩到一行）。没有这条下限时，文本盒子被压扁而绘制仍按整段画 —— 文字就从自己的盒子里"漏"出来（`Pitfalls.md §4.1` 的现象之一）。显式写了 `height` 的文本按用户意图走，不受此下限保护。
+- **`justifyContent` 按最终尺寸分配剩余空间**：剩余空间在 `grow` / `shrink` **之后**计算（子项最终尺寸之和），不是自然尺寸之和 —— 否则 `grow` 之后再居中会把内容整体推出容器。`Center` / `End` 在剩余空间为负时**仍然生效**（内容居中 / 贴末端，向另一侧溢出，同 CSS）；`SpaceBetween` / `SpaceAround` / `SpaceEvenly` 在空间不足时退化为 `Start`。
+- **居中排布按墨迹中心落位（视觉居中）**：行盒里上下留白不对称（DWrite 比例行距把基线压在 `ascent × factor`，雅黑 = 1.27 em；汉字墨迹只到 0.83 em）—— 行盒居中时文字视觉偏下 1~2 DIP。布局在**居中排布**（主轴 `justify-content: center` / 交叉轴 `align-items: center`）且子项是**单行文本**时，按实测的整段墨迹范围取中心落位（`Text::InkCenterFromBoxTop`，数据来自 `text::Engine::GlyphRunInkBoundsDip`）。多行文本与 `Start` 排布不补偿，保持行盒语义与基线一致。
 
 ### 4.2 Grid（运行时已落地）
 

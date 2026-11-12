@@ -2,7 +2,7 @@
 
 > **配套工程**：`Samples/Style/main.cpp` 是本文示例的可运行版本，可直接编译运行对照。
 > **截图**：`Doc/Sytles/`，按 `NN-M.png` 命名（NN = 章号，M = 该章第几个示例），均为**按示例代码实机运行**后 1:1 截取。
-> **相关文档**：[Layout.md](Layout.md)（Flex / Grid / 尺寸 / 定位 / 速查）、[Pitfalls.md](Pitfalls.md) §4（布局与样式）。
+> **相关文档**：[Layout.md](Layout.md)（Flex / Grid / 尺寸 / 定位 / 速查）、[Input.md](Input.md)（输入控件）、[Event.md](Event.md)（事件绑定与状态位）、[Pitfalls.md](Pitfalls.md) §4（布局与样式）。
 
 ---
 

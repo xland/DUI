@@ -596,10 +596,32 @@ Paragraph* Engine::Shape(Paragraph* p, const ShapeInput& in) {
     p->size = {m.width, len > 0 ? m.height : in.fontSize * in.lineHeight};
     // 首行基线（相对排版原点）：align-items: baseline 对齐用
     p->baseline = 0.f;
+    // 首行行高：布局侧 "内容决定尺寸" 的最小高度下限（CSS min-height:auto）
+    p->firstLineHeight = 0.f;
+    UINT32 totalLines = 0;      // 段落总行数（单行才需要测墨迹）
     if (p->layout != nullptr && len > 0) {
         DWRITE_LINE_METRICS lm{};
-        UINT32 count = 0;
-        if (SUCCEEDED(p->layout->GetLineMetrics(&lm, 1, &count)) && count > 0) p->baseline = lm.baseline;
+        UINT32 lineCount = 0;
+        if (SUCCEEDED(p->layout->GetLineMetrics(&lm, 1, &lineCount)) && lineCount > 0) {
+            p->baseline = lm.baseline;
+            p->firstLineHeight = lm.height;
+        }
+        totalLines = lineCount;
+    }
+    if (p->firstLineHeight <= 0.f) p->firstLineHeight = p->size.y;   // 兜底：空段落 / 取不到行度量
+    // 单行段落：测墨迹中心（相对基线，向上为正）。
+    // 行盒居中 ≠ 视觉居中：DWrite 的 PROPORTIONAL 行距把 baseline 压在
+    // ascent×factor 处（雅黑 = 1.27 em），而汉字墨迹只到 0.83 em —— 行盒居中时
+    // 文字视觉偏下 1~2 DIP。布局据此在"主轴居中"时补偿（见 UI/Layout.cpp）。
+    // 只在排版重建时测（缓存命中会提前 return），且只测前 8 个不同字符。
+    p->inkValid = false;
+    p->inkCenter = 0.f;
+    if (p->layout != nullptr && len > 0 && totalLines == 1) {
+        float inkTop = 0.f, inkBottom = 0.f;
+        if (GlyphRunInkBoundsDip(p, inkTop, inkBottom)) {
+            p->inkCenter = (inkTop + inkBottom) * 0.5f;   // 相对基线，向上为正
+            p->inkValid = true;
+        }
     }
     return p;
 }
@@ -874,6 +896,56 @@ bool Engine::GlyphInkCenterDip(Paragraph* p, wchar_t ch, float& outCenterDip) {
         const float top = static_cast<float>(rc.top);
         const float h = static_cast<float>(rc.bottom - rc.top);
         outCenterDip = -(top + h * 0.5f) / 4.f;   // 中心（向上为正），换回 DIP
+    }
+    an->Release();
+    return ok;
+}
+
+// 整段墨迹上下缘（相对基线，向上为正）—— 视觉居中补偿用。
+// 逐字形量再取中点会失真（标点、拉丁小写各有自己的墨迹中心），整段一次分析
+// 取并集更贴近实际渲染出来的墨迹范围。
+bool Engine::GlyphRunInkBoundsDip(Paragraph* p, float& outTopDip, float& outBottomDip) {
+    outTopDip = 0.f;
+    outBottomDip = 0.f;
+    if (p == nullptr || p->layout == nullptr || !(p->fontSize > 0.f)) return false;
+
+    GlyphProbe probe;
+    p->layout->Draw(nullptr, &probe, 0.f, 0.f);
+    if (probe.face_ == nullptr) return false;
+
+    const uint32_t len = static_cast<uint32_t>(p->text.size());
+    if (len == 0) return false;
+    std::vector<UINT32> cps(len);
+    for (uint32_t i = 0; i < len; ++i) cps[i] = static_cast<UINT32>(p->text[i]);
+    std::vector<UINT16> indices(len);
+    if (FAILED(probe.face_->GetGlyphIndices(cps.data(), len, indices.data()))) return false;
+
+    // 以 4 倍字号测量：alpha 纹理范围像素对齐，放大后精度更高（1/4 单位）
+    const float emSize = p->fontSize * 4.f;
+    std::vector<FLOAT> advances(len, 0.f);   // 只取垂直墨迹范围，advance 不影响
+    DWRITE_GLYPH_RUN run{};
+    run.fontFace = probe.face_;
+    run.fontEmSize = emSize;
+    run.glyphCount = len;
+    run.glyphIndices = indices.data();
+    run.glyphAdvances = advances.data();
+    run.bidiLevel = 0;
+
+    IDWriteGlyphRunAnalysis* an = nullptr;
+    if (FAILED(factory2_->CreateGlyphRunAnalysis(&run, nullptr, DWRITE_RENDERING_MODE_NATURAL,
+                                                 DWRITE_MEASURING_MODE_NATURAL,
+                                                 DWRITE_GRID_FIT_MODE_DISABLED,
+                                                 DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+                                                 0.f, 0.f, &an))) {
+        return false;
+    }
+    RECT rc{};
+    // 范围相对基线、y 向下为正（字形在基线上方 → top/bottom 为负）
+    const bool ok = SUCCEEDED(an->GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1, &rc)) &&
+                    rc.bottom > rc.top;
+    if (ok) {
+        outTopDip = -static_cast<float>(rc.top) / 4.f;        // 向上为正
+        outBottomDip = -static_cast<float>(rc.bottom) / 4.f;
     }
     an->Release();
     return ok;

@@ -20,12 +20,30 @@ Vec2 Text::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) con
     const bool ellipsis =
         ctx.textOverflow == static_cast<uint32_t>(dui::TextOverflow::Ellipsis);
 
+    // 换行宽：显式 Width 优先（元素盒宽 − 内边距 − border-box 的边框），
+    // 否则用父给的内容可用宽。与 TextBox 多行的既有做法一致（TextBox.cpp:488）。
+    // 少了这一步，设了 Width 的 Text 仍按父可用宽排版 → 单行不折行 → 溢出元素盒。
+    float wrapW = maxW;
+    StyleValue wv;
+    if (TryResolve(this, Prop::Width, ctx, wv)) {
+        const Thickness pad = ValueAsThickness(ResolveProperty(this, Prop::Padding, ctx));
+        float bw = 0.f;
+        if (ResolveProperty(this, Prop::BoxSizing, ctx).u ==
+            static_cast<uint32_t>(dui::BoxSizing::BorderBox)) {
+            const Thickness bwv = ValueAsThickness(ResolveProperty(this, Prop::BorderWidth, ctx));
+            bw = bwv.left + bwv.right;
+        }
+        const float own = wv.f - pad.left - pad.right - bw;
+        // 父可用宽更小时以它为准（近似 flex-shrink 后的盒宽，避免超出父容器）
+        if (own > 0.f && own < wrapW) wrapW = own;
+    }
+
     text::ShapeInput in;
     in.text = text_.c_str();
     in.fontSize = ctx.fontSize;
     in.weight = dui::DWriteWeight(ResolveProperty(this, Prop::FontWeight, ctx).u);
     in.lineHeight = ctx.lineHeight;
-    in.maxWidth = maxW;
+    in.maxWidth = wrapW;
     in.family = ctx.family;
     in.letterSpacing = ctx.letterSpacing;   // 字距（继承属性）
     in.wordSpacing = ctx.wordSpacing;       // 词距（继承属性）
@@ -52,12 +70,12 @@ Vec2 Text::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) con
     const text::Paragraph* full = static_cast<text::Paragraph*>(fullPara_);
     if (full == nullptr) { truncated_ = false; return Vec2{}; }
     baseline_ = full->baseline;
-    if (full->size.x <= maxW) { truncated_ = false; return full->size; }   // 放得下
+    if (full->size.x <= wrapW) { truncated_ = false; return full->size; }   // 放得下
 
     // ② 省略号宽度 + "能放下的最长前缀"（簇边界安全）→ 截断文本再排一次
     const float ellipsisW =
         en.MeasureEllipsis(static_cast<text::Paragraph*>(ellipsisPara_), in);
-    const uint32_t fit = en.FitPrefixChars(full, maxW - ellipsisW);
+    const uint32_t fit = en.FitPrefixChars(full, wrapW - ellipsisW);
     String clipped = text_.substr(0, fit);
     clipped += L"…";
     in.text = clipped.c_str();

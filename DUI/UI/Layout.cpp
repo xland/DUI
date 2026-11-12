@@ -285,7 +285,16 @@ Vec2 MeasureElement(Element* e, const Vec2& avail, const StyleContext& parentCtx
     const Thickness bw = ElementBorderBox(e, ctx);   // border-box：边框占盒内空间
     const float ax = avail.x - pad.left - pad.right - mg.left - mg.right - bw.left - bw.right;
     const float ay = avail.y - pad.top - pad.bottom - mg.top - mg.bottom - bw.top - bw.bottom;
-    const Vec2 innerAvail{ax > 0.f ? ax : 0.f, ay > 0.f ? ay : 0.f};
+    // 显式 Width 时元素盒宽是确定的 → 内容区宽也确定（= 盒宽 − 内边距 − 边框），
+    // 传给 MeasureContent 的可用宽必须按它收窄：否则子内容（文本）会按"父给的宽"排版，
+    // 排出来的宽度大于内容区 → 溢出（Measure 阶段与 Arrange 阶段的 content 口径漂移）。
+    float contentW = ax > 0.f ? ax : 0.f;
+    StyleValue wv;
+    if (TryResolve(e, Prop::Width, ctx, wv)) {
+        const float own = wv.f - pad.left - pad.right - bw.left - bw.right;
+        if (own > 0.f && own < contentW) contentW = own;
+    }
+    const Vec2 innerAvail{contentW, ay > 0.f ? ay : 0.f};
     const Vec2 content = e->MeasureContent(ctx, innerAvail);
 
     // size 是元素盒（BorderBox，04-Layout §3）；measured_ 再向外扩出 margin 占位，

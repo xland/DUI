@@ -172,7 +172,7 @@ protected:
             .Padding(10.f)
             .Overflow(dui::Overflow::Hidden));
         clipBox->AddChild<dui::Text>(L"Overflow: Hidden —— 这行 18 号字超出了盒子，被裁掉了",
-                                     dui::Style().FontSize(18.f));
+                                     dui::Style().FontSize(18.f).Width(420.f));
 
         // ---- Margin：外边距盒参与父布局占位（不塌陷，与 gap 叠加） ------------
         NewCaption(root, L"Margin：外边距盒参与占位，不塌陷、与 gap 叠加");
@@ -291,13 +291,14 @@ protected:
             .Padding(10.f));
         dottedBox->AddChild<dui::Text>(L"点线");
         // border-box：边框占盒内空间 → 内容区 = 盒 − 边框 − 内边距
+        // （不写死高度：文本按内容区宽折行，行数变多时由内容撑开）
         dui::Panel* boxSizingBox = borderRow->AddChild<dui::Panel>(dui::Style()
-            .Width(150.f).Height(76.f)
+            .Width(150.f)
             .Background(0xFFFFFFFF).Color(0xFF222222)
             .BorderWidth(4.f).BorderColor(0xFF4472C4)
             .BoxSizing(dui::BoxSizing::BorderBox)
             .Padding(10.f));
-        boxSizingBox->AddChild<dui::Text>(L"border-box：边框占盒内\n内容区 = 盒 − 边 − 内距");
+        boxSizingBox->AddChild<dui::Text>(L"border-box：边框占盒内空间");
 
         // ---- 词距 / 文本省略号 -----------------------------------------------
         NewCaption(root, L"WordSpacing：词距（继承属性，只加宽词间空格）；TextOverflow: Ellipsis：单行超出显示省略号");
@@ -305,13 +306,13 @@ protected:
             .FlexDirection(dui::FlexDirection::Row)
             .Gap(12.f));
         dui::Panel* wordSpaceBox = textRow->AddChild<dui::Panel>(dui::Style()
-            .Width(280.f).Height(60.f)
+            .Width(280.f)
             .Background(0xFFFFFFFF).Color(0xFF222222)
             .WordSpacing(4.f)          // 继承属性 → 子 Text 生效
             .Padding(10.f));
-        wordSpaceBox->AddChild<dui::Text>(L"词距 4 DIP：词与词之间的空格变宽");
+        wordSpaceBox->AddChild<dui::Text>(L"词距 4 DIP：词间空格变宽");
         dui::Panel* ellipsisBox = textRow->AddChild<dui::Panel>(dui::Style()
-            .Width(280.f).Height(60.f)
+            .Width(280.f)
             .Background(0xFFFFFFFF).Color(0xFF222222)
             .Padding(10.f));
         ellipsisBox->AddChild<dui::Text>(

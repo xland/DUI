@@ -441,6 +441,49 @@ bool Engine::HasFamily(const wchar_t* family) const noexcept {
     return exists != FALSE;
 }
 
+// DWrite 的 SetCharacterSpacing 数值单位在不同 dwrite 运行时并不统一：有按
+// 1/1000 em 的，也有按 DIP 的（本机 Windows 10 1903 / dwrite 10.0.18362 实测为
+// DIP 语义：下发 1000 → 宽度正好多 1000 DIP，与字号无关）。硬编码换算会在另一种
+// 语义下差 1000 倍——字距/词距被放大后会把排版打散成多行（实测 4 DIP 词距被
+// 排成 3 行）。这里进程内标定一次：用两个参考字号下发 1000 单位看宽度增量，
+// 增量不随字号变 → 单位是 DIP；增量随字号线性（= 1 em）→ 单位是 1/1000 em。
+float Engine::SpacingDipPerUnit(float fontSize) {
+    if (!spacingReady_) {
+        spacingReady_ = true;
+        const float d100 = ProbeSpacingDelta(100.f);
+        const float d200 = ProbeSpacingDelta(200.f);
+        // 两个增量都测到且后者没有随字号翻倍 → DIP 语义
+        spacingIsDipUnit_ = (d100 > 0.f && d200 > 0.f && d200 < d100 * 1.5f);
+    }
+    return spacingIsDipUnit_ ? 1.f : fontSize / 1000.f;
+}
+
+// 标定探针："a b" 的空格下发 1000 单位间距，返回宽度增量（DIP）
+float Engine::ProbeSpacingDelta(float fontSize) {
+    IDWriteTextLayout* layout = nullptr;
+    const wchar_t* probe = L"a b";
+    if (FAILED(factory_->CreateTextLayout(probe, 3, baseFormat_, 1e6f, 0.f, &layout)) ||
+        layout == nullptr) {
+        return 0.f;
+    }
+    const DWRITE_TEXT_RANGE all{0, 3};
+    layout->SetFontSize(fontSize, all);
+    DWRITE_TEXT_METRICS m0{};
+    layout->GetMetrics(&m0);
+    float delta = 0.f;
+    IDWriteTextLayout1* l1 = nullptr;
+    if (SUCCEEDED(layout->QueryInterface(&l1))) {
+        const DWRITE_TEXT_RANGE sp{1, 1};
+        l1->SetCharacterSpacing(0.f, 1000.f, 0.f, sp);
+        l1->Release();
+        DWRITE_TEXT_METRICS m1{};
+        layout->GetMetrics(&m1);
+        delta = m1.width - m0.width;
+    }
+    layout->Release();
+    return delta;
+}
+
 Paragraph* Engine::Shape(Paragraph* p, const ShapeInput& in) {
     if (!Ready() || in.text == nullptr) return nullptr;
 
@@ -504,8 +547,7 @@ Paragraph* Engine::Shape(Paragraph* p, const ShapeInput& in) {
         if (in.italic) p->layout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, all);
         if (in.underline) p->layout->SetUnderline(TRUE, all);
         if (in.strike) p->layout->SetStrikethrough(TRUE, all);
-        // 字距（03-Style letterSpacing = DIP）：DWrite 只收 em 的千分比，
-        // 故按当前字号换算（DIP/em = fontSize）。CSS 的 letter-spacing 是
+        // 字距（03-Style letterSpacing = DIP）：CSS 的 letter-spacing 是
         // "字符之后加距" → 对应 DWrite 的 trailingSpacing。
         // 词距（wordSpacing）：DWrite 无此接口，但 trailingSpacing **可按区间下发** ——
         // 对"词分隔符"（半角/全角空格）区间额外加宽（同区间覆盖字距），
@@ -514,10 +556,11 @@ Paragraph* Engine::Shape(Paragraph* p, const ShapeInput& in) {
         if ((in.letterSpacing != 0.f || in.wordSpacing != 0.f) && in.fontSize > 0.f) {
             IDWriteTextLayout1* l1 = nullptr;
             if (SUCCEEDED(p->layout->QueryInterface(&l1))) {
-                const float ls = in.letterSpacing / in.fontSize * 1000.f;
+                const float perUnit = SpacingDipPerUnit(in.fontSize);   // 每 1 单位 = perUnit DIP
+                const float ls = in.letterSpacing / perUnit;
                 if (in.letterSpacing != 0.f) l1->SetCharacterSpacing(0.f, ls, 0.f, all);
                 if (in.wordSpacing != 0.f) {
-                    const float ws = (in.letterSpacing + in.wordSpacing) / in.fontSize * 1000.f;
+                    const float ws = (in.letterSpacing + in.wordSpacing) / perUnit;
                     // 连续分隔符合并成一段下发（DWrite 对重叠区间是"后者覆盖"）
                     uint32_t i = 0;
                     while (i < len) {

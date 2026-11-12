@@ -123,6 +123,11 @@ bullet 类字符（`•`）墨迹紧贴基线，按基线对齐绘制明显偏�
 ### 3.7 自定义字体只认 SFNT（M5.7）
 DirectWrite 仅支持 ttf/otf/ttc；woff/woff2 需先转 ttf。`Shape` 里族名命中自定义集合时要**同时** `SetFontCollection` + `SetFontFamilyName`（只设族名会被静默回退）。
 
+### 3.8 SetCharacterSpacing 的数值单位：运行时实测标定（M5.60）
+`IDWriteTextLayout1::SetCharacterSpacing` 的数值单位**各 dwrite 运行时不一致**：文档按 1/1000 em，但**本机 Windows 10 1903 / dwrite 10.0.18362 实测按 DIP** —— 下发 1000 → 文本宽度正好多 1000 DIP，且**与字号无关**（13 号与 26 号字实测增量相同）。按 em 硬编码换算（`dip / fontSize * 1000`）在本机会**放大 1000 倍** → 字距/词距被撑爆，文本被拆成多行（实测 4 DIP 词距排成 3 行，且行宽反而变窄：`GetMetrics().width` 变成"最后一行"的宽度）。
+**修法**：`TextEngine::SpacingDipPerUnit(fontSize)` 进程内标定一次 —— 用 100 / 200 DIP 两个参考字号各下发 1000 单位量宽度增量：增量不随字号变 → 单位是 DIP（1 单位 = 1 DIP）；随字号线性（= 1 em）→ 单位是 1/1000 em（1 单位 = fontSize/1000 DIP）。两种运行时都换算正确。
+**排查手法**：写独立探针程序直接调 dwrite（不依赖框架），对同一文本下发若干数值，比对 `GetMetrics().width` 增量与字号的关系 —— 比在框架里猜快得多；`GetCharacterSpacing` 能原样读回下发值，说明调用确实落在了该方法上。
+
 ---
 
 ## 4. 布局与样式

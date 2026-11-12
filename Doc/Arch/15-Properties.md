@@ -55,7 +55,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `fontStyle` | Enum（`dui::FontStyle`） | ✓ | Layout·Text | ✗ | Normal | 排版缓存键；运行时已接入：`Normal / Italic`（CSS `oblique` 归 Italic）；链式方法 `FontStyle()`；DWrite `SetFontStyle` |
 | `textAlign` | Enum | ✓ | **Paint** | ✗ | Start | 运行时已接入；`dui::TextAlign::Start/Center/End` + `Style::TextAlign()`；静态 `Text` 在内容盒内对齐（绘制期平移，不改 DWrite 排版，故标 Paint），`TextBox` 不参与；多行按最长行整体对齐 |
 | `lineHeight` | Length（倍数） | ✓ | Layout·Text | ✓ | 1.2 | |
-| `letterSpacing` | Length（DIP） | ✓ | Layout·Text | ✓ | 0 | **已落地**：继承属性；DWrite `IDWriteTextLayout1::SetCharacterSpacing`（只收 em 千分比，按当前字号换算；CSS 的"字符后加距"对应 `trailingSpacing`）；进排版缓存键；`Text` / `TextBox` / `RichEditor` 均生效 |
+| `letterSpacing` | Length（DIP） | ✓ | Layout·Text | ✓ | 0 | **已落地**：继承属性；DWrite `IDWriteTextLayout1::SetCharacterSpacing`（CSS 的"字符后加距"对应 `trailingSpacing`）；**数值单位由运行时实测标定**（不同 dwrite 运行时分别按 DIP 或 1/1000 em 解释，硬编码换算会差 1000 倍 → 排版被打散成多行，详见 11-Text §字距单位）；进排版缓存键；`Text` / `TextBox` / `RichEditor` 均生效 |
 | `wordSpacing` | Length（DIP） | ✓ | Layout·Text | ✓ | 0 | **已落地（M5.55）**：继承属性；**DWrite 无此接口，但 `SetCharacterSpacing` 可按区间下发** —— 对"词分隔符"（半角/全角空格）区间额外加宽（同区间覆盖字距），即 CSS `word-spacing` 语义；加宽后的宽度由 DWrite 自己算进 layout，**测量与折行天然一致**（无需字形级自绘）；进排版缓存键；`Text` / `TextBox` / `RichEditor` 均生效 |
 | `textDecoration` | 位标志（`dui::TextDecoration`） | ✗ | Layout·Text | ✗ | None | 运行时已接入：`Underline / LineThrough` 可组合（`operator\|`）；**不继承**（同 CSS，装饰线不传给子元素）；链式方法 `TextDecoration()`；DWrite `SetUnderline` / `SetStrikethrough`，线位与厚度由 DWrite 算出、走渲染器回调画线（不占行高） |
 | `textOverflow` | Enum（`dui::TextOverflow`） | ✓ | Layout | ✗ | Clip | **已落地（M5.56）**：继承属性（同 CSS）；`Clip` = 直接裁掉（默认，裁剪由 `overflow` 负责）、`Ellipsis` = 单行排版 + 超出时末尾加省略号 `…`（**只做单行**，不做多行 clamp）。实现：单行排版 → 二分求最长可容纳前缀 → 拼 `…` 再排一次（DWrite 的 layout 无 trimming API）；前缀长度按**字形簇边界**校正（不会切出半个汉字）。CSS 要求配合 `overflow: hidden`，本框架不强制 —— 截断后文本本身就不溢出 |
@@ -83,7 +83,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | --- | --- | --- | --- | --- | --- | --- |
 | `padding` | Thickness | ✗ | Layout | ✓ | 0 | |
 | `margin` | Thickness | ✗ | Layout | ✓ | 0 | 运行时已接入；`Style::Margin(float)` / `Margin(Thickness)`；作为**外边距盒**参与父布局占位，`Bounds()` 仍是元素盒；不做塌陷（04-Layout §3/§7-1） |
-| `width` / `height` | Length | ✗ | Layout | ✓ | Auto | measure 缓存键 |
+| `width` / `height` | Length | ✗ | Layout | ✓ | Auto | measure 缓存键；**`Text` 的换行宽（M5.59）**：显式 `width` 优先 —— 内容排版宽 = `width` − padding − (border-box 的边框)，再与父给的内容可用宽取小；否则用父给的内容可用宽。此前 `Text` 一律按父可用宽排版 → 设了 `width` 也不折行、文本溢出元素盒（`TextBox` 多行早有"显式 Width 优先"的同款做法） |
 | `minWidth` / `maxWidth` / `minHeight` / `maxHeight` | Length | ✗ | Layout | ✓ | Auto | **已落地**（M5.52 补齐高度向）：在测量期夹紧元素盒尺寸 |
 | `boxSizing` | Enum（`dui::BoxSizing`） | ✗ | Layout | ✗ | PaddingBox | **已落地（M5.58）**：`PaddingBox`（默认）= 宽高含内边距、不含边框 —— 边框是**内描边**，画在盒内缘但**不占布局空间**（与内容重叠，这是框架的既有语义，保持不变）；`BorderBox` = 宽高含内边距**与边框** → 边框占盒内空间，内容区 = 盒 − 内边距 − 边框（等价 CSS `box-sizing: border-box` 的效果）。命名与 CSS 的 `content-box` 不同：框架的 `width` 一贯是"含内边距的盒宽"，故默认档叫 `PaddingBox`；`BorderBox` 才是 CSS 那个"宽高含边框" |
 

@@ -15,5 +15,6 @@ msbuild DUI.slnx /p:Configuration=Release /p:Platform=x64
 ## 文档
 
 设计文档见 `Doc/Arch/`，从 [00-Overview.md](Doc/Arch/00-Overview.md) 进入；
+[样式使用指南](Doc/Styles.md) 与 [布局使用指南](Doc/Layout.md)；
 [系统对话框设计](Doc/Arch/17-Dialogs.md) 与 [对话框使用说明](Doc/Dialogs.md)；
 `Samples/` 下的示例同时充当"目标 API 的可执行规格"。

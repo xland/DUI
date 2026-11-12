@@ -373,7 +373,12 @@ private:
         }
     }
 
-    // 圆角矩形轮廓离散为折线（每角 8 段），供虚线沿中心线切段
+    // 圆角矩形轮廓离散为折线（每角 8 段），供虚线沿中心线切段。
+    // 屏幕坐标 y 向下：角圆心在框内，弧角从"一条边"转到"相邻边"
+    // （左上 180°→270°：左边→顶边；右上 270°→360°：顶边→右边；
+    //   右下 0°→90°：右边→底边；左下 90°→180°：底边→左边）。
+    // 路径首尾相接，四条直边由相邻弧的端点连线构成（顶/右/底），
+    // 左边由末尾补回首点闭合 —— 缺这一步左边整条不画。
     void AppendDashRoundRect(const Rect& r, const CornerRadii& rad, float widthDip,
                              uint32_t col, uint32_t style, float scale) {
         const float lim = std::min(r.w, r.h) * 0.5f;
@@ -384,26 +389,28 @@ private:
         std::vector<Vec2> path;
         path.reserve(4 * (kSteps + 1) + 8);
         const float PI_ = 3.14159265358979f;
-        // 左上：180° → 90°
+        const float HALF = PI_ * 0.5f;
+        // 左上：180° → 270°（左边 → 顶边）
         for (int i = 0; i <= kSteps; ++i) {
-            const float a = PI_ * (1.f - 0.5f * static_cast<float>(i) / kSteps);
+            const float a = PI_ + HALF * (static_cast<float>(i) / kSteps);
             path.push_back({x0 + tl + tl * std::cos(a), y0 + tl + tl * std::sin(a)});
         }
-        // 右上：90° → 0°
+        // 右上：270° → 360°（顶边 → 右边）
         for (int i = 0; i <= kSteps; ++i) {
-            const float a = PI_ * 0.5f * (1.f - static_cast<float>(i) / kSteps);
+            const float a = PI_ + HALF + HALF * (static_cast<float>(i) / kSteps);
             path.push_back({x1 - tr + tr * std::cos(a), y0 + tr + tr * std::sin(a)});
         }
-        // 右下：0° → −90°
+        // 右下：0° → 90°（右边 → 底边）
         for (int i = 0; i <= kSteps; ++i) {
-            const float a = -PI_ * 0.5f * (static_cast<float>(i) / kSteps);
+            const float a = HALF * (static_cast<float>(i) / kSteps);
             path.push_back({x1 - br + br * std::cos(a), y1 - br + br * std::sin(a)});
         }
-        // 左下：−90° → −180°
+        // 左下：90° → 180°（底边 → 左边）
         for (int i = 0; i <= kSteps; ++i) {
-            const float a = -PI_ * 0.5f * (1.f + static_cast<float>(i) / kSteps);
+            const float a = HALF + HALF * (static_cast<float>(i) / kSteps);
             path.push_back({x0 + bl + bl * std::cos(a), y1 - bl + bl * std::sin(a)});
         }
+        path.push_back(path.front());   // 闭合：补左边
         AppendDashPolyline(path.data(), path.size(), style, widthDip, col, scale);
     }
 

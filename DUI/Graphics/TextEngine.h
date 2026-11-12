@@ -48,8 +48,8 @@ struct ShapeInput {
     float    maxWidth = 0.f;         // 换行宽（DIP）
     bool     noWrap = false;        // true = 不折行（text-overflow: ellipsis 的单行排版）
     const wchar_t* family = nullptr; // nullptr / 空串 → 引擎默认（微软雅黑）
-    float    letterSpacing = 0.f;    // 字距（DIP；引擎按 em 千分比下发）
-    float    wordSpacing = 0.f;      // 词距（DIP；只加宽词间空格，按 em 千分比下发）
+    float    letterSpacing = 0.f;    // 字距（DIP；引擎按运行时单位下发）
+    float    wordSpacing = 0.f;      // 词距（DIP；只加宽词间空格）
     // 段落默认的字体样式 / 装饰线（单样式路径用；富文本由 run 覆盖）
     bool     italic = false;
     bool     underline = false;
@@ -162,6 +162,11 @@ private:
     // 逐 run 施加覆盖样式（字号/字重/族名/斜体/下划线/删除线/颜色）
     void ApplyRuns(IDWriteTextLayout* layout, const ShapeInput& in, uint32_t textLen);
 
+    // DWrite SetCharacterSpacing 的数值单位（每 1 个单位等于多少 DIP），进程内标定一次
+    float SpacingDipPerUnit(float fontSize);
+    // 标定探针：给定字号下发 1000 单位间距，返回宽度增量（DIP）
+    float ProbeSpacingDelta(float fontSize);
+
     // 装入一个字体文件（DWrite 字体文件 → 字体面引用 → 单字体集合 → 族名）
     bool AddCustomFont(IDWriteFactory3* f3, IDWriteFontFile* file, String& familyOut);
     // 族名 → 已装入字体的集合（未装入返回 nullptr）
@@ -178,6 +183,8 @@ private:
     IDWriteFontCollection* fonts_ = nullptr;
     IDWriteTextFormat*     baseFormat_ = nullptr;   // 家族/风格基座；字号字重由 layout 覆盖
     IDWriteTextFormat*     noWrapFormat_ = nullptr; // 同上，但**不折行**（ellipsis 单行排版用）
+    bool                   spacingReady_ = false;      // 间距单位是否已标定
+    bool                   spacingIsDipUnit_ = false;  // true = 单位是 DIP；false = 1/1000 em
     // 一个已装入的自定义字体（文件或内存）：字体面引用 + 只含它的字体集合 +
     // 族名。排版时按族名挑对应集合挂到 layout 上——layout 默认挂在系统集合，
     // 不换集合则自定义族名命中不到 → DWrite 静默回退默认字体。

@@ -407,5 +407,8 @@ panel->OnPointerUp([this](dui::PointerEvent& ev) {
 - [Styles.md](Styles.md) —— 状态变体（`When`）、悬停 / 按下 / 焦点的外观写法
 - [Layout.md](Layout.md) —— 元素树、命中顺序、`Absolute` / `Fixed` 的命中规则
 - [Input.md](Input.md) —— 输入控件的语义事件（`OnTextChanged` / `OnSubmit`）与键盘处理
+- [Menu.md](Menu.md) —— 右键弹出菜单（`dui::Menu`）：§4 触发时机、§5 复选状态由业务保存
+- [Async.md](Async.md) —— 在事件处理器里发起异步：协程 `Task`、切线程、元素生命周期令牌
+- [Window.md](Window.md) —— 自定义窗口边框与异形窗口：无边框窗口、`OnNcHitTest` 命中区、标题栏按钮
 - [Arch/06-Events.md](Arch/06-Events.md) —— 事件系统架构稿（设计意图，含尚未实现的规划）
  

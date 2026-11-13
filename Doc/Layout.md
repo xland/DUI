@@ -540,5 +540,6 @@ dui::Panel* box = root->AddChild<dui::Panel>(dui::Style()
 
 - [Styles.md](Styles.md)：颜色 / 圆角 / 边框 / 阴影 / 文本 / 继承属性 / 级联优先级。
 - [Event.md](Event.md)：事件绑定、命中顺序与状态位。
+- [Window.md](Window.md)：自绘标题栏 / 异形窗口（标题栏与内容区的 Flex 排布）。
 - [Pitfalls.md](Pitfalls.md) §4.1：flex-shrink 压扁容器导致文字溢出块外。
 - [Arch/04-Layout.md](Arch/04-Layout.md)：布局模块的设计规格（度量、仲裁、属性表）。

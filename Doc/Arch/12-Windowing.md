@@ -3,6 +3,8 @@
 > 状态：草案 v0.1 — **DPI 设计已定案**（§9 结论记录）；窗口形态的其余细节（多窗口、全屏、DWM 集成）待后续补充。
 > 需求来源：框架要支持高分屏（150% / 200%），并且要在跨显示器拖动时跟随目标显示器的 DPI 切换，切换过程不能糊、不能闪、不能无谓重排。
 > 相关：ADR-014（DPI 与缩放）、ADR-009（最低 Windows 版本）、ADR-003（字形光栅方案）、[01-Layering.md](./01-Layering.md)（Dpi / HighWindow 模块）、[04-Layout.md](./04-Layout.md)、[11-Text.md](./11-Text.md)、[15-Properties.md](./15-Properties.md)。
+>
+> **面向使用者的完整指南见 [Window.md](../Window.md)**（自定义边框、自绘标题栏、异形窗口）。
 
 ## 1. 需求
 

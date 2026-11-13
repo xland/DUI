@@ -625,8 +625,14 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
                 const float inkC = t->InkCenterFromBoxTop();   // 相对排版原点（内容盒顶）
                 const Thickness cpad = ElementPadding(c, ctx);
                 const Thickness cbw  = ElementBorderBox(c, ctx);
-                const float origin = content.y + content.h * 0.5f - inkC;   // 排版原点 y
-                slotY = origin - cpad.top - cbw.top + off.y;                  // 元素盒顶
+                const Thickness cmg  = ElementMargin(c, ctx);
+                // 元素盒高（不含 margin）：Column 取主轴尺寸，Row 取交叉轴尺寸
+                const float boxH = (row ? cross : main) - cmg.top - cmg.bottom;
+                // 墨迹中心移到**自己的盒中心** → 元素盒顶下移 delta
+                // （基准必须是子项自己的盒，不是容器中心：同一容器里的多个文本
+                //   各有自己的行盒，按容器中心落位会把它们全部叠到一处）
+                const float delta = boxH * 0.5f - (cpad.top + cbw.top + inkC);
+                slotY += delta;
             }
         }
         const Rect childSlot = row ? Rect{pos + off.x, slotY, main, cross}

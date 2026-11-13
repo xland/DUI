@@ -1,6 +1,7 @@
 # 对话框使用说明（调用方式）
 
 > 状态：**v1.0 — 已实现**（2026-11-07），Debug/Release x64 编译通过。人工实测项见设计文档 §7 D4。
+> 面向使用者的完整指南见 [Dialog.md](../Dialog.md)（含截图与常见情形对照）。
 > 设计、分层、取舍与验收见 [Arch/17-Dialogs.md](Arch/17-Dialogs.md)；可运行示例 `Samples/Dialog/main.cpp`
 > （另含 `MacroCompat.cpp`：MessageBox 同名宏两种包含顺序的编译期守卫）。
 
@@ -150,6 +151,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 | `Confirm(text, title = nullptr)` | `const wchar_t*` | `bool` | 等价 `Question` 图标 + `YesNo`，`Yes` → `true` |
 
 > `Window::MessageBoxW(...)` 是框架为 Win32 同名宏准备的兼容别名，**业务不要主动调用**，见 §4 第 8 条。
+
+### 3.0 自由函数（自带 owner）
+
+成员方法只是薄封装（取 owner 句柄 + 维护弹窗深度计数）；跨窗口调用或 owner 不是 `Window` 时，直接用自由函数。`owner` 传 `HWND`（`void*`），传 `nullptr` 直接得到失败语义的结果。
+
+| 函数 | 返回 | 等价成员方法 |
+| --- | --- | --- |
+| `dui::PickFiles(void* owner, const OpenFileOptions&)` | `DialogResult<std::vector<String>>` | `OpenFile` |
+| `dui::SaveFile(void* owner, const SaveFileOptions&)` | `DialogResult<String>` | `SaveFile` |
+| `dui::PickFolder(void* owner, const OpenFolderOptions&)` | `DialogResult<String>` | `OpenFolder` |
+| `dui::ShowMessageBox(void* owner, const MessageOptions&)` | `MessageResult` | `MessageBox` |
+
+> 两处差异：① 自由函数**不**做"弹窗深度计数"（宿主失活不清编辑控件焦点）；② `ShowMessageBox` 的空 `title` **不回退**到窗口标题（成员方法会回退到窗口标题 → 再回退到 `L"提示"`）。
 
 ### 3.1 选项字段
 

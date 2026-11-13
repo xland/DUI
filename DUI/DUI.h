@@ -54,4 +54,10 @@ String LoadFontFamily(const wchar_t* fontFilePath);
 //   GlobalUnlock(hglob);
 String LoadFontFamilyFromMemory(const void* fontData, size_t fontDataSize);
 
+// 本机是否存在该字体族：系统已安装的族，或经 LoadFontFamily /
+// LoadFontFamilyFromMemory 装入的自定义族。空串 / nullptr → false。
+// 用途：族名拼错时 DWrite 会静默回退默认字体（不报错），需要显式降级时用它判定；
+//       CSS font-family 列表取"第一个可用族名"也走同一判定。
+bool HasFontFamily(const wchar_t* family);
+
 }  // namespace dui

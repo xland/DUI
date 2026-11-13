@@ -16,6 +16,9 @@
 - [菜单使用指南](Doc/Menu.md) —— 系统原生弹出菜单：右键菜单、子菜单、复选项。
 - [异步使用指南](Doc/Async.md) —— 协程异步：后台线程干活，切回 UI 线程刷新界面。
 - [窗口外观指南](Doc/Window.md) —— 自定义窗口边框与异形窗口：自绘标题栏、拖动缩放、圆形窗口。
+- [字体与图标指南](Doc/Font.md) —— 系统字体、自定义字体文件、exe 内置字体、字体图标、内置矢量图标。
+- [动画指南](Doc/Animation.md) —— 命令式属性动画：可动画属性、缓动、级联优先级、常见配方。
+- [自定义控件指南](Doc/CustomCtrl.md) —— 派生 `Element`、重写 `OnPaint` 自绘、`Handle*` 钩子重写点击。
 
 ## 构建
 
@@ -37,5 +40,6 @@
   - `Dialog`
   - `CircleWindow`
   - `CustomFrame`
+  - `CustomFont`
   - `Menu`
   - `Async`

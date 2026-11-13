@@ -4,6 +4,8 @@
 > 需求来源：① 文字渲染、排版能力**尽可能丰富**；② 框架将来要提供**富文本编辑器控件**（类似 Web 的所见即所得编辑器）。
 > 相关：ADR-003（字形光栅化）、ADR-004（排版基座，本文确认并细化）、[06-Events.md](./06-Events.md)（`TextInput / Composition` 事件）、[04-Layout.md](./04-Layout.md) §4.4（内联混排分工）。
 > 落地位置（2026-11-11 目录收敛，ADR-028）：L1 在 `DUI/Graphics/`（`TextEngine.*` / `GlyphAtlas.*`），L2 在 `DUI/UI/`（`RichDoc*` / `CssValue.*`），L3 在 `DUI/UI/RichEditor.*`。
+>
+> **面向使用者的完整指南见 [Font.md](../Font.md)**（系统字体、自定义字体文件、exe 内置字体、字体图标、内置矢量图标）。
 
 ## 1. 需求
 

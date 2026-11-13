@@ -943,10 +943,15 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
                 ClampRadii(rr, w, h);
                 const float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
                 const float hw = w * 0.5f, hh = h * 0.5f;
+                // quad 外扩 1 物理像素（与 Shape 批 PushShapeQuad 同规则）：容下 SDF
+                // 过渡带的外半侧。不外扩时 quad 边界与形状边界重合 → 外半侧被裁掉，
+                // 实际只有 0.5px 过渡：轴对齐边无感（外侧像素中心恰在 d=+0.5，cov=0），
+                // 但旋转 / 斜边只剩半条过渡带 → 明显台阶。SDF 参数（hw/hh/半径）不变。
+                const float qhw = hw + 1.f, qhh = hh + 1.f;
                 Vertex* v = reinterpret_cast<Vertex*>(out);
                 for (int i = 0; i < 4; ++i) {
-                    const Vec2 q = Xf(cx + kSx[i] * hw, cy + kSy[i] * hh);
-                    v[i] = Vertex{q.x, q.y, kSx[i] * hw, kSy[i] * hh, hw, hh,
+                    const Vec2 q = Xf(cx + kSx[i] * qhw, cy + kSy[i] * qhh);
+                    v[i] = Vertex{q.x, q.y, kSx[i] * qhw, kSy[i] * qhh, hw, hh,
                                   rr[0], rr[1], rr[2], rr[3], c.color};
                 }
             } else if (c.op == static_cast<uint32_t>(PaintOp::Glyph)) {

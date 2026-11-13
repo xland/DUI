@@ -3,7 +3,7 @@
 > **配套工程**：`Samples/Event/main.cpp`（9 个可交互演示：点击冒泡 / handled / Enter-Leave / Down-Up / 指针坐标 / 滚轮 / 键盘 / 状态变体 / 隧道）。
 > **本文示例**：`Build/Temp/doc-event/`（`EV1-1` … `EV6-1`，每个都是可独立编译的小程序，**截图即由它们生成**）。
 > **截图**：`Doc/Event/`，按 `EVN-M.png` 命名（NN = 章号，M = 该章第几个示例），均为**示例代码实机运行**后 1:1 截取。
-> **相关文档**：[Styles.md](Styles.md)（状态变体与外观）、[Layout.md](Layout.md)（命中与层级）、[Input.md](Input.md)（输入控件）、[Arch/06-Events.md](Arch/06-Events.md)（架构稿）。
+> **相关文档**：[Styles.md](Styles.md)（状态变体与外观）、[Layout.md](Layout.md)（命中与层级）、[Input.md](Input.md)（输入控件）、[CustomCtrl.md](CustomCtrl.md)（自定义控件里重写点击与自绘）、[Arch/06-Events.md](Arch/06-Events.md)（架构稿）。
 
 示例的做法：启动后用 `PostMessage` **合成真实的 Win32 输入消息**（`WM_MOUSEMOVE` / `WM_LBUTTONDOWN` / `WM_MOUSEWHEEL` / `WM_CHAR` …）投给自己的窗口 —— 消息完整走一遍「窗口过程 → 命中测试 → 路由 → 处理器」，所以截图里的日志与状态都是框架真实处理出来的结果。
 
@@ -410,5 +410,6 @@ panel->OnPointerUp([this](dui::PointerEvent& ev) {
 - [Menu.md](Menu.md) —— 右键弹出菜单（`dui::Menu`）：§4 触发时机、§5 复选状态由业务保存
 - [Async.md](Async.md) —— 在事件处理器里发起异步：协程 `Task`、切线程、元素生命周期令牌
 - [Window.md](Window.md) —— 自定义窗口边框与异形窗口：无边框窗口、`OnNcHitTest` 命中区、标题栏按钮
+- [CustomCtrl.md](CustomCtrl.md) —— 自定义控件：在派生类里重写 `Handle*` 钩子接管按下 / 拖拽 / 键盘
 - [Arch/06-Events.md](Arch/06-Events.md) —— 事件系统架构稿（设计意图，含尚未实现的规划）
  

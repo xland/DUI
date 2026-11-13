@@ -1,6 +1,7 @@
 # 动画系统（命令式）
 
 > 状态：v0.2 — 已落地。命令式属性动画 + 统一 ticker 已实现，契约以本文为准。
+> 面向使用者的用法指南见 [../Animation.md](../Animation.md)。
 > 相关：[03-Style.md](./03-Style.md)（级联第 1 层）、[16-Image.md](./16-Image.md)（GIF 帧动画）、[06-Events.md](./06-Events.md)（光标闪烁）、[15-Properties.md](./15-Properties.md)（属性主表）、ADR-013（按需呈现）、ADR-020。
 
 ## 1. 决策：只做命令式动画
@@ -66,6 +67,7 @@ card->Animate(dui::CornerRadius, dui::CornerRadii{8.f, 8.f, 0.f, 0.f},
 | `dui::Padding` | `dui::Thickness` | `Prop::Padding` | 四通道分别线性插值（`kFlagLayout`，每帧重排） |
 | `dui::Margin` | `dui::Thickness` | `Prop::Margin` | 同上 |
 | `dui::CornerRadius` | `dui::CornerRadii` | `Prop::CornerRadius` | 四通道分别线性插值（`kFlagPaint`，只重绘） |
+| `dui::BorderWidth` | `dui::Thickness` | `Prop::BorderWidth` | 四通道分别线性插值（`kFlagPaint`，只重绘；边框是内描边、不占盒） |
 
 - `Color` 约定 `0xAARRGGBB`（[Core/Core.h](../DUI/Core/Core.h)），逐通道在 sRGB/gamma 空间插值，与 ADR-013 的混合空间一致。
 - 前四个 transform 标签与 `Opacity` 一样是 `kFlagPaint`：动画每帧只重收集顶点，不重排；`Bounds()` 与布局结果不变（[10-Rendering.md](./10-Rendering.md) §6.4）。

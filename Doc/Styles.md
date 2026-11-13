@@ -594,3 +594,12 @@ dui::Panel* invisible = row->AddChild<dui::Panel>(dui::Style()
 | `element->When(state, style)` | 状态变体（如 `State::Hover`） | **最高** |
 
 > 级联优先级：**状态变体 > 本地 `Set` > 元素 Style**；继承属性在元素自身没写时才回退到父级计算值。
+
+---
+
+## 11. 相关文档
+
+- [Font.md](Font.md) —— 字体与图标：字体族名、字重、字体图标、内置矢量图标。
+- [Layout.md](Layout.md) —— 盒模型与 Flex 布局（`Padding` / `Gap` / `FlexGrow` 的排布效果）。
+- [Animation.md](Animation.md) —— 命令式属性动画（`Element::Animate`）：可动画属性、缓动、级联优先级。
+- [CustomCtrl.md](CustomCtrl.md) —— 自定义控件：派生 `Element`、`OnPaint` 自绘、`Handle*` 钩子重写点击。

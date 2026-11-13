@@ -204,6 +204,7 @@ float alpha = 1.0f - smoothstep(-w, w, d);
 - **收集**：`App/Frame.cpp` 的 `Collector` 逐元素压栈 \(T_{\text{parent}}\cdot T_{\text{child}}\)，以 **DIP 空间**矩阵下传给 `Painter::SetTransform()`（缩放共轭推迟到发射期）；恒等变换不压栈，未使用 transform 的元素零额外开销。
 - **发射**：`Device::Render` 遍历指令时按 `Painter::StateTransform(state, scale)` 推导有效矩阵 \(E=\text{Translate}(o_{px})\cdot T_{px}\cdot\text{Translate}(-o_{px})\)，其中 \(T_{px}\) 与滚动原点无关，只有 `E` 依赖原点 —— 嵌套 `Scroller` 切换原点时无需重算祖先变换链。`FillRoundedRect` / `AddGlyphQuad` / `AddImageQuad` / `PushShapeQuad` 四类 `PaintOp` 的顶点生成都过 `E`；变换烘进顶点，故同一 `Painter` 可承载多个不同变换的元素，无需拆分绘制单元。
 - **SDF 不变**：`Vertex.lx/ly`、`ShapeVertex` 的局部坐标与形状参数、字形 `uv` 全部保持原值。旋转是等距变换，片元在局部空间求出的距离场梯度模长仍为 1 → 圆角 / 描边 / 1px AA 过渡带都不失真；等比缩放只让过渡带变成 `s` px（略糊），这是不做非等比缩放的硬理由。**着色器、顶点格式、输入布局、VB/IB 编排全部未改**。
+- **过渡带必须落在 quad 内**：SDF 的 1px 过渡带跨 `d ∈ (−0.5, +0.5)`，quad 的边界若与形状边界重合，外半侧被光栅化丢掉 → 实际只剩 0.5px 过渡。轴对齐边无感（边界取整到像素网格，外侧像素中心恰在 `d=+0.5` → `cov=0`），**斜边 / 旋转边则会明显呈台阶**。故 Rect 批与 Shape 批的 quad 都**外扩 1 物理像素**（只放大采样范围，SDF 参数不变），坑见 [Pitfalls.md](./Pitfalls.md) §2.12。
 - **命中测试**：`UI/Event.cpp` 沿祖先链逐层施加 `T_e⁻¹`，等价于整体 \(T^{-1}\)；`Scroller` 的滚动条 / 视口 / `+off` 换算都用逆变换后的局部坐标。`Scale → 0` 时矩阵不可逆，该元素视为不可命中。
 - **裁剪**：scissor 天然轴对齐。`BeginClip` 取变换后内容矩形四个角点的 AABB 再与外层裁剪求交；滚动容器视口保持窗口空间矩形、不随容器 transform 旋转。
 - **边界**：字形按 ADR-006 在离散尺度光栅化，连续 `Scale` 动画下是被线性拉伸的图集位图（放大略糊）；`PointerEvent::pos` 仍是客户区绝对 DIP，旋转的交互文本框光标/选区定位列为后续项；平移不会扩展 `Scroller` 的可滚动范围。**带 transform 的 `Scroller` 且滚动偏移非零时**，内容命中测试仍沿用原有的 `+off` 平移换算（未把滚动纳入变换链），视口 scissor 也保持窗口空间轴对齐，属已知限制。

@@ -1091,4 +1091,8 @@ String LoadFontFamilyFromMemory(const void* fontData, size_t fontDataSize) {
     return family;
 }
 
+bool HasFontFamily(const wchar_t* family) {
+    return text::Engine::Get().HasFamily(family);
+}
+
 }  // namespace dui

@@ -1,7 +1,7 @@
 # DUI 开发任务清单（Todo）
 
 > 最后更新：2026-11-17。
-> 进度：**M1–M5.66 全部完成**（窗口/样式/布局/绘制/异步/文本/DPI/动画/Canvas/Scroller/
+> 进度：**M1–M5.67 全部完成**（窗口/样式/布局/绘制/异步/文本/DPI/动画/Canvas/Scroller/
 > TextBox/Image/Gif/无边框窗口/Grid/Position/zIndex/有序指令显示列表/窗口热区声明化/文本选择…）；
 > **M6 主体完成**（命令式属性动画 + Paint 级 2D transform），仅剩收尾（见 §2）。
 > 历史里程碑已归档为索引（§5）；实现踩坑与结论在 `Doc/Pitfalls.md`；
@@ -197,6 +197,7 @@ cd /d <项目根>
 | M5.65 | 11-17 | **点空白处 / 切走窗口 → 取消选中状态**（用户提出，浏览器语义）：现状是"半截实现" —— 失焦清选区本来就有（`TextBox::OnFocusChanged(false)` → `Deselect()`；M5.63 的 `dui::Text` 同样），窗口失活也会清焦点（`WM_ACTIVATE(WA_INACTIVE)` → `App` 主循环 `SetFocus(nullptr)`），但**「点窗口空白处」这条路根本不会让控件失焦**：`App.cpp` 的指针按下只在**命中可聚焦元素**时 `SetFocus`，没命中就什么都不做 → 选区留在一个"看起来仍聚焦着"的控件上（光标还在闪），用户已不打算继续输入；且看不见的选区会让后续 Delete/输入替换掉用户看不见的内容。修法：`App/App.cpp` 指针按下分支改为 `if (f = FindFocusable(hit)) SetFocus(f); else SetFocus(nullptr);`（滚动条拖拽分支提前 return，不受影响）。实测（150% DPI，1:1 截图）：① 输入框拖选 → 点窗口空白 → 选区消失、框恢复非聚焦态；② 输入框拖选 → 窗口失活 → 选区消失；③ `user-select` 的 `dui::Text` 拖选 → 点空白 → 选区消失。文档：`Doc/Arch/06-Events.md §6`、`Doc/Event.md §5.1` |
 
 | M5.66 | 11-17 | **`TextBox` / `TextArea` 拖选接上指针捕获**（用户指出：M5.63 的 `user-select` 文本有、`RichEditor` 有，唯独两个输入框没有）：根因 —— `TextBox::HandlePointerDown` 只置 `dragging_ = true`，**不取指针捕获** → 指针拖出控件边界后 `Move` 事件被命中测试派给别的元素，输入框再也收不到，选区在半路冻结。修法（与 `RichEditor` 同款）：按下时 `SetCapture()`、抬起时 `ReleaseCapture()`；捕获期间框架把 `Move/Up` 直达捕获者，坐标经 `ClientToLocal` 换算到**同一单元空间**（与 `HitTest` 的 outLocal 同口径）→ 命中测试照常。附带两项：① `HandlePointerMove` 补 `EnsureCaretVisible()` → 拖到边界外时**光标自动滚进视野**（多行纵向滚、单行横向滚，原来拖选时根本不会滚）；② 捕获期间框架**不合成 Click**（`App/App.cpp`：抬起即释放捕获时跳过）→ 未真正拖动（位移 ≤ 4 DIP）且仍在框内时由控件**补一次 Click**，保持"点输入框 = 点元素"的原语义。实测（150% DPI，1:1 截图对照）：多行框从第一行**一步跳到框外**——旧行为选区为空、新行为选区一路延伸到末行且视图跟随滚动；单行框从文字末尾拖出框左侧 → 整段被选中。文档：`Doc/Input.md §1.1`（新增"拖选可拖出控件"）、`§7`（删掉"拖选不能拖出控件边界"这条限制）、`Doc/Arch/06-Events.md §5`（内置控件的捕获用法） |
+| M5.67 | 11-17 | **父元素 `Opacity` 自动控制子元素与文字的透明度**（用户提出，CSS `opacity` 语义）：此前 `Opacity` 只乘到元素自身的**背景填充与边框 alpha**（`App/Frame.cpp` 的 `DrawBackground` / `DrawBorder`），文字与整棵子树不受影响 —— 是绘制层的实现边界，不是设计意图（`Doc/Styles.md §8.1` 早就写成"整棵子树半透明"，实现与文档不符）。修法（**绘制层加一个累计因子，不走离屏层**）：① `Painter` 新增 `SetOpacity` / `Opacity` 与 `opacity_` 字段（`Graphics/Graphics.h`），**所有带色指令统一预乘**该因子 —— `AddGlyphQuad`（文字）、`AddImageQuad`（图像）、`PushShapeQuad`（形状 / 边框 / 阴影）、`FillRoundedRect`（背景与填充）；`Reset()` 复位为 1。② `Collector` 沿树累乘传递：元素因子 = 父级因子 × 自身 `Opacity`（`Prop::Opacity`，非继承、默认 1），**自身与祖先共用同一因子**（背景 / 边框 / 阴影 / 文字 / 子元素一起淡）。③ 换 `Painter` 的三处（内容裁剪子单元、滚动容器内容单元与滚动条、窗口级 Fixed 层）把因子带过去；Fixed 层在记录点快照祖先因子（`FixedItem` 增 `alpha`）。④ `Image::OnPaint` 去掉自身 `Opacity` 解析（否则与累计因子**重复相乘**），改由绘制层统一处理；`Icon` / `TextBox` / `RichEditor` / `Canvas` 均走 `Painter` 带色接口 → 自动继承。⑤ Absolute 提升到 CB 处的元素沿**真实父链**累乘中间祖先的因子（与样式继承 `ContextOf` 同口径）。**语义变更（破坏性）**：父级淡出现在会淡出文字与子树；与 CSS `opacity` 一致。边界：逐元素预乘而非整组合成，父级内两个半透明子元素重叠时叠加顺序与 CSS 略有差异（视觉几乎不可辨）。文档：`Doc/Animation.md` §2/§6.1/§8.1、`Doc/Arch/15-Properties.md`（opacity / shadow 行）、`Doc/Arch/16-Image.md`、`Doc/Arch/10-Rendering.md`（离屏层说明）、`Doc/Styles.md` §8.1、`Doc/CustomCtrl.md` §3.2。Debug + Release 编译零警告 |
 
 ---
 

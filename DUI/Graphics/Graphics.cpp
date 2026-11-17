@@ -328,6 +328,7 @@ void Painter::Reset() {
     curState_ = 0;
     originDipX_ = 0.f;
     originDipY_ = 0.f;
+    opacity_ = 1.f;
 }
 
 // 状态槽：与当前槽完全相同则复用，避免每元素一槽。
@@ -356,6 +357,13 @@ void Painter::SetTransform(const Transform2D& dipXform) {
     UseState(next);
 }
 
+// 累计不透明度：夹到 [0,1]，此后所有带色指令的 alpha 都乘它
+void Painter::SetOpacity(float opacity) {
+    if (opacity < 0.f) opacity = 0.f;
+    if (opacity > 1.f) opacity = 1.f;
+    opacity_ = opacity;
+}
+
 PaintCommand& Painter::NewCommand(PaintOp op, uint32_t resource, uint32_t packed) {
     commands_.push_back(PaintCommand{static_cast<uint32_t>(op), curState_, resource, packed, {}});
     return commands_.back();
@@ -373,7 +381,7 @@ void Painter::AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
     if (w <= 0.f || h <= 0.f) return;
     // 字形坐标是布局空间物理像素（绑定当前 scale 下的图集位图），
     // origin 与变换在发射期施加；DPI 变化时此类指令需整体重收集。
-    PaintCommand& c = NewCommand(PaintOp::Glyph, page, PackColor(color, 1.f));
+    PaintCommand& c = NewCommand(PaintOp::Glyph, page, PackColor(color, opacity_));
     c.p[0] = x; c.p[1] = y; c.p[2] = w; c.p[3] = h;
     c.p[4] = u0; c.p[5] = v0; c.p[6] = u1; c.p[7] = v1;
 }
@@ -381,7 +389,7 @@ void Painter::AddGlyphQuad(uint32_t page, float x, float y, float w, float h,
 // 图像四边形：把纹理铺满 dipRect（DIP → 像素；origin 为滚动偏移）
 void Painter::AddImageQuad(uint32_t texture, const Rect& dipRect, Color color, float) {
     if (dipRect.w <= 0.f || dipRect.h <= 0.f) return;
-    PaintCommand& c = NewCommand(PaintOp::Image, texture, PackColor(color, 1.f));
+    PaintCommand& c = NewCommand(PaintOp::Image, texture, PackColor(color, opacity_));
     c.p[0] = dipRect.x; c.p[1] = dipRect.y;
     c.p[2] = dipRect.w; c.p[3] = dipRect.h;
 }
@@ -399,7 +407,7 @@ void Painter::PushShapeQuad(float cx, float cy, float hw, float hh,
     // 只放大采样范围，SDF 参数（半轴 / 线段端点 / 半 ext）不变，形状本身不动。
     hw += 1.f;
     hh += 1.f;
-    PaintCommand& c = NewCommand(PaintOp::Shape, 0, PackColor(color, 1.f));
+    PaintCommand& c = NewCommand(PaintOp::Shape, 0, PackColor(color, opacity_));
     c.p[0] = cx; c.p[1] = cy; c.p[2] = hw; c.p[3] = hh;
     c.p[4] = p0x; c.p[5] = p0y; c.p[6] = p1x; c.p[7] = p1y;
     c.p[8] = extra; c.p[9] = halfStroke; c.p[10] = static_cast<float>(kind);
@@ -511,7 +519,8 @@ void Painter::FillRoundedRect(const Rect& dipRect, const CornerRadii& radii, Col
                               float opacity, float) {
     if (dipRect.w <= 0.f || dipRect.h <= 0.f) return;
     // 存 DIP 原值：origin / scale / 变换都在发射期施加（10-Rendering §6.2）
-    PaintCommand& c = NewCommand(PaintOp::Rect, 0, PackColor(color, opacity));
+    // opacity 是本图元的额外因子，再乘 Painter 的累计不透明度（祖先链）
+    PaintCommand& c = NewCommand(PaintOp::Rect, 0, PackColor(color, opacity * opacity_));
     c.p[0] = dipRect.x; c.p[1] = dipRect.y;
     c.p[2] = dipRect.w; c.p[3] = dipRect.h;
     c.p[4] = radii.tl; c.p[5] = radii.tr; c.p[6] = radii.br; c.p[7] = radii.bl;

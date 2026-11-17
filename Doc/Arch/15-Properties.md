@@ -92,12 +92,12 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
 | `backgroundColor` | Color | ✗ | Paint | ✓ | 透明 | Brush（渐变/图片）列为 P2 |
-| `opacity` | Float | ✗ | Paint | ✓ | 1.0 | |
+| `opacity` | Float | ✗ | Paint | ✓ | 1.0 | **已落地（M5.67）**：作用于**整棵子树**（CSS `opacity` 语义）—— 父元素淡出时文字与子元素一起淡出。绘制层由 `Painter` 承载"累计不透明度"（祖先链乘积），所有带色指令统一预乘；`Collector` 沿树累乘传递 |
 | `cornerRadius` | CornerRadii | ✗ | Paint | ✓ | 0 | **已落地**：四角独立圆角（CSS `border-radius` 顺序：左上/右上/右下/左下）。`Style::CornerRadius(float)` = 四角同值；`Style::CornerRadius(CornerRadii)` = 四角独立。绘制走 Graphics 的逐角 SDF；相邻两角半径之和超出该边长时按 CSS 规则同比例缩小全部半径；每角半径夹到 `min(w,h)/2`（超出则圆弧中心跑到盒外，SDF 不再是真实距离） |
 | `borderWidth` | Thickness（四边） | ✗ | Paint | ✓ | 0 | **已落地（M5.57）**：实线 / 虚线 / 点线、`borderStyle` 可选；**分边宽度**（`Style::BorderWidth(float)` = 四边同值，`Style::BorderWidth(Thickness)` = 左/上/右/下独立，顺序同 `Thickness`）。**内描边**（画在盒内缘）。等宽时走单个圆角矩形描边（圆角精确）；分边时四条边各自成带、角部按直角对接（不做 CSS 斜接），**分边时圆角不生效**。要边框占盒（挤压内容）需配 `boxSizing: border-box` |
 | `borderColor` | Color | ✗ | Paint | ✓ | 透明 | 透明 = 无边框；跟随元素 `opacity` |
 | `borderStyle` | Enum（`dui::BorderStyle`） | ✗ | Paint | ✗ | Solid | **已落地（M5.57）**：`Solid` 实线 / `Dashed` 虚线（实 3w 空 3w）/ `Dotted` 点线（实 1 DIP 空 2w，CSS 未规定，取浏览器观感）。虚线在 CPU 侧沿路径切段描边（零 GPU 改动）；等宽时沿圆角矩形中心线（每角 8 段离散），分边时每条边独立起段 |
-| `shadow` | 标量组（`f`=blur DIP、`extra[0/1]`=offsetX/Y、`u`=颜色） | ✗ | Paint | ✗ | 无（颜色 0） | **已落地**：`Style::Shadow(blur, color, offsetX, offsetY)`；只投元素边框盒（圆角矩形），Shape 批 kind=3 的 SDF 衰减带近似高斯，无纹理/离屏。不支持 inset/spread/多阴影，不随元素 Opacity 变化 |
+| `shadow` | 标量组（`f`=blur DIP、`extra[0/1]`=offsetX/Y、`u`=颜色） | ✗ | Paint | ✗ | 无（颜色 0） | **已落地**：`Style::Shadow(blur, color, offsetX, offsetY)`；只投元素边框盒（圆角矩形），Shape 批 kind=3 的 SDF 衰减带近似高斯，无纹理/离屏。不支持 inset/spread/多阴影。阴影随元素与祖先的 `Opacity` 一起淡出（M5.67） |
 
 ### 4.3.1 滚动条（dui::Scroller 自绘轨道/滑块；MVP 子集，运行时已接入）
 

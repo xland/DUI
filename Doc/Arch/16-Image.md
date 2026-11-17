@@ -152,4 +152,4 @@ svg->LoadSvgMemory(kSvgBytes, kSvgSize);   // 也可从内存加载
 - `LoadMemory(const void*, uint32_t)`：从内存加载（格式由内容嗅探）。
 - `Clear()`：清除图像并停止动画（GPU 纹理在下一次纹理同步时回收）。
 - `PixelWidth() / PixelHeight()`：图像像素尺寸。
-- `Prop::Opacity` 乘到纹理 alpha；`Prop::Padding` 决定内容盒（图像画在内容盒内）。
+- `Prop::Opacity` 由绘制层统一折进累计不透明度（自身与祖先链），纹理按该因子淡出；`Prop::Padding` 决定内容盒（图像画在内容盒内）。

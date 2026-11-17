@@ -150,6 +150,7 @@ void OnPaint(dui::graphics::Painter& p, const StyleContext& ctx, float scale) ov
 - **描边路径居中于描边带**：`StrokeRoundRect(r, radius, w)` 的线宽向内外各占一半，`radius` 是描边带**中心线**的圆角半径。
 - **线宽最小 1 物理像素**（不足 1px 会抬到 1px），单位 DIP。
 - `FillRoundedRect` 的 `opacity` 只乘本图元的 alpha（0..1）。
+- **累计不透明度自动生效**：所有带色指令都会再乘上 Painter 的累计不透明度（= 元素自身与祖先链 `Opacity` 的乘积）。父元素淡出时，自绘内容跟着一起淡 —— **不需要自己乘 `Prop::Opacity`**（自己再乘一次会重复相乘）。
 - 圆角半径传 0 就是直角矩形，不必额外分支。
 - `StrokeLine` 的端点是**圆头**（胶囊 SDF），不是平头。
 

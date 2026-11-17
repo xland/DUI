@@ -269,7 +269,7 @@ Vec2 Image::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) co
     return Vec2{static_cast<float>(t->width) / s, static_cast<float>(t->height) / s};
 }
 
-void Image::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) {
+void Image::OnPaint(graphics::Painter& p, const StyleContext&, float scale) {
     const graphics::ImageTexture* t = AsTexture(tex_);
     if (t == nullptr) return;
     // 内容盒 = 元素盒去掉 padding（与布局的 content box 一致；border-box 时再去掉边框）
@@ -292,14 +292,10 @@ void Image::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) 
     const Rect dst{content.x + (content.w - w) * 0.5f,
                    content.y + (content.h - h) * 0.5f, w, h};
 
-    // 透明度：Prop::Opacity（默认 1）
-    float opacity = ResolveProperty(this, Prop::Opacity, ctx).f;
-    if (opacity < 0.f) opacity = 0.f;
-    if (opacity > 1.f) opacity = 1.f;
-    const uint32_t a = static_cast<uint32_t>(opacity * 255.f + 0.5f);
-    // 颜色约定 0xAARRGGBB（见 AddGlyphQuad 的打包）：RGB 取白，alpha = 不透明度
-    const uint32_t tint = (a << 24) | 0x00FFFFFFu;
-    p.AddImageQuad(t->id, dst, tint, scale);
+    // 透明度：Prop::Opacity 由绘制层统一折进累计不透明度（自身 + 祖先链），
+    // 这里不再单独乘 —— 否则会与父级传下来的因子重复相乘。
+    // 颜色约定 0xAARRGGBB（见 AddGlyphQuad 的打包）：RGB 取白，alpha 交给 Painter
+    p.AddImageQuad(t->id, dst, 0xFFFFFFFFu, scale);
 }
 
 }  // namespace dui

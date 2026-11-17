@@ -78,11 +78,12 @@ Rect IntersectRect(const Rect& a, const Rect& b) {
 // 收集器：遍历可见树 → 绘制单元。
 // 普通元素进当前单元；滚动容器把内容切到独立单元（原点 = -滚动偏移，
 // 裁剪 = 视口 ∩ 当前裁剪），滚动条画在内容之上的父级单元。
-// 窗口级 Fixed 层的一项：元素 + 记录时的祖先裁剪快照 + 继承态
+// 窗口级 Fixed 层的一项：元素 + 记录时的祖先裁剪快照 + 继承态 + 祖先累计不透明度
 struct FixedItem {
     Element* e;
     Rect clipPx;
     StyleContext ctx;
+    float alpha;
 };
 
 class Collector {
@@ -91,24 +92,31 @@ public:
         : list_(list), scale_(scale) {
         origin_ = {0.f, 0.f};
         clipPx_ = windowPx;
-        painter_ = AcquirePainter(origin_);
+        painter_ = AcquirePainter(origin_, 1.f);
     }
 
-    void Collect(Element* e, const StyleContext& parentCtx) { Collect(e, parentCtx, clipPx_, 0); }
+    void Collect(Element* e, const StyleContext& parentCtx) { Collect(e, parentCtx, clipPx_, 0, 1.f); }
 
+    // alpha = 祖先链累计不透明度（不含元素自身）
     void Collect(Element* e, const StyleContext& parentCtx, const Rect& clipForFixed,
-                 uint32_t depth) {
+                 uint32_t depth, float alpha) {
         if (ResolveProperty(e, Prop::Display, parentCtx).u == static_cast<uint32_t>(Display::None)) return;
         // 布局期计数为 0 时整段短路：未使用 Fixed 的应用连 IsFixed 都不解析。
         const bool lift = !inFixedLayer_ && FixedCount() != 0;
         // Fixed 整棵子树延后到窗口级 Fixed 层：不受祖先 transform / 滚动原点影响，
         // 但仍沿用记录时的祖先裁剪快照（04-Layout §4.3）。
         if (lift && IsFixed(e)) {
-            FixedLayer().push_back(FixedItem{e, clipForFixed, parentCtx});
+            FixedLayer().push_back(FixedItem{e, clipForFixed, parentCtx, alpha});
             return;
         }
 
         const StyleContext ctx = parentCtx.Child(e);
+
+        // 累计不透明度（CSS opacity 语义）：祖先链乘积 × 元素自身 Opacity。
+        // 元素自身的背景 / 边框 / 阴影 / 文字与整棵子树共用这一因子 —— 父元素
+        // 淡出时文字与子元素一起淡出（不再只淡背景与边框）。
+        const float elemAlpha = alpha * OwnOpacity(e);
+        painter_->SetOpacity(elemAlpha);
 
         // 元素自身变换压栈：影响本元素的绘制与整棵子树（先子后父组合）。
         // 恒等变换不压栈 → 未使用 transform 的元素每帧零额外开销。
@@ -122,7 +130,7 @@ public:
         TransformScope scope{*this, saved, transformed};
 
         if (e->GetKind() == Kind::Scroller) {
-            CollectScroller(static_cast<Scroller*>(e), ctx, depth);
+            CollectScroller(static_cast<Scroller*>(e), ctx, depth, elemAlpha);
             return;
         }
 
@@ -146,7 +154,7 @@ public:
         if (!hidden) DrawBackground(e, ctx);
 
         ClipState st;
-        if (clipped) st = BeginClip(clipRect);
+        if (clipped) st = BeginClip(clipRect, elemAlpha);
         if (!hidden) {
             if (e->GetKind() == Kind::Text) DrawTextContent(e, ctx, *painter_, scale_);
             e->OnPaint(*painter_, ctx, scale_);   // 自定义绘制钩子（背景之后、子元素之前）
@@ -156,15 +164,16 @@ public:
         // Fixed 在树序原位记录到窗口级 Fixed 层（不进当前单元），顺序与
         // Event.cpp::CollectFixedLayer 的两趟遍历一致 → 倒序命中即"后画者先命中"。
         for (Element* c : e->Children())
-            if (!IsOutOfFlow(c) || (lift && IsFixed(c))) Collect(c, ctx, clipPx_, depth + 1);
+            if (!IsOutOfFlow(c) || (lift && IsFixed(c))) Collect(c, ctx, clipPx_, depth + 1, elemAlpha);
         // 脱离流趟：Absolute 提升到所属 CB 处，按 zIndex 升序绘制（同值按树序）。
         // 未使用 Absolute / zIndex 时保持原两趟，零额外遍历。
         if (UseOrderedOutOfFlow()) {
             for (Element* c : ZOrderedOutOfFlow(e, depth))
-                if (!(lift && IsFixed(c))) Collect(c, ContextOf(c, e, ctx), clipPx_, depth + 1);
+                if (!(lift && IsFixed(c)))
+                    Collect(c, ContextOf(c, e, ctx), clipPx_, depth + 1, AlphaOf(c, e, elemAlpha));
         } else {
             for (Element* c : e->Children())
-                if (IsOutOfFlow(c) && !(lift && IsFixed(c))) Collect(c, ctx, clipPx_, depth + 1);
+                if (IsOutOfFlow(c) && !(lift && IsFixed(c))) Collect(c, ctx, clipPx_, depth + 1, elemAlpha);
         }
 
         if (clipped) EndClip(st);
@@ -181,8 +190,8 @@ public:
             origin_ = {0.f, 0.f};
             clipPx_ = f.clipPx;
             xform_ = {};
-            painter_ = AcquirePainter(origin_);
-            Collect(f.e, f.ctx, f.clipPx, 0);
+            painter_ = AcquirePainter(origin_, f.alpha);
+            Collect(f.e, f.ctx, f.clipPx, 0, f.alpha);
             Commit();
         }
         inFixedLayer_ = false;
@@ -199,10 +208,12 @@ private:
     void Commit() { list_.Commit(painter_, clipPx_); }
 
     // 每取一个新 Painter 都要带上当前组合变换（变换烘进顶点，按单元独立）
-    graphics::Painter* AcquirePainter(const Vec2& origin) {
+    // 与累计不透明度（跨越裁剪 / 滚动单元时不能丢）
+    graphics::Painter* AcquirePainter(const Vec2& origin, float opacity) {
         graphics::Painter* p = list_.Acquire();
         p->SetOrigin(origin.x, origin.y, scale_);
         p->SetTransform(xform_);
+        p->SetOpacity(opacity);
         return p;
     }
 
@@ -217,6 +228,24 @@ private:
         c.scale = scale_;
         for (auto it = chain.rbegin(); it != chain.rend(); ++it) c = c.Child(*it);
         return c;
+    }
+
+    // 元素自身 Opacity（非继承属性，默认 1）
+    static float OwnOpacity(Element* e) {
+        float v = ResolveProperty(e, Prop::Opacity).f;
+        if (v < 0.f) v = 0.f;
+        if (v > 1.f) v = 1.f;
+        return v;
+    }
+
+    // Absolute / zIndex 提升到 CB 处绘制：样式继承沿真实父链重建（ContextOf），
+    // 累计不透明度同样沿真实父链累乘 —— 否则中间祖先的 Opacity 会被跳过。
+    float AlphaOf(Element* element, Element* host, float baseAlpha) {
+        if (element->Parent() == host) return baseAlpha;
+        float a = baseAlpha;
+        for (Element* p = element->Parent(); p != nullptr && p != host; p = p->Parent())
+            a *= OwnOpacity(p);
+        return a;
     }
 
     // Collect() 有 Scroller / Image 等提前 return，用作用域守卫统一弹栈。
@@ -238,12 +267,13 @@ private:
     struct ClipState {
         Vec2 origin{};
         Rect clip{};
+        float alpha = 1.f;
     };
 
-    ClipState BeginClip(const Rect& dipRect) {
-        ClipState st{origin_, clipPx_};
+    ClipState BeginClip(const Rect& dipRect, float alpha) {
+        ClipState st{origin_, clipPx_, alpha};
         Commit();
-        painter_ = AcquirePainter(st.origin);
+        painter_ = AcquirePainter(st.origin, alpha);
         // scissor 只能轴对齐，故取变换后四个角点的 AABB：旋转的裁剪盒不会
         // 留在原位。恒等变换时结果与原矩形完全一致（零回归）。
         const Transform2D eff = painter_->EffectiveTransform(scale_);
@@ -266,7 +296,7 @@ private:
 
     void EndClip(const ClipState& st) {
         Commit();
-        painter_ = AcquirePainter(st.origin);
+        painter_ = AcquirePainter(st.origin, st.alpha);
         origin_ = st.origin;
         clipPx_ = st.clip;
     }
@@ -292,7 +322,7 @@ private:
     //       内缘圆角 = 元素圆角 − 边框宽/2（描边带中心线上的半径）。
     // 分边：四条边各自成带（中心线在盒内缘向内 半宽），角部按直角对接（不做 CSS 斜接）；
     //       分边时圆角不生效（角部按直角处理）。
-    void DrawBorder(Element* e, const StyleContext& ctx, float opacity) {
+    void DrawBorder(Element* e, const StyleContext& ctx) {
         const StyleValue bc = ResolveProperty(e, Prop::BorderColor, ctx);
         if (bc.u == 0) return;                    // 透明 = 无边框
         const Thickness bw = ValueAsThickness(ResolveProperty(e, Prop::BorderWidth, ctx));
@@ -301,13 +331,8 @@ private:
         if (b.w <= 0.f || b.h <= 0.f) return;
         const uint32_t style = ResolveProperty(e, Prop::BorderStyle, ctx).u;
         const CornerRadii r = ValueAsCornerRadii(ResolveProperty(e, Prop::CornerRadius, ctx));
-        // 描边接口不带 opacity：把元素不透明度预乘进 alpha（颜色为 0xAARRGGBB）
-        uint32_t col = bc.u;
-        if (opacity < 1.f) {
-            const uint32_t a = (col >> 24) & 0xFFu;
-            const uint32_t ao = static_cast<uint32_t>(static_cast<float>(a) * opacity + 0.5f);
-            col = (col & 0x00FFFFFFu) | (ao << 24);
-        }
+        // 描边接口不带 opacity：元素与祖先的不透明度已折进 Painter 的累计因子
+        const uint32_t col = bc.u;
         const bool uniform = bw.left == bw.top && bw.top == bw.right && bw.right == bw.bottom;
         if (uniform) {
             const float w = bw.left;
@@ -418,16 +443,15 @@ private:
         DrawShadow(e, ctx);
         const StyleValue bg = ResolveProperty(e, Prop::BackgroundColor, ctx);
         const CornerRadii radii = ValueAsCornerRadii(ResolveProperty(e, Prop::CornerRadius, ctx));
-        float opacity = ResolveProperty(e, Prop::Opacity, ctx).f;
-        if (opacity < 0.f) opacity = 0.f;
-        if (opacity > 1.f) opacity = 1.f;
+        // 元素自身 Opacity 已折进 Painter 的累计不透明度（Collect 里设置），
+        // 这里不再单独乘 —— 文字与子树用的是同一个因子。
         if (bg.u != 0) {
-            painter_->FillRoundedRect(e->Bounds(), radii, bg.u, opacity, scale_);
+            painter_->FillRoundedRect(e->Bounds(), radii, bg.u, 1.f, scale_);
         }
-        DrawBorder(e, ctx, opacity);   // 边框画在背景之上（CSS 同序）
+        DrawBorder(e, ctx);   // 边框画在背景之上（CSS 同序）
     }
 
-    void CollectScroller(Scroller* sc, const StyleContext& ctx, uint32_t depth) {
+    void CollectScroller(Scroller* sc, const StyleContext& ctx, uint32_t depth, float alpha) {
         // 容器自身背景（不随内容滚动）
         if (!sc->Hidden()) DrawBackground(sc, ctx);
 
@@ -446,7 +470,7 @@ private:
         // SetOrigin 与 scissor 都是"绝对"量：嵌套时必须叠加父级偏移，
         // 否则外层滚动对内层内容无效、内层裁剪带留在原位（背景被裁没）。
         const Vec2 contentOrigin{savedOrigin.x - off.x, savedOrigin.y - off.y};
-        painter_ = AcquirePainter(contentOrigin);
+        painter_ = AcquirePainter(contentOrigin, alpha);
         origin_ = contentOrigin;
         // 视口是窗口空间的轴对齐 scissor：不随容器 transform 旋转，也不随
         // 内容滚动（用父级 savedOrigin 平移，见上方"绝对量"说明）。
@@ -457,19 +481,20 @@ private:
         // 与 Collect() 同规则；Fixed 记录 savedClip（视口求交之前），绕过本层视口 scissor。
         const bool lift = !inFixedLayer_ && FixedCount() != 0;
         for (Element* c : sc->Children())
-            if (!IsOutOfFlow(c) || (lift && IsFixed(c))) Collect(c, ctx, savedClip, depth + 1);
+            if (!IsOutOfFlow(c) || (lift && IsFixed(c))) Collect(c, ctx, savedClip, depth + 1, alpha);
         if (UseOrderedOutOfFlow()) {
             for (Element* c : ZOrderedOutOfFlow(sc, depth))
-                if (!(lift && IsFixed(c))) Collect(c, ContextOf(c, sc, ctx), savedClip, depth + 1);
+                if (!(lift && IsFixed(c)))
+                    Collect(c, ContextOf(c, sc, ctx), savedClip, depth + 1, AlphaOf(c, sc, alpha));
         } else {
             for (Element* c : sc->Children())
-                if (IsOutOfFlow(c) && !(lift && IsFixed(c))) Collect(c, ctx, savedClip, depth + 1);
+                if (IsOutOfFlow(c) && !(lift && IsFixed(c))) Collect(c, ctx, savedClip, depth + 1, alpha);
         }
 
         Commit();   // 封存内容单元
 
         // 回到父级上下文：父级后续兄弟继续画在新单元里
-        painter_ = AcquirePainter(savedOrigin);
+        painter_ = AcquirePainter(savedOrigin, alpha);
         origin_ = savedOrigin;
         clipPx_ = savedClip;
 

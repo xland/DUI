@@ -78,7 +78,7 @@ C++20 聚合类型，用指派初始化。**成员顺序固定为 `durationMs` �
 
 | 标签 | 值类型 | 单位 / 语义 | 标脏 | 备注 |
 | --- | --- | --- | --- | --- |
-| `dui::Opacity` | `float` | 0..1 | Paint | 只作用于元素自身的背景与边框（§8.1） |
+| `dui::Opacity` | `float` | 0..1 | Paint | 作用于整棵子树：自身背景 / 边框 / 阴影 / 文字与子元素一起淡出（§8.1） |
 | `dui::BackgroundColor` | `dui::Color` | `0xAARRGGBB` | Paint | ARGB 四通道各自插值 |
 | `dui::TextColor` | `dui::Color` | 同上 | Paint | 文本色（`Prop::Color`） |
 | `dui::SelectionColor` | `dui::Color` | 同上 | Paint | 选区底色 |
@@ -183,12 +183,9 @@ card->Animate(dui::TranslationX, 0.f,   { .durationMs = 500 });   // 从当前�
 fade->Animate(dui::Opacity, 1.f, { .durationMs = 250, .easing = dui::Easing::EaseOut });
 ```
 
-> ⚠ `Opacity` 只影响元素自身的背景与边框，不影响文字与子元素（§8.1）。要整块内容一起淡入，把文字颜色也一起补间：
+> `Opacity` 作用于**整棵子树**：元素自身的背景 / 边框 / 阴影 / 文字与所有子元素一起淡出（§8.1）。一条补间即可，**不必再单独补文字色**。
 >
-> ```cpp
-> fade->Animate(dui::Opacity, 1.f, { .durationMs = 250 });
-> label->Animate(dui::TextColor, 0xFF111827, { .durationMs = 250 });
-> ```
+> 需要"背景淡出但文字保持清晰"时，把文字挪到不透明的兄弟容器里，而不是给文字单独补色 —— 父级的淡出会覆盖文字。
 
 ### 6.2 往返（`OnFinished` 链）
 
@@ -260,7 +257,15 @@ card->Animate(dui::BorderWidth, dui::Thickness(2.f), { .durationMs = 250 });
 
 ### 8.1 `Opacity` 的作用范围
 
-`Opacity` 只乘到元素自身的**背景填充**与**边框 alpha**，**不影响文字与子元素**。这是绘制层的实现边界（`App/Frame.cpp` 的 `DrawBackground` / `DrawBorder`），不是 bug —— 要整块淡入淡出请分别补间文字色（§6.1）。
+`Opacity` 作用于**整棵子树**（CSS `opacity` 语义）：父元素淡出时，它的文字与子元素一起淡出。实现分两处：
+
+- `Painter` 承载**累计不透明度**（祖先链乘积）：所有带色指令（背景 / 边框 / 阴影 / 文字 / 图像 / 自绘图形）在发射时统一预乘该因子（`Graphics/Graphics.h` 的 `Painter::SetOpacity`）。
+- `Collector` 沿树向下传递并累乘（`App/Frame.cpp`）：每个元素的因子 = 父级因子 × 自身 `Opacity`；滚动容器的内容单元、裁剪子单元、窗口级 Fixed 层各自换 `Painter` 时把因子带过去。
+
+两点边界：
+
+- **逐元素预乘，不是离屏合成**：父级淡出时子元素各自的 alpha 都乘了父级因子。两个半透明子元素在父级内重叠时的叠加顺序，与 CSS"整组合成后再淡出"略有差异（视觉上几乎不可辨）。
+- **Absolute 提升到 CB 处的元素**：沿真实父链累乘中间祖先的因子（与样式继承的处理一致）。
 
 ### 8.2 transform 动画只改绘制
 

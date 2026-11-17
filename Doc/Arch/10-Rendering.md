@@ -210,6 +210,8 @@ float alpha = 1.0f - smoothstep(-w, w, d);
 - **边界**：字形按 ADR-006 在离散尺度光栅化，连续 `Scale` 动画下是被线性拉伸的图集位图（放大略糊）；`PointerEvent::pos` 仍是客户区绝对 DIP，旋转的交互文本框光标/选区定位列为后续项；平移不会扩展 `Scroller` 的可滚动范围。**带 transform 的 `Scroller` 且滚动偏移非零时**，内容命中测试仍沿用原有的 `+off` 平移换算（未把滚动纳入变换链），视口 scissor 也保持窗口空间轴对齐，属已知限制。
 
 > 本文 §3 的 `PushLayer/PopLayer`（`opacity<1` / 带 transform 的子树走离屏层）、§6.2 的 `fwidth()` AA 结论、§8 P0 的 `opacity/transform 离屏层` 均为**未落地的早期草案**：当前实现是按需全量光栅 + SDF 固定 1 像素过渡带（见 [Graphics.cpp](../DUI/Graphics/Graphics.cpp) 的着色器注释），transform 走本节的顶点变换、不使用离屏层。
+>
+> `opacity` 同样不走离屏层：M5.67 起由 `Painter` 承载**累计不透明度**（祖先链乘积），所有带色指令在发射时预乘该因子（逐元素预乘，非整组合成）。
 
 ---
 

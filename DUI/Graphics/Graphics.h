@@ -105,6 +105,12 @@ public:
     void SetOrigin(float dipX, float dipY, float scale);
     void SetTransform(const Transform2D& dipXform);
 
+    // 累计不透明度（祖先链乘积）：设置后本 Painter 发射的所有带色指令都乘上它。
+    // 父元素的 Opacity 经由它自动作用于自身背景 / 边框 / 文字 / 阴影与整棵子树
+    // （CSS opacity 语义；绘制层按元素逐个预乘，不走离屏合成层）。
+    void SetOpacity(float opacity);
+    float Opacity() const noexcept { return opacity_; }
+
     // 圆角矩形填充。四角半径独立（CornerRadii）；统一圆角用便捷重载。
     void FillRoundedRect(const Rect& dipRect, const CornerRadii& radii, Color color, float opacity, float scale);
     void FillRoundedRect(const Rect& dipRect, float radiusDip, Color color, float opacity, float scale);
@@ -152,6 +158,7 @@ private:
     std::vector<PaintCommand> commands_;
     std::vector<PaintState> states_;
     float originDipX_ = 0.f, originDipY_ = 0.f;   // 形状 API 记录期换算用
+    float opacity_ = 1.f;   // 累计不透明度（祖先链乘积）
     uint32_t curState_ = 0;
 };
 

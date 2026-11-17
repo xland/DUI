@@ -272,6 +272,7 @@ list->OnPointerDown(fn, dui::Phase::Tunnel);
 
 - `Click` 等语义事件由事件系统合成后**从目标元素开始路由**（父列表可统一收点击）。
 - 指针捕获（R6）：`element->SetCapture()` 后，`Move/Up` 不再命中测试，直达捕获者直至抬起或释放 —— 拖拽、滑块、菜单外点关闭的基础。
+- **内置控件的用法**：`Scroller` 滑块拖拽、`RichEditor` 的拖选、`TextBox`/`TextArea` 的拖选（M5.66）、`user-select` 文本的拖选（M5.63）都在按下时取捕获 —— 指针拖出控件/元素边界仍能继续（跨出时的坐标由 `ClientToLocal` 换算到同一单元空间，命中测试照常）。
 
 ---
 

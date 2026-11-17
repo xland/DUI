@@ -30,6 +30,7 @@ dui::RichEditor* rich = root->AddChild<dui::RichEditor>();        // 富文本
 - **外观完全由盒模型样式决定**：`Padding` / `BorderWidth` / `BorderColor` / `CornerRadius` / `Background` / `Color` / `FontSize` 等，与普通 `Panel` 一模一样；输入框没有单独的"皮肤"。
 - **可聚焦、进 Tab 链**：构造即 `SetFocusable(true)`；`Tab` / `Shift+Tab` 在可聚焦控件间移动焦点（控件自己不消费 `VK_TAB`）。
 - **选区与光标可配**：`SelectionColor`（选区底色，默认 `0x803399FF` 半透明蓝）、`CaretColor`（光标色，未设时取文本色 `Color`）。
+- **拖选可拖出控件**：按下即取**指针捕获**（与 `RichEditor`、M5.63 的 `user-select` 文本同款），拖到控件边界外仍继续扩选，并自动把光标滚进视野（多行纵向滚动 / 单行横向滚动）。
 - **文本样式走继承**：`FontFamily` / `FontSize` / `FontWeight` / `FontStyle`（斜体）/ `TextDecoration`（下划线、删除线）都能用，写在父容器上对子输入框生效。
 - **不支持 `TextAlign`**：属性存在，但输入框控件不读它。
 - **有自然尺寸下限**：单行至少 120 DIP 宽、高至少是"字号 × 行高"；多行至少 200 × 80 DIP。下限只作用于**自然尺寸** —— 显式写了 `Width` / `Height` 就不受它约束。
@@ -364,20 +365,19 @@ float h = view->ContentHeight();        // 排版后的文档总高（DIP，不�
 7. `SetText` **清空撤销栈**、**不重置光标**（只 clamp）。
 8. **密码模式下复制到剪贴板的是明文**。
 9. 没有 placeholder、没有 maxLength、没有输入校验。
-10. 拖选不能拖出控件边界（不做指针捕获）。
-11. IME 只走系统隐形 caret，**没有内联 preedit**（组合中的文字不在控件里显示）。
+10. IME 只走系统隐形 caret，**没有内联 preedit**（组合中的文字不在控件里显示）。
 
 **RichEditor**
 
-12. **必须外套 `Scroller`** 才能滚动；否则连"光标跟随可见"都没有。
-13. 撤销是**整文档快照**（上限 100 步）→ 大文档内存与重排成本高。
-14. **没有 JSON 导出 API**。
-15. **没有变更事件**（无 `OnTextChanged` / `OnChange`），宿主只能轮询 `Doc()` 对比。
-16. 代码块正文在 `block.code` 而非 `runs`；JSON 的 `language` 字段被丢弃。
-17. 分割线不可编辑；图片只有"图前 / 图后"两个光标位，不能改尺寸。
-18. 引用块的 `attribution` 字段只在模型里，**渲染层暂不绘制**。
-19. `Doc()` 返回内部副本的引用，不能用于回写宿主模型；`SetDoc()` 会清空撤销栈。
-20. IME 同样没有内联 preedit。
+11. **必须外套 `Scroller`** 才能滚动；否则连"光标跟随可见"都没有。
+12. 撤销是**整文档快照**（上限 100 步）→ 大文档内存与重排成本高。
+13. **没有 JSON 导出 API**。
+14. **没有变更事件**（无 `OnTextChanged` / `OnChange`），宿主只能轮询 `Doc()` 对比。
+15. 代码块正文在 `block.code` 而非 `runs`；JSON 的 `language` 字段被丢弃。
+16. 分割线不可编辑；图片只有"图前 / 图后"两个光标位，不能改尺寸。
+17. 引用块的 `attribution` 字段只在模型里，**渲染层暂不绘制**。
+18. `Doc()` 返回内部副本的引用，不能用于回写宿主模型；`SetDoc()` 会清空撤销栈。
+19. IME 同样没有内联 preedit。
 
 ---
 

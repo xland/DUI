@@ -726,6 +726,10 @@ bool TextBox::HandlePointerDown(PointerEvent& ev) {
     dragAnchor_ = idx;
     dragging_ = true;
     goalX_ = -1.f;
+    pressPos_ = ev.pos;
+    // 指针捕获：拖出控件仍能继续扩选（与 RichEditor、user-select 的 dui::Text 同款）。
+    // 捕获期间框架的 Move/Up 直达本控件（坐标换算到同一单元空间，命中测试照常）。
+    SetCapture();
     ResetBlinkPhase();     // 点击后光标立即可见
     MarkDirty(kFlagPaint);
     return false;   // 不消费：事件继续冒泡给祖先
@@ -740,13 +744,25 @@ bool TextBox::HandlePointerMove(PointerEvent& ev) {
     const uint32_t idx = HitTestIndex(ev.pos);
     anchor_ = dragAnchor_;
     caret_ = idx;
+    EnsureCaretVisible();   // 拖出边界时把光标滚进视野（多行纵向滚动 / 单行横向滚动）
     ResetBlinkPhase();
     MarkDirty(kFlagPaint);
     return false;
 }
 
-bool TextBox::HandlePointerUp(PointerEvent&) {
+bool TextBox::HandlePointerUp(PointerEvent& ev) {
     dragging_ = false;
+    ReleaseCapture();
+    // 捕获期间框架不合成 Click（App/App.cpp：抬起即释放捕获时跳过 Click 合成）→
+    // 没真正拖动（位移在 4 DIP 内）且仍在框内时补一次，保持"点输入框 = 点元素"的原语义。
+    constexpr float kDragThreshold = 4.f;
+    const Rect box = Bounds();
+    const bool inside = ev.pos.x >= box.x && ev.pos.x < box.Right() &&
+                        ev.pos.y >= box.y && ev.pos.y < box.Bottom();
+    if (inside && std::abs(ev.pos.x - pressPos_.x) <= kDragThreshold &&
+        std::abs(ev.pos.y - pressPos_.y) <= kDragThreshold) {
+        DispatchClick(this, ev.pos, PointerButton::Left);
+    }
     return false;
 }
 

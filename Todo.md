@@ -1,7 +1,7 @@
 # DUI 开发任务清单（Todo）
 
 > 最后更新：2026-11-17。
-> 进度：**M1–M5.65 全部完成**（窗口/样式/布局/绘制/异步/文本/DPI/动画/Canvas/Scroller/
+> 进度：**M1–M5.66 全部完成**（窗口/样式/布局/绘制/异步/文本/DPI/动画/Canvas/Scroller/
 > TextBox/Image/Gif/无边框窗口/Grid/Position/zIndex/有序指令显示列表/窗口热区声明化/文本选择…）；
 > **M6 主体完成**（命令式属性动画 + Paint 级 2D transform），仅剩收尾（见 §2）。
 > 历史里程碑已归档为索引（§5）；实现踩坑与结论在 `Doc/Pitfalls.md`；
@@ -195,6 +195,8 @@ cd /d <项目根>
 | M5.64 | 11-17 | **单行 `TextBox` 的文本垂直居中**：根因 —— `TextBox::TextOrigin()` 直接把文本原点取**内容盒左上**，单行输入框的文本**从顶部起画**（旧实现完全不做垂直居中；`Text` 元素有"视觉居中"补偿、`TextBox` 自绘没有），叠加 DWrite 的 PROPORTIONAL 行距把 baseline 压在 ascent×factor（雅黑 1.27 em）而汉字墨迹只到 0.83 em → 行盒内上下留白不对称（上方 0.44 em / 下方 0.27 em），实测墨迹中心比框中心低 **3.3 DIP**（用户截图实测：框 y=111…158 中心 134.5，墨迹 y=130…149 中心 139.5，150% 缩放差 5 px）。修法：`TextOrigin()` 单行分支改为 **行盒居中（内容盒多出的空间上下平分）+ 墨迹视觉居中补偿**（墨迹数据复用排版时已算好的 `Paragraph::inkCenter/inkValid`，无额外开销），与 `Text` 元素同一口径；内容盒比行高小时改为**上下对称裁剪**（不再只裁底部）；多行仍顶对齐（文档语义），密码掩码圆点由段落的墨迹并集自然居中（不再单用 `maskDy_`）。绘制 / 命中 / 光标 / IME 插入点共用 `TextOrigin()`，故整体同步移动。实测（150% DPI，1:1 截图量像素）：单行框墨迹中心 142 vs 框中心 141.5（偏差 0.5 px ≈ 0.3 DIP）；密码框掩码圆点中心 286.5 vs 框中心 287.5（1 px）；多行 TextArea 仍顶对齐。文档：`Doc/Input.md §1.1`、`Doc/Arch/11-Text.md §7`（DWrite 能力表） |
 
 | M5.65 | 11-17 | **点空白处 / 切走窗口 → 取消选中状态**（用户提出，浏览器语义）：现状是"半截实现" —— 失焦清选区本来就有（`TextBox::OnFocusChanged(false)` → `Deselect()`；M5.63 的 `dui::Text` 同样），窗口失活也会清焦点（`WM_ACTIVATE(WA_INACTIVE)` → `App` 主循环 `SetFocus(nullptr)`），但**「点窗口空白处」这条路根本不会让控件失焦**：`App.cpp` 的指针按下只在**命中可聚焦元素**时 `SetFocus`，没命中就什么都不做 → 选区留在一个"看起来仍聚焦着"的控件上（光标还在闪），用户已不打算继续输入；且看不见的选区会让后续 Delete/输入替换掉用户看不见的内容。修法：`App/App.cpp` 指针按下分支改为 `if (f = FindFocusable(hit)) SetFocus(f); else SetFocus(nullptr);`（滚动条拖拽分支提前 return，不受影响）。实测（150% DPI，1:1 截图）：① 输入框拖选 → 点窗口空白 → 选区消失、框恢复非聚焦态；② 输入框拖选 → 窗口失活 → 选区消失；③ `user-select` 的 `dui::Text` 拖选 → 点空白 → 选区消失。文档：`Doc/Arch/06-Events.md §6`、`Doc/Event.md §5.1` |
+
+| M5.66 | 11-17 | **`TextBox` / `TextArea` 拖选接上指针捕获**（用户指出：M5.63 的 `user-select` 文本有、`RichEditor` 有，唯独两个输入框没有）：根因 —— `TextBox::HandlePointerDown` 只置 `dragging_ = true`，**不取指针捕获** → 指针拖出控件边界后 `Move` 事件被命中测试派给别的元素，输入框再也收不到，选区在半路冻结。修法（与 `RichEditor` 同款）：按下时 `SetCapture()`、抬起时 `ReleaseCapture()`；捕获期间框架把 `Move/Up` 直达捕获者，坐标经 `ClientToLocal` 换算到**同一单元空间**（与 `HitTest` 的 outLocal 同口径）→ 命中测试照常。附带两项：① `HandlePointerMove` 补 `EnsureCaretVisible()` → 拖到边界外时**光标自动滚进视野**（多行纵向滚、单行横向滚，原来拖选时根本不会滚）；② 捕获期间框架**不合成 Click**（`App/App.cpp`：抬起即释放捕获时跳过）→ 未真正拖动（位移 ≤ 4 DIP）且仍在框内时由控件**补一次 Click**，保持"点输入框 = 点元素"的原语义。实测（150% DPI，1:1 截图对照）：多行框从第一行**一步跳到框外**——旧行为选区为空、新行为选区一路延伸到末行且视图跟随滚动；单行框从文字末尾拖出框左侧 → 整段被选中。文档：`Doc/Input.md §1.1`（新增"拖选可拖出控件"）、`§7`（删掉"拖选不能拖出控件边界"这条限制）、`Doc/Arch/06-Events.md §5`（内置控件的捕获用法） |
 
 ---
 

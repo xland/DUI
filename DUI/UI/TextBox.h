@@ -117,6 +117,7 @@ private:
     uint32_t anchor_ = 0;    // 选区另一端（== caret_ 表示无选区）
     uint32_t dragAnchor_ = 0;
     bool     dragging_ = false;
+    Vec2     pressPos_{};     // 本次按下位置（判定"是否真拖动"，用于补合成 Click）
     bool     password_ = false;
     wchar_t  maskChar_ = L'\u2022';  // 密码掩码字符（'•'）
     bool     caretVisible_ = true;   // 光标闪烁相位（false = 隐藏相位）

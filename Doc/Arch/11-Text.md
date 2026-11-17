@@ -73,7 +73,7 @@ L1  排版与渲染引擎    字体集合/成形/段落排版/光栅化/命中�
 | 换行宽 | `IDWriteTextLayout` 的 `maxWidth` | `Text` 元素（M5.59）：**布局层收口** —— `MeasureElement` 解析到显式 `width` 时，内容可用宽 = 盒宽 − 内边距 − (border-box) 边框，与父给的可用宽取小（消除 Measure / Arrange 两阶段的 content 口径漂移）；`Text` 层再兜底一次（自身显式 `width` 优先）。`TextBox` 多行同款做法 |
 | 行距（等高/比例/最小） | `IDWriteTextLayout3::SetLineSpacing` | 对应 03-Style `lineHeight` |
 | 下划线/删除线 | `SetUnderline` / `SetStrikethrough` + 绘制回调 | 对应 15-Properties `textDecoration`（`Underline`/`LineThrough` 位标志，**不继承**，运行时已落地）；线位与厚度由 DWrite 算出，走 `DrawUnderline`/`DrawStrikethrough` 回调用 `Painter::StrokeLine` 画线（Shape 批），不占行高 |
-| 斜体 | `SetFontStyle(DWRITE_FONT_STYLE_ITALIC)` | 对应 15-Properties `fontStyle`（**继承属性**，运行时已落地）；`Text`/`TextBox` 走整段默认，`RichEditor` 作段落默认（run 级 italic 显式为真时覆盖） |
+| 斜体 | `SetFontStyle(DWRITE_FONT_STYLE_ITALIC)` | 对应 15-Properties `italic`（**继承属性**，运行时已落地）；`Text`/`TextBox` 走整段默认，`RichEditor` 作段落默认（run 级 italic 显式为真时覆盖） |
 | 字符级样式（颜色等） | `SetDrawingEffect` + 自定义绘制回调 | 富文本 run 的落点 |
 | BiDi / 复杂脚本 / 回退 | DWrite 内建 | |
 | 描边文字、渐变文字 | 自定义绘制回调 + Graphics 层 | P2，走 03-Style `color` 的扩展形态 |

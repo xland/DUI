@@ -119,7 +119,7 @@ Vec2 Element::MeasureContent(const StyleContext& ctx, const Vec2& avail) const {
     // 换行流式布局（Row + Wrap）：按可用主轴宽贪心断行——
     // 自然主轴 = 最长行宽，交叉轴 = 各行高之和（行间用 rowGap）。
     // avail 不受限（1e6 透传）时不换行，走下方单行聚合。
-    if (row && wrap == static_cast<uint32_t>(FlexWrap::Wrap) && avail.x < 1e5f) {
+    if (row && wrap != 0 && avail.x < 1e5f) {
         Vec2 total{};
         float lineW = 0.f, lineH = 0.f;
         bool first = true;

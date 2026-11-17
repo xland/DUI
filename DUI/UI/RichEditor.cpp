@@ -286,7 +286,7 @@ struct RichEditor::Impl {
     float        layoutLine = 0.f;
     String       layoutFamily;
     StyleContext lastCtx{};
-    // 段落默认（元素级 fontStyle / textDecoration）：run 级只在显式为真时覆盖，
+    // 段落默认（元素级 italic / textDecoration）：run 级只在显式为真时覆盖，
     // 未设的 run 沿用本值 → 整个编辑器可一键斜体 / 加下划线。
     // baseDeco 是 dui::TextDecoration 位标志。
     bool         baseItalic = false;
@@ -1125,7 +1125,7 @@ void RichEditor::Impl::EnsureLayout(const StyleContext& ctx, float width) {
     const wchar_t* family = !doc.defaultFont.empty() ? doc.defaultFont.c_str() : ctx.family;
     const wchar_t* fam = (family != nullptr) ? family : L"";
     // 段落默认：斜体是继承属性 → ctx 已带父计算值；装饰线不继承 → 查元素自身链
-    const bool italic = ctx.fontStyle == static_cast<uint32_t>(dui::FontStyle::Italic);
+    const bool italic = ctx.italic;
     const uint32_t deco = ResolveProperty(host, Prop::TextDecoration, ctx).u;
     const float letterSpacing = ctx.letterSpacing;
     const float wordSpacing = ctx.wordSpacing;

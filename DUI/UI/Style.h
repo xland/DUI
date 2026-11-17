@@ -43,6 +43,7 @@ enum class Prop : uint16_t {
     // 布局
     Display, FlexDirection, FlexShrink, FlexGrow, Gap, JustifyContent, AlignItems,
     // 布局（续）
+    //   FlexWrap      u = 1 换行 / 0 不换行（仅 Row；同 CSS flex-wrap 的 wrap/nowrap 子集）
     FlexWrap,
     // 滚动条（dui::Scroller 自绘轨道/滑块；宽度 = 纵向条厚，高度 = 横向条厚）
     ScrollbarTrackWidth, ScrollbarTrackHeight,
@@ -60,19 +61,19 @@ enum class Prop : uint16_t {
     // u = 颜色 ARGB（0 = 无阴影）。只投元素边框盒，走 Shape 批 kind=3 的 SDF 衰减带。
     Shadow,
     // 字体样式 / 文本装饰（M5.51；追加在表尾，不重排已有属性 ID）：
-    //   FontStyle     u = dui::FontStyle（Normal / Italic；继承属性，同 CSS）
+    //   Italic        u = 1 斜体 / 0 常规（继承属性，同 CSS font-style 的 normal/italic 子集）
     //   TextDecoration u = dui::TextDecoration 位标志（Underline / LineThrough；不继承，同 CSS）
-    FontStyle, TextDecoration,
+    Italic, TextDecoration,
     // 布局 / 文本补充（M5.52；追加在表尾，不重排已有属性 ID）：
     //   LetterSpacing f = 字距（DIP；引擎按 em 千分比下发）
     //   AlignSelf     u = dui::Align（Auto = 未设 → 取父 alignItems）
     //   MinHeight / MaxHeight  f = DIP（与 Min/MaxWidth 对称）
     //   RowGap / ColumnGap    f = DIP（行列间距；未设则回落 gap）
     //   FlexBasis     f = DIP（主轴基准尺寸；按元素盒语义，与 Width 一致）
-    //   Visibility    u = dui::Visibility（继承属性，同 CSS）
+    //   Visible       u = 1 表示可见 / 0 表示隐藏（继承属性；CSS visibility 子集）
     //   Overflow      u = dui::Overflow（Visible / Hidden / Scroll）
     LetterSpacing, AlignSelf, MinHeight, MaxHeight, RowGap, ColumnGap, FlexBasis,
-    Visibility, Overflow,
+    Visible, Overflow,
     // 词距（M5.55；追加在表尾，不重排已有属性 ID）：
     //   WordSpacing f = 词距（DIP；引擎按 em 千分比下发给空格字符区间）
     WordSpacing,
@@ -119,19 +120,14 @@ inline GridTrack Flex(float shares)      { return {GridTrackKind::Flex, shares};
 inline GridTrack Percent(float percent)  { return {GridTrackKind::Percent, percent}; }
 inline constexpr GridTrack Auto{GridTrackKind::Auto, 0.f};
 enum class FlexDirection : uint8_t { Row, Column };
-enum class FlexWrap : uint8_t { NoWrap, Wrap };              // 主轴放不下时换行（仅 Row；04-Layout §4.1 MVP）
 enum class Position : uint8_t { Static, Relative, Absolute, Fixed };   // 04-Layout §4.3
 enum class Justify : uint8_t { Start, Center, End, SpaceBetween, SpaceAround, SpaceEvenly };  // 主轴对齐（04-Layout §4.1）
 // 交叉轴对齐：Stretch 拉满 / Start / Center / End（贴末端）/ Baseline（首行基线对齐）
 enum class Align : uint8_t { Stretch, Start, Center, End, Baseline };
-// 可见性（CSS visibility 子集；**继承属性**）：Hidden = 占位但不画、不命中
-enum class Visibility : uint8_t { Visible, Hidden };
-// 溢出处理（CSS overflow 子集）：Visible 不裁剪 / Hidden 裁剪到内容盒 /
+// 溢出处理（CSS overflow 子集）：Visible 不裁剪 / Hidden 裁剪到元素盒（padding box）/
 // Scroll 裁剪但不显示滚动条（框架的滚动用 Scroller 控件实现）
 enum class Overflow : uint8_t { Visible, Hidden, Scroll };
 enum class FontWeight : uint8_t { Normal, Medium, SemiBold, Bold };
-// CSS font-style 子集：仅常规 / 斜体（oblique 归 italic）
-enum class FontStyle : uint8_t { Normal, Italic };
 // CSS text-decoration 子集（位标志，可组合）：下划线 / 删除线。
 // 无 overline —— DWrite 的 text layout 没有该装饰，引擎也不画。
 enum class TextDecoration : uint8_t {
@@ -267,7 +263,7 @@ public:
     Style& JustifyContent(dui::Justify v);       // 主轴：剩余空间分配
     Style& AlignItems(dui::Align v);             // 交叉轴：子项对齐
     Style& AlignSelf(dui::Align v);              // 交叉轴：单项覆盖（Auto = 未设）
-    Style& FlexWrap(dui::FlexWrap v);            // 主轴放不下时断行（仅 Row）
+    Style& FlexWrap(bool on);                    // 主轴放不下时断行（仅 Row；true = 换行）
     // Grid（04-Layout §4.2）：轨道列表是变长声明，实体存本对象内，
     // FindTracks 沿派生链由近及远找第一个非空定义。
     Style& GridTemplateColumns(std::initializer_list<GridTrack> tracks);
@@ -287,7 +283,7 @@ public:
     Style& Color(dui::Color c);
     Style& FontSize(float dip);
     Style& FontWeight(dui::FontWeight v);
-    Style& FontStyle(dui::FontStyle v);           // 斜体（继承属性，同 CSS font-style）
+    Style& Italic(bool on);                      // 斜体（继承属性；同 CSS font-style 的 normal/italic 子集）
     Style& TextDecoration(dui::TextDecoration v);   // 下划线 / 删除线（位标志，可组合）
     Style& FontFamily(const wchar_t* name);      // 系统已安装字体族；指针需存活到样式使用期
     Style& LineHeight(float multiple);
@@ -296,9 +292,10 @@ public:
     Style& TextAlign(dui::TextAlign v);          // 内容盒内水平对齐（继承属性）
     Style& TextOverflow(dui::TextOverflow v);    // 文本溢出表现（继承属性；Ellipsis = 末尾省略号）
     Style& Opacity(float v);                     // 0..1
-    // 可见性（继承属性，同 CSS visibility）：Hidden = 占位但不画、不命中
-    Style& Visibility(dui::Visibility v);
-    // 溢出：Hidden 裁剪到内容盒；Scroll 裁剪但不画滚动条（滚动用 Scroller 控件）
+    // 可见性（**继承属性**；CSS `visibility` 子集）：false = 占位但不画、不命中
+    // （注意与 `Display::None` 区分：那个是彻底不参与布局）
+    Style& Visible(bool on);
+    // 溢出：Hidden 裁剪到元素盒（padding box）；Scroll 裁剪但不画滚动条（滚动用 Scroller 控件）
     Style& Overflow(dui::Overflow v);
     // 盒模型（CSS box-sizing；非继承）：ContentBox = 宽高不含边框（默认）、
     // BorderBox = 宽高含边框（内容区 = 盒 − 边框 − 内边距）
@@ -391,10 +388,10 @@ struct StyleContext {
     float    letterSpacing = 0.f;     // 继承的字距（DIP）
     float    wordSpacing = 0.f;       // 继承的词距（DIP；加宽词间空格）
     uint32_t fontWeight = 0;
-    uint32_t fontStyle = 0;            // 继承的 dui::FontStyle（默认 Normal）
+    bool    italic = false;           // 继承的斜体（默认常规）
     uint32_t textAlign = 0;            // 继承的 dui::TextAlign（默认 Start）
     uint32_t textOverflow = 0;         // 继承的 dui::TextOverflow（默认 Clip）
-    uint32_t visibility = 0;           // 继承的 dui::Visibility（默认 Visible）
+    bool    visible = true;            // 继承的可见性（默认可见；false = 占位但不画）
     const wchar_t* family = nullptr;   // 继承字体族；nullptr = 引擎默认（微软雅黑）
     float    scale = 1.f;   // 遍历期 DPI 缩放（图像类控件据此把像素尺寸换算为 DIP）
 

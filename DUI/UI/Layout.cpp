@@ -296,7 +296,7 @@ Vec2 MeasureElement(Element* e, const Vec2& avail, const StyleContext& parentCtx
 
     const StyleContext ctx = parentCtx.Child(e);
     // 可见性（继承属性）：隐藏但仍占位。命中测试没有 StyleContext，故布局期落标记。
-    e->hidden_ = ctx.visibility == static_cast<uint32_t>(Visibility::Hidden);
+    e->hidden_ = !ctx.visible;
     const Thickness pad = ElementPadding(e, ctx);
     const Thickness mg = ElementMargin(e, ctx);
     const Thickness bw = ElementBorderBox(e, ctx);   // border-box：边框占盒内空间
@@ -414,7 +414,7 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
     // 主轴剩余空间分配：grow 拉伸 / shrink 收缩（04-Layout §4.1）；
     // 换行布局按行装箱，不参与 grow/shrink
     const uint32_t wrapMode = ResolveProperty(e, Prop::FlexWrap, ctx).u;
-    const bool wrapRow = row && wrapMode == static_cast<uint32_t>(FlexWrap::Wrap);
+    const bool wrapRow = row && wrapMode != 0;
     const int n = static_cast<int>(items.size());
     float total = 0.f;
     for (Element* c : items) total += row ? c->measured_.x : c->measured_.y;

@@ -524,8 +524,7 @@ Vec2 TextBox::MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) 
     in.letterSpacing = ctx.letterSpacing;   // 字距（继承属性）
     in.wordSpacing = ctx.wordSpacing;       // 词距（继承属性）
     // 斜体（继承属性）/ 文本装饰（不继承）：整段默认，run 级由富文本路径覆盖
-    in.italic = ResolveProperty(this, Prop::FontStyle, ctx).u ==
-                static_cast<uint32_t>(dui::FontStyle::Italic);
+    in.italic = ResolveProperty(this, Prop::Italic, ctx).u != 0;
     const uint32_t deco = ResolveProperty(this, Prop::TextDecoration, ctx).u;
     in.underline = dui::HasDecoration(deco, dui::TextDecoration::Underline);
     in.strike = dui::HasDecoration(deco, dui::TextDecoration::LineThrough);

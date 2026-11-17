@@ -6,7 +6,7 @@
 //  想看哪种事件就直接读那个函数，OnCreate 只是把示例名列一遍。
 //
 //  日志直接读回 dui::Text 的当前内容再追加一行，不需要 vector / 环形缓冲。
-//  root 用 Row + FlexWrap(Wrap) 自动排成示例网格；FontSize / Color 由继承
+//  root 用 Row + FlexWrap(true) 自动排成示例网格；FontSize / Color 由继承
 //  下传，单个示例里不重复写外观配置。
 //  可路由事件分两阶段：隧道（根 → 命中）+ 冒泡（命中 → 根）；
 //  Enter / Leave 是直达事件，没有阶段。指针捕获（Element::SetCapture）属于
@@ -197,7 +197,7 @@ protected:
         dui::Panel* root = Root();
         root->SetStyle(dui::Style()
             .FlexDirection(dui::FlexDirection::Row)
-            .FlexWrap(dui::FlexWrap::Wrap)
+            .FlexWrap(true)
             .AlignItems(dui::Align::Start)
             .Gap(14.f).Padding(16.f)
             .FontSize(13.f).Color(0xFF1F2933)

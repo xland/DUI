@@ -211,12 +211,12 @@ auto* b = panel->AddChild<Text>(L"副标题", kTitle);
 
 ```cpp
 static const Style kQuote = Style()
-    .FontStyle(FontStyle::Italic)                                   // 斜体（继承属性）
+    .Italic(true)                                                  // 斜体（继承属性）
     .TextDecoration(TextDecoration::Underline |                     // 位标志可组合
                     TextDecoration::LineThrough);
 ```
 
-- `FontStyle` 是**继承属性**（同 CSS `font-style`）：父元素设一次，整棵子树生效。
+- `Italic` 是**继承属性**（同 CSS `font-style` 的 normal/italic 子集）：父元素设一次，整棵子树生效。
 - `TextDecoration` **不继承**（同 CSS `text-decoration`）：装饰线只作用于设了它的那个元素。
 
 ### 6.2 状态变体（挂在元素上）

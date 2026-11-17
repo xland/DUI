@@ -25,7 +25,7 @@ dui::RichEditor* rich = root->AddChild<dui::RichEditor>();        // 富文本
 - **可聚焦、进 Tab 链**：构造即 `SetFocusable(true)`；`Tab` / `Shift+Tab` 在可聚焦控件间移动焦点（控件自己不消费 `VK_TAB`）。
 - **选区与光标可配**：`SelectionColor`（选区底色，默认 `0x803399FF` 半透明蓝）、`CaretColor`（光标色，未设时取文本色 `Color`）。
 - **拖选可拖出控件**：按下即取**指针捕获**，拖到控件边界外仍继续扩选，并自动把光标滚进视野（多行纵向滚动 / 单行横向滚动）。
-- **文本样式走继承**：`FontFamily` / `FontSize` / `FontWeight` / `FontStyle`（斜体）/ `TextDecoration`（下划线、删除线）都能用，写在父容器上对子输入框生效。
+- **文本样式走继承**：`FontFamily` / `FontSize` / `FontWeight` / `Italic`（斜体）/ `TextDecoration`（下划线、删除线）都能用，写在父容器上对子输入框生效。
 - **不支持 `TextAlign`**：属性存在，但输入框控件不读它。
 - **有自然尺寸下限**：单行至少 120 DIP 宽、高至少是"字号 × 行高"；多行至少 200 × 80 DIP。下限只作用于**自然尺寸** —— 显式写了 `Width` / `Height` 就不受它约束。
 - **单行文本垂直居中**：文本在**内容盒**内垂直居中（行盒居中 + 墨迹视觉居中补偿，与 `Text` 元素同一口径）—— 内容盒比行高小则上下对称裁剪，不会只裁底部。

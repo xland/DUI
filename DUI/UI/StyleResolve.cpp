@@ -29,14 +29,14 @@ bool IsInherited(Prop p) {
     case Prop::Color:
     case Prop::FontSize:
     case Prop::FontWeight:
-    case Prop::FontStyle:
+    case Prop::Italic:
     case Prop::FontFamily:
     case Prop::LineHeight:
     case Prop::LetterSpacing:
     case Prop::WordSpacing:
     case Prop::TextAlign:
     case Prop::TextOverflow:
-    case Prop::Visibility:   // 可见性：父设 hidden 则子树隐藏（子可显式设 visible 反转）
+    case Prop::Visible:   // 可见性：父设隐藏则子树隐藏（子可显式设可见反转）
     case Prop::Cursor:   // 光标：父元素设了，子元素未设则沿用（同 CSS 的 cursor 继承）
     case Prop::AppRegion:   // 窗口拖动区：父设 drag 则子树继承（子设 no-drag 挖洞）
         return true;
@@ -113,11 +113,11 @@ bool TryResolve(const Element* e, Prop p, const StyleContext& ctx, StyleValue& o
     case Prop::LetterSpacing: out = MakeF(p, ctx.letterSpacing); return true;
     case Prop::WordSpacing: out = MakeF(p, ctx.wordSpacing); return true;
     case Prop::FontWeight: out = MakeU(p, ctx.fontWeight); return true;
-    case Prop::FontStyle:  out = MakeU(p, ctx.fontStyle);  return true;
+    case Prop::Italic:  out = MakeU(p, ctx.italic ? 1u : 0u);  return true;
     case Prop::FontFamily: out.family = ctx.family;        return true;   // nullptr = 引擎默认
     case Prop::TextAlign:  out = MakeU(p, ctx.textAlign);  return true;
     case Prop::TextOverflow: out = MakeU(p, ctx.textOverflow); return true;
-    case Prop::Visibility: out = MakeU(p, ctx.visibility); return true;
+    case Prop::Visible: out = MakeU(p, ctx.visible ? 1u : 0u); return true;
     default:
         return false;   // 非继承属性：交给内建默认（层 7）
     }
@@ -146,6 +146,11 @@ StyleValue BuiltinDefault(Prop p) {
     case Prop::ScrollbarThumbHeight:        return MakeF(p, 8.f);
     case Prop::ScrollbarTrackBackgroundColor: return MakeU(p, 0x14000000);
     case Prop::ScrollbarThumbBackgroundColor: return MakeU(p, 0x30000000);
+    // 可见性：u = 1 表示可见（默认可见）；default 分支的 0 在这里是"隐藏"，必须显式给
+    case Prop::Visible:        return MakeU(p, 1u);
+    // 两态布尔（u = 1 开启 / 0 关闭）：default 分支的 0 恰是"关闭"，语义正确，显式写出以固化约定
+    case Prop::Italic:         return MakeU(p, 0u);   // 0 = 常规（不斜体）
+    case Prop::FlexWrap:       return MakeU(p, 0u);   // 0 = 不换行
     default:
         return MakeU(p, 0);   // Flex / 透明 / 0 尺寸
     }
@@ -177,11 +182,11 @@ StyleContext StyleContext::Child(const Element* e) const {
     if (TryResolveElement(e, Prop::LetterSpacing, v)) c.letterSpacing = v.f;
     if (TryResolveElement(e, Prop::WordSpacing, v)) c.wordSpacing = v.f;
     if (TryResolveElement(e, Prop::FontWeight, v)) c.fontWeight = v.u;
-    if (TryResolveElement(e, Prop::FontStyle, v))  c.fontStyle = v.u;
+    if (TryResolveElement(e, Prop::Italic, v))  c.italic = (v.u != 0);
     if (TryResolveElement(e, Prop::FontFamily, v)) c.family = v.family;   // nullptr 透传引擎默认
     if (TryResolveElement(e, Prop::TextAlign, v))  c.textAlign = v.u;
     if (TryResolveElement(e, Prop::TextOverflow, v)) c.textOverflow = v.u;
-    if (TryResolveElement(e, Prop::Visibility, v)) c.visibility = v.u;
+    if (TryResolveElement(e, Prop::Visible, v)) c.visible = (v.u != 0);
     return c;
 }
 
@@ -345,7 +350,7 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::FontFamily:
     case Prop::LineHeight:
     // 斜体 / 文本装饰：段落要重新排版（斜体改字形宽度；装饰线进引擎的形状缓存键）
-    case Prop::FontStyle:
+    case Prop::Italic:
     case Prop::TextDecoration:
     case Prop::TextOverflow:   // 省略号截断要重排（截断点随宽度变）
     case Prop::BoxSizing:     // 盒模型：内容区尺寸随之变化
@@ -364,7 +369,7 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::AlignItems:
     case Prop::FlexWrap:
     // 布局补充（M5.52）：字距改排版宽度；alignSelf 改单项交叉轴；min/max 高；
-    // 行列间距；flexBasis 改主轴基准尺寸；visibility 改可见性（布局期写命中标记）
+    // 行列间距；flexBasis 改主轴基准尺寸；visible 改可见性（布局期写命中标记）
     case Prop::LetterSpacing:
     case Prop::WordSpacing:
     case Prop::AlignSelf:
@@ -373,7 +378,7 @@ uint32_t PropFlagsOf(Prop p) {
     case Prop::RowGap:
     case Prop::ColumnGap:
     case Prop::FlexBasis:
-    case Prop::Visibility:
+    case Prop::Visible:
     // 定位：改布局盒，需重新 Measure/Arrange
     case Prop::Position:
     case Prop::Left:

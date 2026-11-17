@@ -351,7 +351,7 @@ public:
     // Measure 结果（外边距盒 = 元素盒 + margin）：Grid / 自定义布局读子项占位用
     Vec2 Measured() const noexcept { return measured_; }
 
-    // 可见性（visibility: hidden）：占位但不画、不命中。布局期按继承算好后写入
+    // 可见性（visible: false）：占位但不画、不命中。布局期按继承算好后写入
     // （命中测试没有 StyleContext，故用布局期结果，避免每次命中都上溯父链）。
     bool Hidden() const noexcept { return hidden_; }
 
@@ -447,7 +447,7 @@ private:
     std::unique_ptr<Handlers> handlers_;
 
     int  tabIndex_ = 0;        // Tab 链次序（见 SetTabIndex 注释）
-    bool hidden_ = false;      // visibility: hidden（布局期写；命中 / 绘制读）
+    bool hidden_ = false;      // visible: false（布局期写；命中 / 绘制读）
 
 private:
     // 布局 / 解析 / 事件实现（Layout.cpp、StyleResolve.cpp、Event.cpp）

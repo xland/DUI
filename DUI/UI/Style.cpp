@@ -71,7 +71,7 @@ Style& Style::FlexBasis(float dip)                 { return SetF(Prop::FlexBasis
 Style& Style::JustifyContent(dui::Justify v)       { return SetU(Prop::JustifyContent, static_cast<uint32_t>(v)); }
 Style& Style::AlignItems(dui::Align v)             { return SetU(Prop::AlignItems, static_cast<uint32_t>(v)); }
 Style& Style::AlignSelf(dui::Align v)              { return SetU(Prop::AlignSelf, static_cast<uint32_t>(v)); }
-Style& Style::FlexWrap(dui::FlexWrap v)            { return SetU(Prop::FlexWrap, static_cast<uint32_t>(v)); }
+Style& Style::FlexWrap(bool on)                    { return SetU(Prop::FlexWrap, on ? 1u : 0u); }
 // Grid：占位声明让 Prop 在级联里可见，变长轨道实体存 vector（push_back 避免异常展开实例化）
 Style& Style::GridTemplateColumns(std::initializer_list<GridTrack> tracks) {
     gridCols_.clear();
@@ -95,7 +95,7 @@ Style& Style::Background(dui::Color c)             { return SetU(Prop::Backgroun
 Style& Style::Color(dui::Color c)                  { return SetU(Prop::Color, c); }
 Style& Style::FontSize(float dip)                  { return SetF(Prop::FontSize, dip); }
 Style& Style::FontWeight(dui::FontWeight v)        { return SetU(Prop::FontWeight, static_cast<uint32_t>(v)); }
-Style& Style::FontStyle(dui::FontStyle v)          { return SetU(Prop::FontStyle, static_cast<uint32_t>(v)); }
+Style& Style::Italic(bool on)                   { return SetU(Prop::Italic, on ? 1u : 0u); }
 Style& Style::TextDecoration(dui::TextDecoration v) { return SetU(Prop::TextDecoration, static_cast<uint32_t>(v)); }
 Style& Style::FontFamily(const wchar_t* name) { Ensure(Prop::FontFamily).family = name; return *this; }
 Style& Style::LineHeight(float multiple)      { return SetF(Prop::LineHeight, multiple); }
@@ -104,7 +104,7 @@ Style& Style::WordSpacing(float dip)          { return SetF(Prop::WordSpacing, d
 Style& Style::TextAlign(dui::TextAlign v)     { return SetU(Prop::TextAlign, static_cast<uint32_t>(v)); }
 Style& Style::TextOverflow(dui::TextOverflow v) { return SetU(Prop::TextOverflow, static_cast<uint32_t>(v)); }
 Style& Style::Opacity(float v)                { return SetF(Prop::Opacity, v); }
-Style& Style::Visibility(dui::Visibility v)   { return SetU(Prop::Visibility, static_cast<uint32_t>(v)); }
+Style& Style::Visible(bool on)                  { return SetU(Prop::Visible, on ? 1u : 0u); }
 Style& Style::Overflow(dui::Overflow v)       { return SetU(Prop::Overflow, static_cast<uint32_t>(v)); }
 Style& Style::SelectionColor(dui::Color c)   { return SetU(Prop::SelectionColor, c); }
 Style& Style::CaretColor(dui::Color c)       { return SetU(Prop::CaretColor, c); }

@@ -88,13 +88,13 @@ protected:
         root->AddChild<dui::Text>(L"支持格式：ttf / otf / ttc（DirectWrite 只认 SFNT）；woff2 需先转换",
                                   dui::Style().FontSize(12.f).Color(0xFF9CA3AF).FlexShrink(0.f));
 
-        // 图标流式排列：单行 Row + FlexWrap(Wrap)，宽度不够自动换行，图标本体用 iconfont 族 + 大字号
+        // 图标流式排列：单行 Row + FlexWrap(true)，宽度不够自动换行，图标本体用 iconfont 族 + 大字号
         dui::Panel* grid = root->AddChild<dui::Panel>(dui::Style()
             .Gap(20.f));
         wchar_t glyph[2] = {};
         dui::Panel* line = grid->AddChild<dui::Panel>(dui::Style()
             .FlexDirection(dui::FlexDirection::Row)
-            .FlexWrap(dui::FlexWrap::Wrap)
+            .FlexWrap(true)
             .Gap(28.f));
         for (int idx = 0; idx < 13; ++idx) {
             dui::Panel* cell = line->AddChild<dui::Panel>(dui::Style()

@@ -5,7 +5,7 @@
 //  控件和回调都写在函数内部，没有成员变量、没有跨示例状态。想看哪个功能
 //  就直接读那个函数，OnCreate 只是把示例名列一遍。
 //
-//  root 用 Row + FlexWrap(Wrap) 自动排成示例网格；FontSize / Color 是继承
+//  root 用 Row + FlexWrap(true) 自动排成示例网格；FontSize / Color 是继承
 //  属性，由 root 一次设好下传，所以单个示例里不需要重复写外观配置。
 //  示例 11 / 12 演示多通道补间：Thickness 四边（每帧重排）与四角圆角（只重绘）。
 //  示例 13 演示生命周期控制：Animate 只创建动画，Start 才执行；一组句柄可统一
@@ -326,7 +326,7 @@ protected:
         dui::Panel* root = Root();
         root->SetStyle(dui::Style()
             .FlexDirection(dui::FlexDirection::Row)
-            .FlexWrap(dui::FlexWrap::Wrap)
+            .FlexWrap(true)
             .AlignItems(dui::Align::Start)
             .Gap(14.f).Padding(16.f)
             .FontSize(13.f).Color(0xFF1F2933)

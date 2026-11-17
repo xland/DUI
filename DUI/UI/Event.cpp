@@ -55,7 +55,7 @@ Element* HitTestInner(Element* e, const Vec2& ptAbs, Vec2* outLocal,
         const Vec2 qc = t.Inverse().Apply(ptAbs);
         const Rect& b = c->Bounds();
         if (b.w <= 0.f || b.h <= 0.f || !InRect(b, qc)) return nullptr;
-        // visibility: hidden → 自身不可命中；子树里显式 visible 的元素仍可命中
+        // visible: false → 自身不可命中；子树里显式设可见的元素仍可命中
         const bool hidden = c->Hidden();
         if (c->GetKind() == Kind::Scroller) {
             auto* sc = static_cast<Scroller*>(c);

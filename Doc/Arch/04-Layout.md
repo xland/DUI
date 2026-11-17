@@ -42,7 +42,7 @@ display: Flex; flexDirection: Column; alignItems: Stretch   ← 默认值
 | --- | --- |
 | `div`（块级流） | 默认值组合（§2 开头），无需任何设置 |
 | `flex` 容器 | `display: Flex` + `flexDirection: Row` |
-| `inline` / 文本混排 | 交给 文字排版层排版（§4.4），容器级内联 = `flexWrap: Wrap` 的行布局 |
+| `inline` / 文本混排 | 交给 文字排版层排版（§4.4），容器级内联 = `FlexWrap(true)` 的行布局 |
 | `grid` | `display: Grid`（§4.2） |
 | `position: absolute` / `fixed` | `Position::Absolute` / `Fixed`（§4.3） |
 | `table` | 不做，Grid 覆盖（§7） |
@@ -83,7 +83,7 @@ display: Flex; flexDirection: Column; alignItems: Stretch   ← 默认值
 | 属性组 | 内容 |
 | --- | --- |
 | 方向 | `flexDirection: Row / Column`；主轴方向受 `direction`（RTL）影响 |
-| 换行 | `flexWrap: NoWrap / Wrap`（对应 R2 的容器级行为） |
+| 换行 | `FlexWrap(bool)`：true = 换行（对应 R2 的容器级行为） |
 | 主轴对齐 | `justifyContent: Start / Center / End / SpaceBetween / SpaceAround / SpaceEvenly`（**已落地**，M5.52） |
 | 交叉轴对齐 | `alignItems` / `alignSelf: Stretch / Start / Center / End / Baseline`（**已落地**，M5.52；`Baseline` 按首行文本基线对齐） |
 | 弹性 | `flexGrow` / `flexShrink` / `flexBasis`（`flexBasis` **已落地**，M5.52：主轴基准尺寸，按元素盒语义） |
@@ -260,13 +260,13 @@ struct Constraints { float minW, maxW, minH, maxH; };   // 传给子树的可用
 
 ## 8. 布局子系统消费的属性
 
-属性定义、类型与默认值统一见 [15-Properties.md](./15-Properties.md) §4.4（唯一事实来源，ADR-024）；本节只记录**取值语义**（均带 `Layout` 标志，`display`/`visibility` 例外说明同前）：
+属性定义、类型与默认值统一见 [15-Properties.md](./15-Properties.md) §4.4（唯一事实来源，ADR-024）；本节只记录**取值语义**（均带 `Layout` 标志，`display`/`visible` 例外说明同前）：
 
 | 属性 | 类型 | 说明 |
 | --- | --- | --- |
 | `display` | Enum | `Flex`（默认）/ `Grid` / `None` |
 | `flexDirection` | Enum | Row / Column（默认 Column） |
-| `flexWrap` | Enum | NoWrap（默认）/ Wrap |
+| `flexWrap` | Bool | false（默认）/ true = 换行 |
 | `justifyContent` | Enum | 主轴对齐（`Start`/`Center`/`End`/`SpaceBetween`/`SpaceAround`/`SpaceEvenly`，M5.52 全落地） |
 | `alignItems` / `alignSelf` | Enum | 交叉轴对齐（`Stretch`/`Start`/`Center`/`End`/`Baseline`；`alignSelf` 未设取父 `alignItems`） |
 | `flexGrow` / `flexShrink` | Float | 默认 0 / 1 |

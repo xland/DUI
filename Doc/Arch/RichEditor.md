@@ -80,7 +80,7 @@ struct Run { std::wstring text; RunStyle style; };
 
 **与排版引擎的衔接（P0 已落地）**：`TextEngine::TextRun` 只描述与段落默认值的**差异**（字号/字重/族名/颜色/斜体/下划线/删除线，未设置的字段继承），`ShapeInput::runs` 直接指向文档模型持有的数组、引擎**不拷贝**；内容变化由调用方递增 `runVersion` 告知引擎重建 layout（`Measure` 每帧调用，不做 run 数组深比较）。`runCount == 0` 时走单样式路径，与 run 化前完全同路。
 
-**元素级段落默认（M5.51）**：RichEditor 元素上的 `fontStyle`（斜体，**继承属性**）与 `textDecoration`（下划线 / 删除线，**不继承**）作为**段落默认**下发 —— run 级的 `italic/underline/strike` 只在**显式为真**时覆盖，未设的 run 沿用段落默认。行号 / 项目符号 / 图片替代文本**不跟随**（`MakePara` 的 `applyBase` 参数）。元素级 `textDecoration` 走元素自身链（非继承），故 `RichEditor` 需持有宿主元素指针（`Impl::host`）才能取到。
+**元素级段落默认（M5.51）**：RichEditor 元素上的 `Italic`（斜体，**继承属性**）与 `textDecoration`（下划线 / 删除线，**不继承**）作为**段落默认**下发 —— run 级的 `italic/underline/strike` 只在**显式为真**时覆盖，未设的 run 沿用段落默认。行号 / 项目符号 / 图片替代文本**不跟随**（`MakePara` 的 `applyBase` 参数）。元素级 `textDecoration` 走元素自身链（非继承），故 `RichEditor` 需持有宿主元素指针（`Impl::host`）才能取到。
 
 ### 3.3 D3 样式值：CSS 白名单子集（建议，待确认）
 

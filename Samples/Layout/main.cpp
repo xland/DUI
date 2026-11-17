@@ -6,7 +6,7 @@
 //  JustifyContent / AlignItems（主轴/交叉轴对齐）、嵌套容器、
 //  Grid（Fixed/Flex/Auto/Percent 轨道 + 自动放置 + 显式行列 + 跨格）、
 //  JustifyContent 六取值、alignSelf / alignItems::End·Baseline、
-//  FlexBasis、rowGap/columnGap、visibility / overflow / letterSpacing。
+//  FlexBasis、rowGap/columnGap、visible / overflow / letterSpacing。
 //  样式相关示例（Margin / TextAlign / 运行时 Set）见 Samples/Style；
 //  定位相关示例（Relative/Absolute/Fixed/zIndex）见 Samples/Position。
 //
@@ -214,7 +214,7 @@ protected:
         NewCaption(root, L"FlexWrap + columnGap 12 / rowGap 20：换行后列间距与行间距分开");
         dui::Panel* wrapBox = root->AddChild<dui::Panel>(dui::Style()
             .FlexDirection(dui::FlexDirection::Row)
-            .FlexWrap(dui::FlexWrap::Wrap)
+            .FlexWrap(true)
             .ColumnGap(12.f).RowGap(20.f)
             .Width(320.f)
             .Padding(8.f)
@@ -223,7 +223,7 @@ protected:
             NewBox(wrapBox, L"item", 0xFF4472C4, 80.f, 40.f);
 
         // ---- 可见性 / 溢出裁剪 / 字距 -----------------------------------------
-        NewCaption(root, L"Visibility 隐藏但占位 · Overflow 裁剪到内容盒 · LetterSpacing 字距");
+        NewCaption(root, L"Visible(false) 隐藏但占位 · Overflow 裁剪到元素盒 · LetterSpacing 字距");
         dui::Panel* miscRow = root->AddChild<dui::Panel>(dui::Style()
             .FlexDirection(dui::FlexDirection::Row)
             .Gap(12.f)
@@ -231,7 +231,7 @@ protected:
         dui::Panel* hiddenBox = miscRow->AddChild<dui::Panel>(dui::Style()
             .Width(120.f).Height(58.f)
             .Background(0xFF4472C4).CornerRadius(4.f)
-            .Visibility(dui::Visibility::Hidden));   // 占位但不画
+            .Visible(false));   // 占位但不画
         hiddenBox->AddChild<dui::Text>(L"看不见", dui::Style().Color(0xFFFFFFFF));
         dui::Panel* clipBox = miscRow->AddChild<dui::Panel>(dui::Style()
             .Width(220.f).Height(58.f)

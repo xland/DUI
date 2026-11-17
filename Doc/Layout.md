@@ -129,7 +129,7 @@ row->AddChild<dui::Text>(L"28 号", dui::Style().FontSize(28.f));
 
 上面一行是 `Baseline`：蓝块的**底边**落在文字基线上（它没有基线，按外边距盒底边参与计算）；下面一行是 `End`：所有项的底边直接对齐。
 
-> `Baseline` 在 `Column` 主轴下退化为 `Start`，在**换行布局（`FlexWrap`）**下退化为自然尺寸；Grid 里不支持基线对齐。
+> `Baseline` 在 `Column` 主轴下退化为 `Start`，在**换行布局（`FlexWrap(true)`）**下退化为自然尺寸；Grid 里不支持基线对齐。
 
 ---
 
@@ -231,12 +231,12 @@ else         demoStyle.RowGap(gap);
 
 ### 4.2 `FlexWrap`：放不下就换行
 
-`FlexWrap::Wrap` 让主轴放不下的项**断到下一行**（贪心装箱：能放就放，放不下才换行）。
+`FlexWrap(true)` 让主轴放不下的项**断到下一行**（贪心装箱：能放就放，放不下才换行）。
 
 ```cpp
 dui::Panel* wrap = root->AddChild<dui::Panel>(dui::Style()
     .FlexDirection(dui::FlexDirection::Row)
-    .FlexWrap(dui::FlexWrap::Wrap)
+    .FlexWrap(true)
     .ColumnGap(12.f)     // 行内（列方向）间距
     .RowGap(20.f)        // 行与行之间（行方向）间距
     .Width(320.f));
@@ -397,7 +397,7 @@ dui::Panel* hidden = row->AddChild<dui::Panel>(dui::Style()
 
 它既不绘制、也不占位 —— 后面的项直接顶上来。
 
-> 只想"隐藏但保留位置"用 `Visibility::Hidden`（见 [Styles.md](Styles.md) §9.1）；`Display::None` 是**彻底不参与布局**。
+> 只想"隐藏但保留位置"用 `Visible(false)`（见 [Styles.md](Styles.md) §9.1）；`Display::None` 是**彻底不参与布局**。
 
 ### 7.2 内容超高：放进 `Scroller`
 
@@ -472,7 +472,7 @@ dui::Panel* box = root->AddChild<dui::Panel>(dui::Style()
 | --------------------------------------------------- | --------------------------------------------------------------------------- | --------------- | ------------------------------------------------------------- |
 | `Display`                                           | `Flex` / `Grid` / `None`                                                    | `Flex`          | 容器如何排子项                                                |
 | `FlexDirection`                                     | `Row` / `Column`                                                            | `Column`        | 主轴方向                                                      |
-| `FlexWrap`                                          | `NoWrap` / `Wrap`                                                           | `NoWrap`        | 断行（**仅 Row**）                                            |
+| `FlexWrap`                                          | `bool`（true = 换行）                                                       | `false`         | 断行（**仅 Row**）                                            |
 | `JustifyContent`                                    | `Start` / `Center` / `End` / `SpaceBetween` / `SpaceAround` / `SpaceEvenly` | `Start`         | 主轴剩余空间分配                                              |
 | `AlignItems`                                        | `Stretch` / `Start` / `Center` / `End` / `Baseline`                         | `Stretch`       | 交叉轴对齐                                                    |
 | `AlignSelf`                                         | `Stretch` / `Start` / `Center` / `End` / `Baseline`                         | 未设 = 跟随父级 | 单项覆盖 `AlignItems`（**没有 `Auto` 哨兵**：不写即跟随父级） |

@@ -10,7 +10,7 @@
 //  / BorderStyle）、BoxSizing: BorderBox（边框占盒内空间）、Margin（外边距盒，不塌陷）、
 //  TextAlign（内容盒内对齐 + 继承）、运行时 Set 覆盖（Thickness / 字体族指针）、
 //  Shadow（box-shadow 子集：圆角矩形投影，Shape 批 SDF 衰减带，无纹理/离屏）、
-//  FontStyle（斜体，继承属性）、TextDecoration（下划线 / 删除线，位标志，不继承）、
+//  Italic（斜体，继承属性）、TextDecoration（下划线 / 删除线，位标志，不继承）、
 //  Overflow（默认溢出可见，Hidden 显式截断）、WordSpacing（词距，继承）、
 //  TextOverflow: Ellipsis（单行省略号截断）。
 //
@@ -319,17 +319,17 @@ protected:
             L"这是一段很长很长很长很长很长很长很长很长很长的文字，用来演示省略号截断",
             dui::Style().TextOverflow(dui::TextOverflow::Ellipsis));
 
-        // ---- 斜体 / 文本装饰：fontStyle 继承，textDecoration 不继承 ----------------
-        NewCaption(root, L"FontStyle：斜体（继承属性，父级设置 → 子 Text 生效）；TextDecoration：下划线 / 删除线（位标志，不继承）");
+        // ---- 斜体 / 文本装饰：Italic 继承，textDecoration 不继承 --------------------
+        NewCaption(root, L"Italic：斜体（继承属性，父级设置 → 子 Text 生效）；TextDecoration：下划线 / 删除线（位标志，不继承）");
         dui::Panel* decoRow = root->AddChild<dui::Panel>(dui::Style()
             .FlexDirection(dui::FlexDirection::Row)
             .Gap(12.f));
         dui::Panel* italicBox = decoRow->AddChild<dui::Panel>(dui::Style()
             .Width(210.f).Height(76.f)
             .Background(0xFFFFFFFF).Color(0xFF222222)
-            .FontStyle(dui::FontStyle::Italic)          // 设在容器上 → 子 Text 继承
+            .Italic(true)                         // 设在容器上 → 子 Text 继承
             .Padding(10.f));
-        italicBox->AddChild<dui::Text>(L"斜体：父级设 fontStyle\n子 Text 继承");
+        italicBox->AddChild<dui::Text>(L"斜体：父级设 Italic\n子 Text 继承");
         dui::Panel* decoBox = decoRow->AddChild<dui::Panel>(dui::Style()
             .Width(240.f).Height(76.f)
             .Background(0xFFFFFFFF).Color(0xFF222222)

@@ -388,11 +388,11 @@ cellStyle.TextAlign(dui::TextAlign::End);
 
 ### 7.2 斜体与装饰线
 
-`FontStyle`（`Normal` / `Italic`）是**继承属性**，设在容器上对子 `Text` 生效；`TextDecoration`（`Underline` / `LineThrough` 位标志，可组合）**不继承**，必须写在 `Text` 自己身上。
+`Italic(true)` 是**继承属性**，设在容器上对子 `Text` 生效（同 CSS `font-style`，只做 normal/italic 子集）；`TextDecoration`（`Underline` / `LineThrough` 位标志，可组合）**不继承**，必须写在 `Text` 自己身上。
 
 ```cpp
 // 斜体：设在容器上，子 Text 继承
-italic->AddChild<dui::Text>(L"斜体：父级设 fontStyle，子 Text 继承");
+italic->AddChild<dui::Text>(L"斜体：父级设 Italic，子 Text 继承");
 
 // 装饰线：必须写在 Text 上
 deco->AddChild<dui::Text>(L"下划线 + 删除线", dui::Style()
@@ -458,11 +458,13 @@ alpha->AddChild<dui::Text>(L"Opacity(0.45)\n整体半透明");
 
 ## 9. 溢出与可见性
 
-### 9.1 `Overflow` 裁剪，`Visibility` 隐藏
+### 9.1 `Overflow` 裁剪，`Visible(false)` 隐藏
 
 `Overflow` 决定内容是否被裁到元素盒内：`Visible`（默认，同 CSS，不裁剪）、`Hidden`（裁到**元素盒 = padding box**，同 CSS）、`Scroll`（与 `Hidden` 同义，只裁不画滚动条 —— 框架的滚动条用 `dui::Scroller` 控件实现）。
 
-`Visibility::Hidden` 则相反：**不可见但仍占位**，后面的元素不会被前移，也不参与命中测试（继承属性，子元素可显式设 `Visible` 反转）。
+`Visible(false)` 则相反：**不可见但仍占位**，后面的元素不会被前移，也不参与命中测试（继承属性，子元素可显式设 `Visible(true)` 反转）。
+
+> 与 `Display::None` 区分：那个是**彻底不参与布局**（连位置都不留），`Visible(false)` 是"留位置但不画"。
 
 ```cpp
 // ① 默认 Visible：内容溢出到盒外（与 CSS 一致，不裁剪）
@@ -482,12 +484,12 @@ dui::Panel* hidden = row->AddChild<dui::Panel>(dui::Style()
 hidden->AddChild<dui::Text>(L"② Overflow::Hidden：\n这行字很长很长很长很长很长很长很长，\n排不下就被裁到盒子里面去了",
                              dui::Style().FontSize(16.f));
 
-// ③ Visibility::Hidden：不画但占位（后面的盒子不会被前移）
+// ③ Visible(false)：不画但占位（后面的盒子不会被前移）
 dui::Panel* invisible = row->AddChild<dui::Panel>(dui::Style()
     .Width(200.f).Height(100.f)
     .Background(0xFFE7E6E6).CornerRadius(4.f)
     .Padding(10.f)
-    .Visibility(dui::Visibility::Hidden));
+    .Visible(false));
 
 // ④ 正常对照
 dui::Panel* normal = row->AddChild<dui::Panel>(dui::Style()
@@ -500,7 +502,7 @@ normal->AddChild<dui::Text>(L"④ 正常显示的一格", dui::Style().FontSize(
 
 ![示例 9.1：溢出裁剪与可见性](Sytles/09-1.png)
 
-从左到右：第一格文字溢出到盒外（默认 `Visible` 不裁剪）；第二格同样的内容被**切在盒子的下边缘**（`Hidden` 裁到元素盒）；第三格不可见，但位置留住了空位（`Visibility::Hidden` 占位不绘制）；第四格正常显示。
+从左到右：第一格文字溢出到盒外（默认 `Overflow::Visible` 不裁剪）；第二格同样的内容被**切在盒子的下边缘**（`Overflow::Hidden` 裁到元素盒）；第三格不可见，但位置留住了空位（`Visible(false)` 占位不绘制）；第四格正常显示。
 
 ---
 
@@ -523,7 +525,7 @@ normal->AddChild<dui::Text>(L"④ 正常显示的一格", dui::Style().FontSize(
 | `Shadow`             | `(blur, color, offsetX, offsetY)` | 无              | 否   |
 | `Padding` / `Margin` | `float` / `Thickness`             | 0               | 否   |
 | `Overflow`           | `Visible` / `Hidden` / `Scroll`   | `Visible`       | 否   |
-| `Visibility`         | `Visible` / `Hidden`              | `Visible`       | 是   |
+| `Visible`            | `bool`（false = 占位不画）              | `true`           | 是   |
 
 ### 10.2 文本与字体
 
@@ -531,7 +533,7 @@ normal->AddChild<dui::Text>(L"④ 正常显示的一格", dui::Style().FontSize(
 | ---------------- | ----------------------------------------- | -------- | ---- |
 | `FontSize`       | `float`（DIP）                            | 14       | 是   |
 | `FontWeight`     | `Normal` / `Medium` / `SemiBold` / `Bold` | `Normal` | 是   |
-| `FontStyle`      | `Normal` / `Italic`                       | `Normal` | 是   |
+| `Italic`          | `bool`（true = 斜体）                     | `false`  | 是   |
 | `FontFamily`     | `const wchar_t*`（只存指针）              | 引擎默认 | 是   |
 | `LineHeight`     | `float`（倍数）                           | 1.2      | 是   |
 | `LetterSpacing`  | `float`（DIP）                            | 0        | 是   |
@@ -550,7 +552,7 @@ normal->AddChild<dui::Text>(L"④ 正常显示的一格", dui::Style().FontSize(
 | `Padding` / `Margin`                                  | `float` / `Thickness`                                                       | 0                  | 否   |
 | `Gap` / `RowGap` / `ColumnGap`                        | `float`（DIP）                                                              | 0                  | 否   |
 | `FlexDirection`                                       | `Row` / `Column`                                                            | `Column`           | 否   |
-| `FlexWrap`                                            | `NoWrap` / `Wrap`                                                           | `NoWrap`           | 否   |
+| `FlexWrap`                                            | `bool`（true = 换行）                                                       | `false`            | 否   |
 | `FlexGrow` / `FlexShrink` / `FlexBasis`               | `float`                                                                     | 0 / 1 / auto       | 否   |
 | `JustifyContent`                                      | `Start` / `Center` / `End` / `SpaceBetween` / `SpaceAround` / `SpaceEvenly` | `Start`            | 否   |
 | `AlignItems` / `AlignSelf`                            | `Stretch` / `Start` / `Center` / `End` / `Baseline`                         | `Stretch` / `Auto` | 否   |

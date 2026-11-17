@@ -9,7 +9,7 @@
 | `FontFamily`     | `const wchar_t*`      | 是           | 字体族名。**只存指针不拷字符串**（§2.2）                         |
 | `FontSize`       | `float`（DIP）        | 是           | 字号，默认 14                                                    |
 | `FontWeight`     | `dui::FontWeight`     | 是           | `Normal` / `Medium` / `SemiBold` / `Bold`（枚举，不是 CSS 数字） |
-| `FontStyle`      | `dui::FontStyle`      | 是           | `Normal` / `Italic`                                              |
+| `Italic`          | `bool`                | 是           | true = 斜体（同 CSS `font-style`，只做 normal/italic 子集）       |
 | `TextDecoration` | `dui::TextDecoration` | 否（同 CSS） | `Underline` / `LineThrough`，位标志可组合                        |
 | `LineHeight`     | `float`（倍数）       | 是           | 行高倍数，默认 1.2                                               |
 | `LetterSpacing`  | `float`（DIP）        | 是           | 字距                                                             |

@@ -51,7 +51,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | `fontSize` | Length | ✓ | Layout·Text | ✓ | 14 dip | 排版缓存键；动画慎用 |
 | `fontWeight` | Enum | ✓ | Layout·Text | ✗ | Normal | 排版缓存键 |
 | `fontFamily` | String（`const wchar_t*` 指针） | ✓ | Layout·Text | ✓ | Microsoft YaHei | 框架默认微软雅黑；开发者可指定系统已安装任意字体族，指针生命周期由调用方保证（建议字面量）；未安装时 DWrite 自动回退默认。未安装字体经 `dui::LoadFontFamily`（文件）或 `dui::LoadFontFamilyFromMemory`（资源嵌入 exe 的内存字节）装入，可装多个、各自独立生效；仅支持 ttf/otf/ttc（DWrite 只认 SFNT，woff2 不支持，需先转换） |
-| `fontStyle` | Enum（`dui::FontStyle`） | ✓ | Layout·Text | ✗ | Normal | 排版缓存键；运行时已接入：`Normal / Italic`（CSS `oblique` 归 Italic）；链式方法 `FontStyle()`；DWrite `SetFontStyle` |
+| `italic` | Bool | ✓ | Layout·Text | ✗ | false | 排版缓存键；运行时已接入：链式方法 `Italic(bool)`（true = 斜体，同 CSS `font-style: italic`，`oblique` 归 italic）；DWrite `SetFontStyle` |
 | `textAlign` | Enum | ✓ | **Paint** | ✗ | Start | 运行时已接入；`dui::TextAlign::Start/Center/End` + `Style::TextAlign()`；静态 `Text` 在内容盒内对齐（绘制期平移，不改 DWrite 排版，故标 Paint），`TextBox` 不参与；多行按最长行整体对齐 |
 | `lineHeight` | Length（倍数） | ✓ | Layout·Text | ✓ | 1.2 | |
 | `letterSpacing` | Length（DIP） | ✓ | Layout·Text | ✓ | 0 | **已落地**：继承属性；DWrite `IDWriteTextLayout1::SetCharacterSpacing`（CSS 的"字符后加距"对应 `trailingSpacing`）；**数值单位由运行时实测标定**（不同 dwrite 运行时分别按 DIP 或 1/1000 em 解释，硬编码换算会差 1000 倍 → 排版被打散成多行，详见 11-Text §字距单位）；进排版缓存键；`Text` / `TextBox` / `RichEditor` 均生效 |
@@ -126,7 +126,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | --- | --- | --- | --- | --- | --- | --- |
 | `display` | Enum | ✗ | Layout | ✗ | Flex | Flex / Grid / None |
 | `flexDirection` | Enum | ✗ | Layout | ✗ | Column | 块级流语义来源 |
-| `flexWrap` | Enum | ✗ | Layout | ✗ | NoWrap | NoWrap / Wrap（Wrap 仅 Row；运行时已实现，贪心断行） |
+| `flexWrap` | Bool | ✗ | Layout | ✗ | false | 链式方法 `FlexWrap(bool)`（true = 换行，同 CSS `flex-wrap: wrap` 的 wrap/nowrap 子集）；换行仅 Row 生效；运行时已实现，贪心断行 |
 | `justifyContent` | Enum（`dui::Justify`） | ✗ | Layout | ✗ | Start | **已落地**：`Start / Center / End / SpaceBetween / SpaceAround / SpaceEvenly`（CSS `justify-content` 全集）；剩余空间为负（溢出）时退化为 `Start` |
 | `alignItems` | Enum（`dui::Align`） | ✗ | Layout | ✗ | Stretch | **已落地**：`Stretch / Start / Center / End / Baseline`。`Start` 不拉伸（CSS `flex-start` 语义）；`Baseline` 按首行文本基线对齐，无基线的元素退化为外边距盒底边 |
 | `alignSelf` | Enum（`dui::Align`） | ✗ | Layout | ✗ | 未设 | **已落地**：单项覆盖父的 `alignItems`；**未设置**（链上没有该属性）即取父值（同 CSS `auto`） |
@@ -156,7 +156,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 
 | 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `visibility` | Enum（`dui::Visibility`） | ✓ | Layout | ✗ | Visible | **已落地**：**继承属性**（同 CSS）；`Hidden` = 占位但不画、不命中；子元素可显式设 `Visible` 反转父的隐藏。命中测试没有 `StyleContext`，故可见性在布局期算好后落到元素上（`Element::Hidden()`），绘制与命中读同一份结果 |
+| `visible` | Bool | ✓ | Layout | ✗ | true | **已落地**：**继承属性**（CSS `visibility` 子集）；`false` = 占位但不画、不命中；子元素可显式设 `true` 反转父的隐藏。命中测试没有 `StyleContext`，故可见性在布局期算好后落到元素上（`Element::Hidden()`），绘制与命中读同一份结果 |
 | `cursor` | Enum | ✓ | — | ✗ | Default | 由 Event 层读取 |
 | `appRegion` | Enum（`dui::AppRegion`） | ✓ | — | ✗ | None | **已落地（M5.61）**：窗口拖动区（app-region）。`None` = 不参与；`Drag` = 该元素区域可拖动窗口（等价 `HTCAPTION`，拖动由系统接管）；`NoDrag` = 该区域不参与拖动，**对子树生效**（挖掉父级的 `Drag`）。**继承属性**：父设 `Drag` → 子元素默认继承（点标题文字也能拖窗），子元素显式设 `NoDrag` 即恢复交互 —— 与 Electron 的 `-webkit-app-region` 同语义。只影响**窗口非客户区命中**（`WM_NCHITTEST`），不影响布局 / 绘制 / 文本（失效标志为"无"）。仅无边框窗口有意义（12-Windowing §6.2） |
 | `userSelect` | Bool | ✗ | — | ✗ | false | **已落地（M5.63）**：文本选择（CSS `user-select` 子集，仅取"允许 / 不允许"两态）。`true` = 允许用户拖选 `dui::Text` 的文本并复制（Ctrl+C）；默认 `false` = **不允许选择**。**非继承**（同 CSS）。可选中的文本**可聚焦但不进 Tab 链**（CSS `tabindex=-1` 语义：点击取得焦点以接收 Ctrl+C 等键盘事件，Tab 键不经过它）。选区底色取 `selectionColor`。只影响交互，不影响布局 / 绘制（失效标志为"无"）。详见 [06-Events.md](./06-Events.md) §6.1 |

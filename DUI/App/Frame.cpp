@@ -148,7 +148,7 @@ public:
                 clipped = true;
             }
         }
-        // visibility: hidden → 占位但不画（子树里显式 visible 的元素仍画）
+        // visible: false → 占位但不画（子树里显式设可见的元素仍画）
         const bool hidden = e->Hidden();
 
         if (!hidden) DrawBackground(e, ctx);

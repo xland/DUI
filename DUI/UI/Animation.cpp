@@ -1,9 +1,9 @@
 // ============================================================================
 //  DUI/UI/Animation.cpp — 命令式属性动画（05-Animation）
 //
-//  · Element::Animate 启动补间，动画值写入 Element::animated_（级联第 1 层）
+//  · Element::Animate 只**创建**动画（不推进），AnimationHandle::Start() 才启动
 //  · 统一 ticker（AnimationClock）调 detail::TickAnimations 推进所有活动元素
-//  · 句柄以 shared_ptr<AnimState> + Lifetime 令牌实现幂等取消与元素销毁失效
+//  · 句柄以 shared_ptr<AnimShared> + Lifetime 令牌实现幂等控制与元素销毁失效
 // ============================================================================
 
 #include "UI/UI.h"
@@ -69,10 +69,47 @@ StyleValue Interpolate(const StyleValue& from, const StyleValue& to,
 
 bool AnyRunning(const std::vector<detail::AnimSlot>& anims) {
     for (const detail::AnimSlot& a : anims) {
-        if (a.running) return true;
+        if (a.phase == dui::AnimPhase::Running) return true;
     }
     return false;
 }
+
+// 事件触发：回调**保留**（循环的每一轮、重播都要再次触发），只拷贝一份再调用，
+// 避免回调里重新注册时把正在执行的 std::function 销毁掉。
+void FireStarted(const std::shared_ptr<detail::AnimShared>& s) {
+    if (!s || !s->lifetime || !s->onStarted) return;
+    const std::function<void()> fn = s->onStarted;
+    fn();
+}
+
+void FirePaused(const std::shared_ptr<detail::AnimShared>& s) {
+    if (!s || !s->lifetime || !s->onPaused) return;
+    const std::function<void()> fn = s->onPaused;
+    fn();
+}
+
+void FireStopped(const std::shared_ptr<detail::AnimShared>& s) {
+    if (!s || !s->lifetime || !s->onStopped) return;
+    const std::function<void()> fn = s->onStopped;
+    fn();
+}
+
+void FireFinished(const std::shared_ptr<detail::AnimShared>& s) {
+    if (!s || !s->lifetime || !s->onFinished) return;
+    const std::function<void()> fn = s->onFinished;
+    fn();
+}
+
+// 推进期间产生的事件（延后到本元素本轮补间推进结束后按序派发）
+enum class EvKind : uint8_t { Started, Finished };
+
+struct DeferredEvent {
+    EvKind kind = EvKind::Finished;
+    std::shared_ptr<detail::AnimShared> shared;
+};
+
+// 掉帧跨过多轮时最多展开 4 轮事件（再多就折叠，避免回调风暴）
+constexpr uint32_t kMaxLoopEventRounds = 4;
 
 }  // namespace
 
@@ -108,119 +145,303 @@ void TickAnimations(uint64_t nowMs) {
     }
 }
 
-void CancelAnimation(const std::shared_ptr<AnimState>& state) noexcept {
-    if (!state || !state->lifetime || state->cancelled) return;
-    state->cancelled = true;
-    state->running = false;
-    state->completed = false;
-    state->onFinished = nullptr;
+void CancelAnimation(const std::shared_ptr<AnimShared>& shared) noexcept {
+    if (!shared || !shared->lifetime) return;
+    if (shared->phase == AnimPhase::Cancelled) return;
+    shared->phase = AnimPhase::Cancelled;
+    shared->onStarted = nullptr;
+    shared->onPaused = nullptr;
+    shared->onStopped = nullptr;
+    shared->onFinished = nullptr;
 
-    Element* e = state->element;
+    Element* e = shared->element;
     e->anims_.erase(
         std::remove_if(e->anims_.begin(), e->anims_.end(),
-                       [&state](const AnimSlot& a) { return a.state == state; }),
+                       [&shared](const AnimSlot& a) { return a.shared == shared; }),
         e->anims_.end());
     e->animated_.erase(
         std::remove_if(e->animated_.begin(), e->animated_.end(),
-                       [&state](const StyleValue& v) { return v.prop == state->prop; }),
+                       [&shared](const StyleValue& v) { return v.prop == shared->prop; }),
         e->animated_.end());
-    e->MarkDirty(PropFlagsOf(state->prop));
+    e->MarkDirty(PropFlagsOf(shared->prop));
     if (!AnyRunning(e->anims_)) UnregisterAnimatedElement(e);
+}
+
+// ---------------------------------------------------------------------------
+// 句柄发来的控制命令：Start / Pause / Continue / Stop / Loop
+// ---------------------------------------------------------------------------
+void ControlAnimation(const std::shared_ptr<AnimShared>& shared, AnimCommand cmd,
+                      uint32_t times) noexcept {
+    if (!shared || !shared->lifetime) return;
+    Element* e = shared->element;
+
+    // 找本句柄对应的槽：同 (元素, 属性) 被新动画替换后，旧槽已消失 → 句柄失效
+    AnimSlot* slot = nullptr;
+    for (AnimSlot& a : e->anims_) {
+        if (a.shared == shared) { slot = &a; break; }
+    }
+    if (slot == nullptr) return;
+
+    const uint64_t now = ::GetTickCount64();
+    switch (cmd) {
+    case AnimCommand::Start:
+    case AnimCommand::Loop: {
+        // Start = 从头重播（时间轴归零、回到动画起点）；Loop = 从头重播 + 循环
+        if (slot->phase == AnimPhase::Cancelled) return;
+        if (cmd == AnimCommand::Loop) {
+            slot->looping = true;
+            slot->loopTotal = times;          // 0 = 无限循环
+            slot->loopRemaining = times;
+        } else if (slot->looping) {
+            slot->loopRemaining = slot->loopTotal;   // 重播：轮数重新计数
+        }
+        if (slot->phase == AnimPhase::Idle) {
+            slot->from = ResolveProperty(e, slot->prop);   // 首次启动：起点取当前显示值
+        }
+        slot->elapsedMs = 0;
+        slot->startMs = now;
+        slot->phase = AnimPhase::Running;
+        shared->phase = AnimPhase::Running;
+        // 立刻把值写回起点：重播时避免先闪一下上一轮的终值
+        e->SetAnimatedValue(slot->from);
+        RegisterAnimatedElement(e);
+        FireStarted(shared);
+        break;
+    }
+
+    case AnimCommand::Pause:
+        if (slot->phase != AnimPhase::Running) return;
+        slot->elapsedMs += now - slot->startMs;         // 冻结已推进时长
+        slot->phase = AnimPhase::Paused;
+        shared->phase = AnimPhase::Paused;
+        if (!AnyRunning(e->anims_)) UnregisterAnimatedElement(e);   // 停表
+        FirePaused(shared);
+        break;
+
+    case AnimCommand::Continue:
+        if (slot->phase == AnimPhase::Paused) {
+            slot->startMs = now;                        // 从断点继续（累计时长不变）
+            slot->phase = AnimPhase::Running;
+            shared->phase = AnimPhase::Running;
+            RegisterAnimatedElement(e);
+            FireStarted(shared);
+        } else if (slot->phase == AnimPhase::Idle) {
+            ControlAnimation(shared, AnimCommand::Start);   // 未启动 → 等同 Start
+        }
+        // 已是终态（Completed / Stopped / Cancelled）→ 不再执行
+        break;
+
+    case AnimCommand::Stop: {
+        if (slot->phase == AnimPhase::Completed ||
+            slot->phase == AnimPhase::Stopped ||
+            slot->phase == AnimPhase::Cancelled) return;
+        // 立即落到终值（fill forwards：终值留在 animated_）
+        e->SetAnimatedValue(slot->to);
+        slot->phase = AnimPhase::Stopped;
+        shared->phase = AnimPhase::Stopped;
+        slot->looping = false;                          // Stop 同时结束循环模式
+        slot->loopRemaining = 0;
+        if (!AnyRunning(e->anims_)) UnregisterAnimatedElement(e);
+        FireStopped(shared);
+        FireFinished(shared);   // 值已到终态 = 完成
+        break;
+    }
+    }
 }
 
 }  // namespace detail
 
 // ---------------------------------------------------------------------------
-// Element：启动与推进
+// Element：创建与推进
 // ---------------------------------------------------------------------------
 
 AnimationHandle Element::StartAnimation(Prop p, AnimKind kind, const StyleValue& to,
                                         const AnimConfig& cfg) {
     // 同 (元素, 属性) 唯一：旧动画（含已完成、仍保留终值者）整体作废，
-    // 不触发其完成回调；新动画的起点自然取到当前显示值。
+    // 不触发其回调；新动画的起点在 Start() 时取当前显示值。
     for (auto it = anims_.begin(); it != anims_.end(); ++it) {
         if (it->prop != p) continue;
-        if (it->state) {
-            it->state->running = false;
-            it->state->cancelled = true;
-            it->state->completed = false;
-            it->state->onFinished = nullptr;
+        if (it->shared) {
+            it->shared->phase = AnimPhase::Cancelled;
+            it->shared->onStarted = nullptr;
+            it->shared->onPaused = nullptr;
+            it->shared->onStopped = nullptr;
+            it->shared->onFinished = nullptr;
         }
         anims_.erase(it);
         break;
     }
 
-    auto state = std::make_shared<detail::AnimState>();
-    state->prop = p;
-    state->element = this;
-    state->lifetime = Lifetime();
+    auto shared = std::make_shared<detail::AnimShared>();
+    shared->prop = p;
+    shared->element = this;
+    shared->lifetime = Lifetime();
+    shared->phase = AnimPhase::Idle;      // 已创建，未启动
 
     detail::AnimSlot slot;
     slot.prop = p;
-    slot.from = ResolveProperty(this, p);   // 遍历外路径，含层 1 当前显示值
     slot.to = to;
     slot.kind = kind;
     slot.durationMs = cfg.durationMs != 0 ? cfg.durationMs : 1u;
     slot.easing = cfg.easing;
-    slot.state = state;
+    slot.phase = AnimPhase::Idle;
+    slot.shared = shared;
 
     anims_.push_back(std::move(slot));
-    detail::RegisterAnimatedElement(this);
-    return AnimationHandle(std::move(state));
+    // 未启动 → 不注册进 ticker（没有活动补间就不空转）
+    return AnimationHandle(std::move(shared));
 }
 
 void Element::TickAnimations(uint64_t nowMs) {
-    std::vector<std::shared_ptr<detail::AnimState>> finished;
+    std::vector<DeferredEvent> events;
     for (detail::AnimSlot& a : anims_) {
-        if (!a.running) continue;
+        if (a.phase != AnimPhase::Running) continue;
         if (a.startMs == 0) a.startMs = nowMs;   // 首拍 t = 0，从起点开始
-        const uint64_t elapsed = nowMs - a.startMs;
-        float t = static_cast<float>(elapsed) / static_cast<float>(a.durationMs);
-        if (t > 1.f) t = 1.f;
-
-        const StyleValue v = Interpolate(a.from, a.to, a.kind, ApplyEasing(a.easing, t));
-        bool found = false;
-        for (StyleValue& cur : animated_) {
-            if (cur.prop == a.prop) { cur = v; found = true; break; }
+        const uint64_t total = a.durationMs;     // 已保证 >= 1
+        uint64_t elapsed = a.elapsedMs + (nowMs - a.startMs);
+        uint64_t rounds = 0;                      // 本拍内完成的轮数
+        if (elapsed >= total) {
+            rounds = elapsed / total;             // 掉帧可能跨过多轮
+            elapsed = elapsed % total;            // 当前轮内的位置
         }
-        if (!found) animated_.push_back(v);
-        MarkDirty(PropFlagsOf(a.prop));
 
-        if (t >= 1.f) {
-            a.running = false;                  // 终值保留在 animated_（fill forwards）
-            a.state->running = false;
-            a.state->completed = true;
-            finished.push_back(a.state);
+        if (rounds == 0) {
+            float t = static_cast<float>(elapsed) / static_cast<float>(total);
+            if (t > 1.f) t = 1.f;
+            SetAnimatedValue(Interpolate(a.from, a.to, a.kind, ApplyEasing(a.easing, t)));
+            continue;
+        }
+
+        // 本拍内至少跑完一轮：判断还有没有下一轮
+        const bool more = a.looping && (a.loopRemaining == 0 || a.loopRemaining > rounds);
+        if (!more) {
+            // 最后一轮 → 落到终值（fill forwards：终值留在 animated_）
+            SetAnimatedValue(a.to);
+            a.phase = AnimPhase::Completed;
+            a.shared->phase = AnimPhase::Completed;
+            events.push_back(DeferredEvent{EvKind::Finished, a.shared});
+            continue;
+        }
+
+        // 还有下一轮：值回到起点，按余量重新插值；轮数计数递减
+        // （more 的条件保证 loopRemaining > rounds，转换安全）
+        if (a.loopRemaining != 0) a.loopRemaining -= static_cast<uint32_t>(rounds);
+        const float t = static_cast<float>(elapsed) / static_cast<float>(total);
+        SetAnimatedValue(Interpolate(a.from, a.to, a.kind, ApplyEasing(a.easing, t)));
+        a.elapsedMs = elapsed;                     // 下一拍从当前轮内的位置继续
+        a.startMs = nowMs;
+        // 事件：每轮"结束 → OnFinished"，下一轮"开始 → OnStarted"
+        const uint32_t emit = rounds < kMaxLoopEventRounds
+                                  ? static_cast<uint32_t>(rounds)
+                                  : kMaxLoopEventRounds;
+        for (uint32_t i = 0; i < emit; ++i) {
+            events.push_back(DeferredEvent{EvKind::Finished, a.shared});
+            events.push_back(DeferredEvent{EvKind::Started, a.shared});
         }
     }
 
     if (!AnyRunning(anims_)) detail::UnregisterAnimatedElement(this);
 
     // 回调统一延后到本元素的推进结束之后，避免重入打乱 anims_ 遍历
-    for (const auto& state : finished) {
-        if (state->cancelled || !state->lifetime || !state->onFinished) continue;
-        auto fn = std::move(state->onFinished);
-        state->onFinished = nullptr;
-        fn();
+    for (const DeferredEvent& ev : events) {
+        if (!ev.shared || ev.shared->phase == AnimPhase::Cancelled) continue;
+        if (ev.kind == EvKind::Finished) {
+            FireFinished(ev.shared);
+        } else {
+            // 期间被 Stop / Cancel → 不再开始新一轮
+            if (ev.shared->phase != AnimPhase::Running) continue;
+            FireStarted(ev.shared);
+        }
     }
 }
 
+void Element::SetAnimatedValue(const StyleValue& v) {
+    bool found = false;
+    for (StyleValue& cur : animated_) {
+        if (cur.prop == v.prop) { cur = v; found = true; break; }
+    }
+    if (!found) animated_.push_back(v);
+    MarkDirty(PropFlagsOf(v.prop));
+}
+
 // ---------------------------------------------------------------------------
-// AnimationHandle
+// AnimationHandle：事件注册与控制命令
 // ---------------------------------------------------------------------------
 
-AnimationHandle& AnimationHandle::OnFinished(std::function<void()> fn) {
-    if (!state_ || !state_->lifetime || state_->cancelled) return *this;
-    if (state_->running) {
-        state_->onFinished = std::move(fn);
-    } else if (state_->completed && fn) {
-        fn();   // 已正常完成：注册即通知
+AnimationHandle AnimationHandle::OnStarted(std::function<void()> fn) {
+    if (shared_ && shared_->lifetime && shared_->phase != AnimPhase::Cancelled) {
+        if (shared_->phase == AnimPhase::Running) {
+            if (fn) fn();                       // 已在推进：注册即通知
+        }
+        // 回调保留：循环的每一轮、重播都要再次触发
+        shared_->onStarted = std::move(fn);
     }
     return *this;
 }
 
+AnimationHandle AnimationHandle::OnPaused(std::function<void()> fn) {
+    if (shared_ && shared_->lifetime && shared_->phase != AnimPhase::Cancelled) {
+        if (shared_->phase == AnimPhase::Paused) {
+            if (fn) fn();                       // 已暂停：注册即通知
+        }
+        shared_->onPaused = std::move(fn);
+    }
+    return *this;
+}
+
+AnimationHandle AnimationHandle::OnStopped(std::function<void()> fn) {
+    if (shared_ && shared_->lifetime && shared_->phase != AnimPhase::Cancelled) {
+        if (shared_->phase == AnimPhase::Stopped) {
+            if (fn) fn();                       // 已被 Stop：注册即通知
+        }
+        shared_->onStopped = std::move(fn);
+    }
+    return *this;
+}
+
+AnimationHandle AnimationHandle::OnFinished(std::function<void()> fn) {
+    if (shared_ && shared_->lifetime && shared_->phase != AnimPhase::Cancelled) {
+        if (shared_->phase == AnimPhase::Completed || shared_->phase == AnimPhase::Stopped) {
+            if (fn) fn();                       // 已完成：注册即通知
+        }
+        shared_->onFinished = std::move(fn);
+    }
+    return *this;
+}
+
+void AnimationHandle::Start() noexcept {
+    if (shared_) detail::ControlAnimation(shared_, detail::AnimCommand::Start);
+}
+
+void AnimationHandle::Pause() noexcept {
+    if (shared_) detail::ControlAnimation(shared_, detail::AnimCommand::Pause);
+}
+
+void AnimationHandle::Continue() noexcept {
+    if (shared_) detail::ControlAnimation(shared_, detail::AnimCommand::Continue);
+}
+
+void AnimationHandle::Stop() noexcept {
+    if (shared_) detail::ControlAnimation(shared_, detail::AnimCommand::Stop);
+}
+
+void AnimationHandle::Loop(uint32_t times) noexcept {
+    if (shared_) detail::ControlAnimation(shared_, detail::AnimCommand::Loop, times);
+}
+
 void AnimationHandle::Cancel() noexcept {
-    detail::CancelAnimation(state_);
+    detail::CancelAnimation(shared_);
+}
+
+AnimPhase AnimationHandle::Phase() const noexcept {
+    if (!shared_ || !shared_->lifetime) return AnimPhase::Cancelled;
+    return shared_->phase;
+}
+
+bool AnimationHandle::IsFinished() const noexcept {
+    const AnimPhase p = Phase();
+    return p == AnimPhase::Completed || p == AnimPhase::Stopped ||
+           p == AnimPhase::Cancelled;
 }
 
 }  // namespace dui

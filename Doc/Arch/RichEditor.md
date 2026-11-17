@@ -1,8 +1,6 @@
 # 富文本编辑器（RichEditor）
 
-> 状态：**设计中 v0.1**（2026-11-10）。本文件逐节确认，全部定稿后才开始实现；
-> 未标「已定」的条目一律不得进代码。
-> 相关：[11-Text.md](./11-Text.md)（文本地基）、[02-Decisions.md](./02-Decisions.md) ADR-009 / ADR-013 / ADR-016 / ADR-018、[16-Image.md](./16-Image.md)（图像链路）、[04-Layout.md](./04-Layout.md)。
+相关：[11-Text.md](./11-Text.md)（文本地基）、[02-Decisions.md](./02-Decisions.md) ADR-009 / ADR-013 / ADR-016 / ADR-018、[16-Image.md](./16-Image.md)（图像链路）、[04-Layout.md](./04-Layout.md)。
 
 ## 1. 范围与边界
 

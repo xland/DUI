@@ -1,8 +1,8 @@
 # 样式系统
 
-> 状态：草案 v0.1 — 待讨论确认。
-> 需求来源：框架要有自己的样式规则（`backgroundColor` / `color` / `textAlign` / `fontSize` …），并且样式能在界面元素之间复用。
-> 相关：[00-Overview.md](./00-Overview.md)（原则、非目标）、[01-Layering.md](./01-Layering.md)（UI 层模块）、ADR-018（纯 C++ 写界面）。
+需求来源：框架要有自己的样式规则（`backgroundColor` / `color` / `textAlign` / `fontSize` …），并且样式能在界面元素之间复用。
+
+相关：[00-Overview.md](./00-Overview.md)（原则、非目标）、[01-Layering.md](./01-Layering.md)（UI 层模块）、ADR-018（纯 C++ 写界面）。
 
 ## 1. 需求
 

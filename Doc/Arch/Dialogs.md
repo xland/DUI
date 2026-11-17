@@ -1,9 +1,8 @@
 # 对话框使用说明（调用方式）
 
-> 状态：**v1.0 — 已实现**（2026-11-07），Debug/Release x64 编译通过。人工实测项见设计文档 §7 D4。
-> 面向使用者的完整指南见 [Dialog.md](../Dialog.md)（含截图与常见情形对照）。
-> 设计、分层、取舍与验收见 [Arch/17-Dialogs.md](Arch/17-Dialogs.md)；可运行示例 `Samples/Dialog/main.cpp`
-> （另含 `MacroCompat.cpp`：MessageBox 同名宏两种包含顺序的编译期守卫）。
+面向使用者的完整指南见 [Dialog.md](../Dialog.md)（含截图与常见情形对照）。
+
+设计、分层、取舍与验收见 [Arch/17-Dialogs.md](Arch/17-Dialogs.md)；可运行示例 `Samples/Dialog/main.cpp`（另含 `MacroCompat.cpp`：MessageBox 同名宏两种包含顺序的编译期守卫）。
 
 ---
 

@@ -1,10 +1,10 @@
 # 对话框（系统原生）
 
-> 状态：**v1.1 — 已实现并修复 MTA 死锁**（2026-11-07）。D1–D3 完成，Debug/Release 全解决方案编译通过、无新增警告；
-> M7.1：UI 线程 COM 固定 STA（ADR-027），四类弹窗弹出 / 关闭已自动化点击复测通过，**剩余人工验证项见 §7 D4**。
-> 实现踩坑见 `../Pitfalls.md §4.7–4.11`。
-> 使用说明（调用方式）：[../Dialogs.md](../Dialogs.md)
-> 相关：[01-Layering.md](./01-Layering.md)（单向依赖 / Platform 模块表）、[02-Decisions.md](./02-Decisions.md)（ADR-007/009/010/012/022/026/027）、[07-Threading.md](./07-Threading.md)（UI 单线程 / Dispatcher）、[12-Windowing.md](./12-Windowing.md)（PMv2 / 模态循环 / 失活）、[../Pitfalls.md](../Pitfalls.md)（§1.7 模态循环、§1.8 失活与焦点、§4 链接库惯例）。
+实现踩坑见 `../Pitfalls.md §4.7–4.11`。
+
+使用说明（调用方式）：[../Dialogs.md](../Dialogs.md)
+
+相关：[01-Layering.md](./01-Layering.md)（单向依赖 / Platform 模块表）、[02-Decisions.md](./02-Decisions.md)（ADR-007/009/010/012/022/026/027）、[07-Threading.md](./07-Threading.md)（UI 单线程 / Dispatcher）、[12-Windowing.md](./12-Windowing.md)（PMv2 / 模态循环 / 失活）、[../Pitfalls.md](../Pitfalls.md)（§1.7 模态循环、§1.8 失活与焦点、§4 链接库惯例）。
 
 ---
 

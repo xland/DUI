@@ -1,19 +1,13 @@
 # DUI 输入控件使用指南（Input 开发者文档）
 
-> **配套工程**：`Samples/TextInput/main.cpp`（TextBox / 密码框 / TextArea）、`Samples/RichEditor/main.cpp`（RichEditor + JSON 导入）。
-> **截图**：`Doc/Input/`，按 `INN-M.png` 命名（NN = 章号，M = 该章第几个示例），均为**按示例代码实机运行**后 1:1 截取。
-> **相关文档**：[Styles.md](Styles.md)（外观与文本样式）、[Layout.md](Layout.md)（布局与焦点链）、[Event.md](Event.md)（事件绑定与键盘路由）、[Pitfalls.md](Pitfalls.md)。
-
----
-
 ## 1. 选型：四种输入控件
 
-| 需求 | 控件 | 类 | 说明 |
-| --- | --- | --- | --- |
-| 一行文本 | 单行输入框 | `dui::TextBox` | 回车触发 `OnSubmit` |
-| 密码 | 密码框 | `dui::TextBox(true)` | 单行 + 掩码显示 |
-| 多行纯文本 | 多行输入框 | `dui::TextArea` | 按宽度自动换行 |
-| 富文本（标题 / 列表 / 引用 / 代码块） | 富文本编辑器 | `dui::RichEditor` | 块级文档模型 + 行内样式 |
+| 需求                                  | 控件         | 类                   | 说明                    |
+| ------------------------------------- | ------------ | -------------------- | ----------------------- |
+| 一行文本                              | 单行输入框   | `dui::TextBox`       | 回车触发 `OnSubmit`     |
+| 密码                                  | 密码框       | `dui::TextBox(true)` | 单行 + 掩码显示         |
+| 多行纯文本                            | 多行输入框   | `dui::TextArea`      | 按宽度自动换行          |
+| 富文本（标题 / 列表 / 引用 / 代码块） | 富文本编辑器 | `dui::RichEditor`    | 块级文档模型 + 行内样式 |
 
 ```cpp
 dui::TextBox*  single = root->AddChild<dui::TextBox>(fieldStyle);  // 单行
@@ -30,12 +24,12 @@ dui::RichEditor* rich = root->AddChild<dui::RichEditor>();        // 富文本
 - **外观完全由盒模型样式决定**：`Padding` / `BorderWidth` / `BorderColor` / `CornerRadius` / `Background` / `Color` / `FontSize` 等，与普通 `Panel` 一模一样；输入框没有单独的"皮肤"。
 - **可聚焦、进 Tab 链**：构造即 `SetFocusable(true)`；`Tab` / `Shift+Tab` 在可聚焦控件间移动焦点（控件自己不消费 `VK_TAB`）。
 - **选区与光标可配**：`SelectionColor`（选区底色，默认 `0x803399FF` 半透明蓝）、`CaretColor`（光标色，未设时取文本色 `Color`）。
-- **拖选可拖出控件**：按下即取**指针捕获**（与 `RichEditor`、M5.63 的 `user-select` 文本同款），拖到控件边界外仍继续扩选，并自动把光标滚进视野（多行纵向滚动 / 单行横向滚动）。
+- **拖选可拖出控件**：按下即取**指针捕获**，拖到控件边界外仍继续扩选，并自动把光标滚进视野（多行纵向滚动 / 单行横向滚动）。
 - **文本样式走继承**：`FontFamily` / `FontSize` / `FontWeight` / `FontStyle`（斜体）/ `TextDecoration`（下划线、删除线）都能用，写在父容器上对子输入框生效。
 - **不支持 `TextAlign`**：属性存在，但输入框控件不读它。
 - **有自然尺寸下限**：单行至少 120 DIP 宽、高至少是"字号 × 行高"；多行至少 200 × 80 DIP。下限只作用于**自然尺寸** —— 显式写了 `Width` / `Height` 就不受它约束。
-- **单行文本垂直居中**：文本在**内容盒**内垂直居中（行盒居中 + 墨迹视觉居中补偿，与 `Text` 元素同一口径）—— 内容盒比行高小则上下对称裁剪，不会只裁底部（`Height` 32 + `Padding(6)` + 14 DIP 文字：内容盒 20 DIP < 行高 22.2 DIP，文字仍完整可见且居中）。
-- **显式高度不够会被裁**：控件按**内容盒**裁剪绘制，而内容盒高 = `Height` − `Padding` 上下 − 边框上下。若它小于文字的实际行高（默认 `LineHeight = 1.2`，配上雅黑行距系数后 14 DIP 的行高约 **22.2 DIP**），**文字底部（以及选区色带底部）会被切掉**。所以 14 DIP 文字配 `Padding(8)` 时，`Height` 要给到 **40 DIP**（内容盒 24 DIP ≥ 22.2）；或者干脆**不设 `Height`**，让控件按自然尺寸自适应（≈ 行高 + 内边距）。
+- **单行文本垂直居中**：文本在**内容盒**内垂直居中（行盒居中 + 墨迹视觉居中补偿，与 `Text` 元素同一口径）—— 内容盒比行高小则上下对称裁剪，不会只裁底部。
+- **显式高度不够会被裁**：控件按**内容盒**裁剪绘制，而内容盒高 = `Height` − `Padding` 上下 − 边框上下。若它小于文字的实际行高（默认 `LineHeight = 1.2`，配上雅黑行距系数后 14 DIP 的行高约 **22.2 DIP**），**文字底部（以及选区色带底部）会被切掉**。所以 14 DIP 文字配 `Padding(8)` 时，`Height` 要给到 **40 DIP**（内容盒 24 DIP ≥ 22.2）；或者干脆**不设 `Height`**，让控件按自然尺寸自适应。
 
 ### 1.2 焦点
 
@@ -65,15 +59,15 @@ dui::Text* label = root->AddChild<dui::Text>(L"按住拖动即可选中这段文
 
 打开后：
 
-| 操作 | 行为 |
-| --- | --- |
-| 按住拖动 | 选区随鼠标扩展；拖出文本框仍能继续扩选 |
-| 双击 | 选词（中文逐字、英文按单词） |
-| 三击 | 选段（整行） |
-| `Ctrl+C` | 复制选中文本到系统剪贴板 |
-| `Ctrl+A` | 全选 |
-| `←` `→` | 移动光标（`Shift` 扩展选区、`Ctrl` 按词移动） |
-| `Home` `End` | 行首 / 行尾（`Shift` 扩展选区） |
+| 操作         | 行为                                          |
+| ------------ | --------------------------------------------- |
+| 按住拖动     | 选区随鼠标扩展；拖出文本框仍能继续扩选        |
+| 双击         | 选词（中文逐字、英文按单词）                  |
+| 三击         | 选段（整行）                                  |
+| `Ctrl+C`     | 复制选中文本到系统剪贴板                      |
+| `Ctrl+A`     | 全选                                          |
+| `←` `→`      | 移动光标（`Shift` 扩展选区、`Ctrl` 按词移动） |
+| `Home` `End` | 行首 / 行尾（`Shift` 扩展选区）               |
 
 - 选中的文本**会取得焦点**（才能收 `Ctrl+C` 等键盘事件），但**不进 Tab 链** —— `Tab` 键不会跳到它（CSS `tabindex=-1` 语义）。
 - 焦点离开时选区清空；选区底色取 `selectionColor`（默认 `0x803399FF` 半透明蓝），画在文字之下。
@@ -131,21 +125,20 @@ box->Deselect();                        // 取消选区（光标不动）
 
 ### 2.4 键盘与鼠标
 
-| 按键 | 行为 |
-| --- | --- |
-| `←` / `→` | 按码点移动；**有选区时先跳到选区端点**；`Shift` 扩展选区 |
-| `↑` / `↓` | **仅多行**；单行不消费（继续冒泡） |
-| `Home` / `End` | 行首 / 行尾；`Ctrl+Home` / `Ctrl+End` = 全文首 / 尾 |
-| `Backspace` / `Delete` | 删除选区或前 / 后一个码点 |
-| `Enter` | 多行插入 `\n`；**单行触发 `OnSubmit`** |
-| `Ctrl+A` / `C` / `X` / `V` | 全选 / 复制 / 剪切 / 粘贴（**没有 Ctrl 不消费**） |
-| `Ctrl+Z` / `Ctrl+Y` | 撤销 / 重做 |
-| `Tab` | **不消费** → 框架移动焦点（不会插入制表符） |
+| 按键                       | 行为                                                     |
+| -------------------------- | -------------------------------------------------------- |
+| `←` / `→`                  | 按码点移动；**有选区时先跳到选区端点**；`Shift` 扩展选区 |
+| `↑` / `↓`                  | **仅多行**；单行不消费（继续冒泡）                       |
+| `Home` / `End`             | 行首 / 行尾；`Ctrl+Home` / `Ctrl+End` = 全文首 / 尾      |
+| `Backspace` / `Delete`     | 删除选区或前 / 后一个码点                                |
+| `Enter`                    | 多行插入 `\n`；**单行触发 `OnSubmit`**                   |
+| `Ctrl+A` / `C` / `X` / `V` | 全选 / 复制 / 剪切 / 粘贴（**没有 Ctrl 不消费**）        |
+| `Ctrl+Z` / `Ctrl+Y`        | 撤销 / 重做                                              |
+| `Tab`                      | **不消费** → 框架移动焦点（不会插入制表符）              |
 
-鼠标：**单击定位光标**、**按住拖动选区**。注意：
+鼠标：**单击定位光标**、**按住拖动选区**（可拖出控件边界）。注意：
 
 - **没有双击选词 / 三击选行**（控件不统计点击次数）。
-- **不做指针捕获**：拖出控件边界后事件不再回到它，选区拖不出边界。
 - **滚轮不滚动自身内容**（控件没有 `HandleWheel`），滚轮会冒泡给**最近的祖先 `Scroller`**；输入框自身的滚动只由"光标跟随可见"驱动。
 
 ---
@@ -173,7 +166,7 @@ wchar_t ch = pwd->MaskChar();
 
 ## 4. 多行输入框 `TextArea`
 
-`TextArea` 继承 `TextBox`，只是把 `multiline_` 打开：
+`TextArea` 继承 `TextBox`，只是把多行打开：
 
 ```cpp
 dui::TextArea* area = root->AddChild<dui::TextArea>(dui::Style()
@@ -189,12 +182,12 @@ area->SetText(L"第一行\n第二行");
 
 与单行的差别：
 
-| | 单行 `TextBox` | 多行 `TextArea` |
-| --- | --- | --- |
-| 回车 | 触发 `OnSubmit` | 插入 `\n` |
-| `↑` / `↓` | 不消费 | 在行间移动光标（记住目标列） |
-| 折行 | 不折行（横向溢出） | **按宽度自动折行**（换行宽取 `Width` 减 padding，否则取可用宽） |
-| 溢出 | 横向内部滚动 | 纵向内部滚动 |
+|           | 单行 `TextBox`     | 多行 `TextArea`                                                 |
+| --------- | ------------------ | --------------------------------------------------------------- |
+| 回车      | 触发 `OnSubmit`    | 插入 `\n`                                                       |
+| `↑` / `↓` | 不消费             | 在行间移动光标（记住目标列）                                    |
+| 折行      | 不折行（横向溢出） | **按宽度自动折行**（换行宽取 `Width` 减 padding，否则取可用宽） |
+| 溢出      | 横向内部滚动       | 纵向内部滚动                                                    |
 
 内容超出视口时，控件**按光标位置内部滚动**（光标始终可见），但**没有滚动条**；滚轮不会滚它（会冒泡给祖先 `Scroller`）。
 
@@ -238,7 +231,7 @@ block.level = 1;                          // Heading 的 1..6 级
 
 rt::Run run;                     // 行内片段
 run.text  = L"粗体";
-run.style.weight = 700;          // 粗体（DWRITE 字重；0 = 继承）
+run.style.weight = 700;          // 粗体（字重；0 = 继承）
 run.style.italic = true;         // 斜体
 run.style.underline = true;      // 下划线
 run.style.strike = true;         // 删除线
@@ -270,11 +263,11 @@ if (!doc.Diagnostics().Clean()) {
 
 支持的 JSON 形态：
 
-| JSON | 含义 |
-| --- | --- |
-| `paragraph` / `heading` / `quote` / `codeBlock` / `image` / `horizontalRule` / `list` | 块 |
-| `text` / `bold` / `italic` / `underline` / `strikethrough` / `hyperlink` | 行内容器 |
-| `settings.defaultFont` / `defaultFontSize` | 文档默认字体与字号 |
+| JSON                                                                                  | 含义               |
+| ------------------------------------------------------------------------------------- | ------------------ |
+| `paragraph` / `heading` / `quote` / `codeBlock` / `image` / `horizontalRule` / `list` | 块                 |
+| `text` / `bold` / `italic` / `underline` / `strikethrough` / `hyperlink`              | 行内容器           |
+| `settings.defaultFont` / `defaultFontSize`                                            | 文档默认字体与字号 |
 
 解析策略是**坏数据不中断**：未知键跳过并计数，文档继续解析。
 
@@ -284,13 +277,13 @@ if (!doc.Diagnostics().Clean()) {
 
 ### 5.4 编辑交互
 
-| 操作 | 行为 |
-| --- | --- |
-| 回车 | 分裂块；列表项 → 新增同级项；空列表项回车 → **退出列表**；代码块内 → 只换行不拆块 |
-| 退格 | 段内按码点删；块首退格 → 与**上一块合并**（代码块不合并） |
-| Delete | 段内后删；块尾 Delete → 与**后一块合并**（代码块不合并） |
-| `Ctrl+A` / `C` / `X` / `V` / `Z` / `Y` | 全选 / 复制 / 剪切 / 粘贴 / 撤销 / 重做 |
-| `Tab` | 不消费 → 框架切焦点 |
+| 操作                                   | 行为                                                                              |
+| -------------------------------------- | --------------------------------------------------------------------------------- |
+| 回车                                   | 分裂块；列表项 → 新增同级项；空列表项回车 → **退出列表**；代码块内 → 只换行不拆块 |
+| 退格                                   | 段内按码点删；块首退格 → 与**上一块合并**（代码块不合并）                         |
+| Delete                                 | 段内后删；块尾 Delete → 与**后一块合并**（代码块不合并）                          |
+| `Ctrl+A` / `C` / `X` / `V` / `Z` / `Y` | 全选 / 复制 / 剪切 / 粘贴 / 撤销 / 重做                                           |
+| `Tab`                                  | 不消费 → 框架切焦点                                                               |
 
 - **撤销粒度 = 整文档快照**（上限 100 步），但**连续输入会合并成一步**。
 - 分割线是只读装饰块（只能被相邻的退格 / Delete 删掉）；图片不可编辑内容，但可作光标定位点（图前 / 图后）。
@@ -318,41 +311,7 @@ float h = view->ContentHeight();        // 排版后的文档总高（DIP，不�
 
 ---
 
-## 6. API 速查
-
-### 6.1 `TextBox` / `TextArea`
-
-| 分类 | API |
-| --- | --- |
-| 构造 | `TextBox(bool password = false)`、`TextArea()` |
-| 文本 | `GetText()` / `SetText(String)` / `SetText(const wchar_t*)` / `Clear()` |
-| 光标 | `Caret()` / `SetCaret(index)` |
-| 选区 | `SelectionStart()` / `SelectionEnd()` / `HasSelection()` / `SelectedText()` / `SelectAll()` / `Deselect()` |
-| 事件 | `OnTextChanged(fn)` / `OnSubmit(fn)` |
-| 密码 | `IsPassword()` / `SetPassword(bool)` / `MaskChar()` / `SetMaskChar(wchar_t)` |
-| 其它 | `IsMultiline()` |
-
-### 6.2 `RichEditor`
-
-| 分类 | API |
-| --- | --- |
-| 文档 | `SetDoc(const RichDoc&)` / `Doc()` / `ContentHeight()` |
-| 状态 | `SetEditable(bool)` / `IsEditable()` / `HasSelection()` |
-| 模型 | `richtext::RichDoc` / `Block` / `BlockStyle` / `Run` / `RunStyle` / `BlockKind` / `ListType` / `Align` |
-| JSON | `richtext::ParseRichDoc(json, out)`（**只有导入**） |
-| 编辑原语 | `richtext::RichDocEditor.h`：`InsertText` / `DeleteRange` / `SplitBlock` / `MergeRuns` 等（纯函数，段内 UTF-16 偏移） |
-
-### 6.3 `Text`（静态文本的选择）
-
-| 分类 | API |
-| --- | --- |
-| 样式 | `Style::UserSelect(bool)`（属性名 `user-select`，默认 false = 不允许选择） |
-| 状态 | `Selectable()` / `HasSelection()` |
-| 选区 | `SelectionStart()` / `SelectionEnd()` / `SelectedText()` / `SelectAll()` / `Deselect()` |
-
----
-
-## 7. 已知限制与坑
+## 6. 已知限制与坑
 
 **TextBox / TextArea**
 
@@ -378,14 +337,3 @@ float h = view->ContentHeight();        // 排版后的文档总高（DIP，不�
 17. 引用块的 `attribution` 字段只在模型里，**渲染层暂不绘制**。
 18. `Doc()` 返回内部副本的引用，不能用于回写宿主模型；`SetDoc()` 会清空撤销栈。
 19. IME 同样没有内联 preedit。
-
----
-
-## 8. 相关文档
-
-- [Styles.md](Styles.md)：颜色 / 圆角 / 边框 / 文本样式 / 继承属性。
-- [Layout.md](Layout.md)：布局与焦点链、状态变体 `When(State::Focused, …)`。
-- [Event.md](Event.md)：事件绑定形态、隧道 / 冒泡路由、键盘与滚轮路由。
-- [Arch/06-Events.md](Arch/06-Events.md)：焦点、键盘、指针事件契约。
-- [Arch/RichEditor.md](Arch/RichEditor.md)：富文本控件的设计规格（块级模型、编辑语义、验收）。
-- [Pitfalls.md](Pitfalls.md)：踩坑记录。  

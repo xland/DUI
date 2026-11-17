@@ -1,8 +1,8 @@
 # 输入与事件
 
-> 状态：草案 v0.1 — 待讨论确认。
-> 需求来源：开发者能**方便地为界面元素绑定事件处理程序**（点击、键盘、悬停……），并支持精确的底层事件控制。
-> 相关：[01-Layering.md](./01-Layering.md)（Platform.Input → UI.Event）、[03-Style.md](./03-Style.md)（状态位由事件维护、状态变体由 `Element::When` 设置）、[05-Animation.md](./05-Animation.md)（transform 需作用于命中测试）、ADR-018（纯 C++、链式 API 倾向）。
+需求来源：开发者能**方便地为界面元素绑定事件处理程序**（点击、键盘、悬停……），并支持精确的底层事件控制。
+
+相关：[01-Layering.md](./01-Layering.md)（Platform.Input → UI.Event）、[03-Style.md](./03-Style.md)（状态位由事件维护、状态变体由 `Element::When` 设置）、[05-Animation.md](./05-Animation.md)（transform 需作用于命中测试）、ADR-018（纯 C++、链式 API 倾向）。
 
 ## 1. 需求
 

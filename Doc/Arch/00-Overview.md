@@ -1,7 +1,6 @@
 # DUI 架构总纲
 
-> 状态：草案 v0.1 — 待讨论确认。
-> 本文件只描述"要做什么、受什么约束"，具体取舍见 [01-Layering.md](./01-Layering.md) 与 [02-Decisions.md](./02-Decisions.md)。
+本文件只描述"要做什么、受什么约束"，具体取舍见 [01-Layering.md](./01-Layering.md) 与 [02-Decisions.md](./02-Decisions.md)。
 
 ## 1. 定位
 

@@ -1,35 +1,23 @@
 # DUI 布局使用指南（Layout 开发者文档）
 
-> **配套工程**：`Samples/Layout/main.cpp`（Flex / 尺寸 / 对齐 / Grid / 换行）、`Samples/Position/main.cpp`（Relative / Absolute / Fixed / zIndex）、`Samples/Scroller/main.cpp`（滚动容器）。
-> **截图**：`Doc/Layout/`，按 `LNN-M.png` 命名（NN = 章号，M = 该章第几个示例），均为**按示例代码实机运行**后 1:1 截取。
-> **相关文档**：[Styles.md](Styles.md)（颜色 / 圆角 / 边框 / 文本 / 继承属性）、[Input.md](Input.md)（输入控件）、[Event.md](Event.md)（事件绑定与命中）、[Pitfalls.md](Pitfalls.md) §4（布局与样式）。
-
----
-
 ## 1. 布局模型
 
-### 1.1 两趟：Measure → Arrange
+### 1.1 尺寸与位置
 
-布局分两趟，都在**同一帧内全量重算**（无增量布局、无跨帧缓存）：
+- **尺寸**由 `Width` / `Height` / `Min*` / `Max*` / `FlexGrow` / `FlexShrink` / `FlexBasis` / 内容自然尺寸决定。
+- **位置**由父容器的 `FlexDirection` / `JustifyContent` / `AlignItems` / `Gap` 决定。
 
-1. **Measure（自底向上）** —— 算每个元素的自然尺寸：
-   内容尺寸 → 加内边距（`BorderBox` 模式下再加边框宽度）→ 被 `Width` / `Height` 覆盖 →
-   主轴方向再被 `FlexBasis` 覆盖 → 用 `Min*` / `Max*` 夹紧 → 得到**元素盒**尺寸，
-   再向外扩出 `Margin` 占位 → **外边距盒**尺寸（父布局的聚合 / grow / shrink / Grid 轨道 / 换行装箱都按它算）。
-2. **Arrange（自顶向下）** —— 定位置：按父容器的方向与对齐规则摆放子项，
-   并在这趟里分配 `FlexGrow` 的剩余空间、计算 `FlexShrink` 的收缩量。
-
-一句话：**尺寸在 Measure 定、位置在 Arrange 定**；`Width`/`Height` 影响前者，`JustifyContent`/`AlignItems` 影响后者。
+一句话：**尺寸定大小，对齐定位置**；改 `Width`/`Height` 影响前者，改 `JustifyContent`/`AlignItems` 影响后者。
 
 ### 1.2 谁是容器、谁是项
 
 容器与普通元素是同一个类（`dui::Panel` 等），区别只在样式：
 
-| `Display` | 行为 |
-| --- | --- |
-| `Flex`（默认） | 子项按 flex 规则排列 |
-| `Grid` | 子项按网格规则排列（见 §5） |
-| `None` | 既不画、也不占位（见 §7.1） |
+| `Display`      | 行为                        |
+| -------------- | --------------------------- |
+| `Flex`（默认） | 子项按 flex 规则排列        |
+| `Grid`         | 子项按网格规则排列（见 §5） |
+| `None`         | 既不画、也不占位（见 §7.1） |
 
 没有"行/列"这种专用元素：一个 `Panel` 设了 `FlexDirection::Row` 就是行，设 `Column` 就是列（默认值）。
 
@@ -65,14 +53,14 @@ dui::Panel* row = root->AddChild<dui::Panel>(dui::Style()
 
 `JustifyContent` 决定**主轴上剩余空间**怎么分（主轴 = `Row` 的水平方向 / `Column` 的垂直方向）。六个取值：
 
-| 取值 | 剩余空间怎么分 |
-| --- | --- |
-| `Start`（默认） | 全挤在起始边 |
-| `Center` | 两侧各留一半 |
-| `End` | 全挤在末端 |
-| `SpaceBetween` | 首尾贴边，中间均分 |
-| `SpaceAround` | 每个项两侧各留一半间距（两端间距是中间的 1/2） |
-| `SpaceEvenly` | 所有间距相等 |
+| 取值            | 剩余空间怎么分                                 |
+| --------------- | ---------------------------------------------- |
+| `Start`（默认） | 全挤在起始边                                   |
+| `Center`        | 两侧各留一半                                   |
+| `End`           | 全挤在末端                                     |
+| `SpaceBetween`  | 首尾贴边，中间均分                             |
+| `SpaceAround`   | 每个项两侧各留一半间距（两端间距是中间的 1/2） |
+| `SpaceEvenly`   | 所有间距相等                                   |
 
 ```cpp
 // 注意：justify-content 作用在「装着这些方块的那个容器」上
@@ -93,20 +81,19 @@ dui::Panel* demo = cell->AddChild<dui::Panel>(dui::Style()
 >
 > 另外要给内容盒留够高度：内容盒高 = `Height` − 上下 `Padding`，而**文字的实际行高比 `FontSize` 大不少**（默认 `LineHeight = 1.2`，配上雅黑的行距系数，实际 ≈ `FontSize × 1.58`：13 DIP → **20.6 DIP**，14 DIP → **22.2 DIP**）。内容盒比行高还矮时 `Center` 仍会把文字**居中**，但文字会溢出内容盒（上下各溢出一点）—— 想让文字稳稳待在盒子里，就把内容盒留够一行行高（如 14 DIP 文字配 `Height 48 + Padding 10` → 内容盒 28 DIP > 22.2 DIP）。
 
-> **居中按"墨迹"算，不是按"行盒"算**：行盒（`FontSize × 1.58`）里上下留白本来就不对称 —— DWrite 的比例行距把基线压在 `ascent × 1.2`（雅黑 = 1.27 em），而汉字墨迹只到 0.83 em，于是**行盒居中时文字视觉偏下 1~2 DIP**。框架在**居中排布**（主轴 `justify-content: center` 或交叉轴 `align-items: center`）且文本是**单行**时，会实测整段墨迹范围、按墨迹中心落位，所以肉眼看到的是真居中。多行文本、顶部对齐（`Start`）的文本不做补偿 —— 保持行盒语义与基线一致。
-
+> **居中按"墨迹"算，不是按"行盒"算**：行盒上下留白不对称，按行盒居中时文字视觉偏下 1~2 DIP。框架在**居中排布**（主轴 `justify-content: center` 或交叉轴 `align-items: center`）且文本是**单行**时按墨迹中心落位，肉眼看到的是真居中。多行文本与顶部对齐（`Start`）不做补偿 —— 保持基线语义。
 
 ### 2.3 交叉轴：`AlignItems` / `AlignSelf`
 
 `AlignItems` 决定**交叉轴上**子项怎么对齐（交叉轴 = `Row` 的垂直方向 / `Column` 的水平方向）：
 
-| 取值 | 行为 |
-| --- | --- |
+| 取值              | 行为                                             |
+| ----------------- | ------------------------------------------------ |
 | `Stretch`（默认） | 拉满交叉轴；子项**显式设了该轴尺寸**时用自然尺寸 |
-| `Start` | 自然尺寸，贴起始边 |
-| `Center` | 自然尺寸，居中 |
-| `End` | 自然尺寸，贴末端 |
-| `Baseline` | 按**首行基线**对齐（见 §2.4） |
+| `Start`           | 自然尺寸，贴起始边                               |
+| `Center`          | 自然尺寸，居中                                   |
+| `End`             | 自然尺寸，贴末端                                 |
+| `Baseline`        | 按**首行基线**对齐（见 §2.4）                    |
 
 `AlignSelf` 是**单个子项**的覆盖写法，优先级高于父容器的 `AlignItems`。
 
@@ -225,11 +212,11 @@ if (grow > 0.f) s.FlexGrow(grow);
 
 三个间距属性都存在，但**归属的轴不同**：
 
-| 属性 | 含义 |
-| --- | --- |
-| `Gap` | 兜底值：没设 `RowGap` / `ColumnGap` 时各自回落它 |
-| `ColumnGap` | **列方向**间距 —— `Row` 主轴的项间距、`Grid` 的列间距 |
-| `RowGap` | **行方向**间距 —— `Column` 主轴的项间距、`Grid` 的行间距 |
+| 属性        | 含义                                                     |
+| ----------- | -------------------------------------------------------- |
+| `Gap`       | 兜底值：没设 `RowGap` / `ColumnGap` 时各自回落它         |
+| `ColumnGap` | **列方向**间距 —— `Row` 主轴的项间距、`Grid` 的列间距    |
+| `RowGap`    | **行方向**间距 —— `Column` 主轴的项间距、`Grid` 的行间距 |
 
 ```cpp
 dui::Style demoStyle = dui::Style()
@@ -281,12 +268,12 @@ dui::Panel* grid = root->AddChild<dui::Panel>(dui::Style()
 
 ![示例 L05-1：Grid 轨道类型](Layout/L05-1.png)
 
-| 轨道 | 含义 |
-| --- | --- |
-| `dui::Fixed(120.f)` | 固定 120 DIP |
-| `dui::Flex(1.f)` | 占剩余空间，按份额分（`Flex(2.f)` 就是两份） |
-| `dui::Auto` | 按内容取下界（内容多大就多大） |
-| `dui::Percent(20.f)` | 占父容器宽/高的 20% |
+| 轨道                 | 含义                                         |
+| -------------------- | -------------------------------------------- |
+| `dui::Fixed(120.f)`  | 固定 120 DIP                                 |
+| `dui::Flex(1.f)`     | 占剩余空间，按份额分（`Flex(2.f)` 就是两份） |
+| `dui::Auto`          | 按内容取下界（内容多大就多大）               |
+| `dui::Percent(20.f)` | 占父容器宽/高的 20%                          |
 
 `Gap` 在 Grid 里就是**行列间距**的通用写法（`RowGap` 行间距、`ColumnGap` 列间距）。
 
@@ -335,12 +322,12 @@ dui::Panel* rel = row->AddChild<dui::Panel>(dui::Style()
 
 `Absolute` 的元素**不参与父容器的排版**（不占位、不挤开兄弟），位置由四条边决定：
 
-| 写法 | 效果 |
-| --- | --- |
-| `Left` + `Top` | 贴包含块左上角 |
-| `Right` + `Bottom` | 贴包含块右下角 |
+| 写法                  | 效果                              |
+| --------------------- | --------------------------------- |
+| `Left` + `Top`        | 贴包含块左上角                    |
+| `Right` + `Bottom`    | 贴包含块右下角                    |
 | `Left` + `Right` 同设 | 横向拉伸（宽度 = 盒宽 − 左 − 右） |
-| `Top` + `Bottom` 同设 | 纵向拉伸 |
+| `Top` + `Bottom` 同设 | 纵向拉伸                          |
 
 **包含块** = 最近的 `position != Static` 的祖先；找不到就用**根元素（窗口客户区）**。
 
@@ -414,7 +401,7 @@ dui::Panel* hidden = row->AddChild<dui::Panel>(dui::Style()
 
 ### 7.2 内容超高：放进 `Scroller`
 
-内容高度超过视口时，直接挂在根容器上会被 `FlexShrink` 压扁 —— 而内容**默认不裁剪**（`overflow: visible`），于是溢出到块外（见 [Pitfalls.md](Pitfalls.md) §4.1）。
+内容高度超过视口时，直接挂在根容器上会被 `FlexShrink` 压扁 —— 而内容**默认不裁剪**（`overflow: visible`），于是溢出到块外（见 [Arch/Pitfalls.md](Arch/Pitfalls.md) §4.1）。
 
 正确做法是放进 `dui::Scroller`：视口固定，内容在视口内滚动，滚动条由框架自绘。
 
@@ -431,13 +418,13 @@ sc->AddChild<dui::Text>(L"滚动内容第 1 行", dui::Style().Height(28.f));
 
 ### 7.3 什么时候会重排
 
-| 操作 | 触发 |
-| --- | --- |
-| `SetStyle(...)` | 重排 + 重绘 |
-| `Set(布局类属性)`：尺寸 / 间距 / 对齐 / 定位 / `Display` … | 重排 + 重绘 |
-| `SetText(...)`、挂载 / 摘除子节点 | 重排 + 重绘 |
-| 窗口 resize、客户区 DIP 变化 | 重排 + 重绘 |
-| `Set(颜色 / 圆角 / 阴影 / 边框 / 透明度 / transform / TextAlign / Overflow / 滚动条外观)` | **只重绘** |
+| 操作                                                                                      | 触发        |
+| ----------------------------------------------------------------------------------------- | ----------- |
+| `SetStyle(...)`                                                                           | 重排 + 重绘 |
+| `Set(布局类属性)`：尺寸 / 间距 / 对齐 / 定位 / `Display` …                                | 重排 + 重绘 |
+| `SetText(...)`、挂载 / 摘除子节点                                                         | 重排 + 重绘 |
+| 窗口 resize、客户区 DIP 变化                                                              | 重排 + 重绘 |
+| `Set(颜色 / 圆角 / 阴影 / 边框 / 透明度 / transform / TextAlign / Overflow / 滚动条外观)` | **只重绘**  |
 
 也就是说：改视觉外观不会触发重排（不会动几何），改布局属性一定会。
 
@@ -455,11 +442,11 @@ box->AddChild<dui::Text>(L"很长很长的一段文字……", dui::Style().Font
 
 三种应对方式：
 
-| 场景 | 做法 |
-| --- | --- |
+| 场景                                 | 做法                                                                                    |
+| ------------------------------------ | --------------------------------------------------------------------------------------- |
 | 内容可能变长（日志、状态栏、列表项） | 父容器加 `Overflow::Hidden`（裁到元素盒 = padding box）；或干脆不定高，让内容把容器撑开 |
-| 单行放不下、想要"…" | 文本 `TextOverflow::Ellipsis`（继承属性，单行截断加省略号） |
-| 内容确实要能滚 | 放进 `dui::Scroller`（见 §7.2） |
+| 单行放不下、想要"…"                  | 文本 `TextOverflow::Ellipsis`（继承属性，单行截断加省略号）                             |
+| 内容确实要能滚                       | 放进 `dui::Scroller`（见 §7.2）                                                         |
 
 ```cpp
 dui::Panel* box = root->AddChild<dui::Panel>(dui::Style()
@@ -468,7 +455,7 @@ dui::Panel* box = root->AddChild<dui::Panel>(dui::Style()
     .Background(0xFFFFFFFF).BorderWidth(1.f).BorderColor(0xFFD0D7DE));
 ```
 
-**为什么默认不裁剪**：与 CSS / WPF / Qt 一致（都是 `visible`）；而且隐式裁剪会把"内容放不下"这类**布局错误静默吞掉** —— 看到"文字被切了一半"比看到"文字压在边框上"更难排查。真要裁剪时一行样式就能打开，不必改全局默认。
+**默认不裁剪的理由**：与 CSS / WPF / Qt 一致（都是 `visible`）；而且隐式裁剪会把"内容放不下"这类**布局错误静默吞掉** —— 真要裁剪时一行样式就能打开。
 
 > 顺带记住两个尺寸：
 >
@@ -481,34 +468,34 @@ dui::Panel* box = root->AddChild<dui::Panel>(dui::Style()
 
 ### 8.1 布局
 
-| 属性 | 取值 | 默认 | 说明 |
-| --- | --- | --- | --- |
-| `Display` | `Flex` / `Grid` / `None` | `Flex` | 容器如何排子项 |
-| `FlexDirection` | `Row` / `Column` | `Column` | 主轴方向 |
-| `FlexWrap` | `NoWrap` / `Wrap` | `NoWrap` | 断行（**仅 Row**） |
-| `JustifyContent` | `Start` / `Center` / `End` / `SpaceBetween` / `SpaceAround` / `SpaceEvenly` | `Start` | 主轴剩余空间分配 |
-| `AlignItems` | `Stretch` / `Start` / `Center` / `End` / `Baseline` | `Stretch` | 交叉轴对齐 |
-| `AlignSelf` | `Stretch` / `Start` / `Center` / `End` / `Baseline` | 未设 = 跟随父级 | 单项覆盖 `AlignItems`（**没有 `Auto` 哨兵**：不写即跟随父级） |
-| `Width` / `Height` | `float`（DIP） | 按内容 | 元素盒尺寸 |
-| `MinWidth` / `MaxWidth` / `MinHeight` / `MaxHeight` | `float`（DIP） | 无限制 | 夹紧（**max 胜**） |
-| `FlexGrow` | `float` | 0 | 剩余空间份额 |
-| `FlexShrink` | `float` | **1** | 收缩权重 |
-| `FlexBasis` | `float`（DIP） | 按内容 | 主轴基准尺寸 |
-| `Gap` | `float`（DIP） | 0 | 间距兜底 |
-| `RowGap` / `ColumnGap` | `float`（DIP） | 回落 `Gap` | 行 / 列方向间距 |
-| `Padding` / `Margin` | `float` / `Thickness` | 0 | 见 [Styles.md](Styles.md) §5.1 |
-| `GridTemplateColumns` / `GridTemplateRows` | `{Fixed / Flex / Auto / Percent}` | 无 | **只能 Style 设置** |
-| `GridRow` / `GridColumn` | `uint32`（0 基） | 自动 | **只能 `Set`** |
-| `GridRowSpan` / `GridColumnSpan` | `uint32` | 1 | **只能 `Set`** |
+| 属性                                                | 取值                                                                        | 默认            | 说明                                                          |
+| --------------------------------------------------- | --------------------------------------------------------------------------- | --------------- | ------------------------------------------------------------- |
+| `Display`                                           | `Flex` / `Grid` / `None`                                                    | `Flex`          | 容器如何排子项                                                |
+| `FlexDirection`                                     | `Row` / `Column`                                                            | `Column`        | 主轴方向                                                      |
+| `FlexWrap`                                          | `NoWrap` / `Wrap`                                                           | `NoWrap`        | 断行（**仅 Row**）                                            |
+| `JustifyContent`                                    | `Start` / `Center` / `End` / `SpaceBetween` / `SpaceAround` / `SpaceEvenly` | `Start`         | 主轴剩余空间分配                                              |
+| `AlignItems`                                        | `Stretch` / `Start` / `Center` / `End` / `Baseline`                         | `Stretch`       | 交叉轴对齐                                                    |
+| `AlignSelf`                                         | `Stretch` / `Start` / `Center` / `End` / `Baseline`                         | 未设 = 跟随父级 | 单项覆盖 `AlignItems`（**没有 `Auto` 哨兵**：不写即跟随父级） |
+| `Width` / `Height`                                  | `float`（DIP）                                                              | 按内容          | 元素盒尺寸                                                    |
+| `MinWidth` / `MaxWidth` / `MinHeight` / `MaxHeight` | `float`（DIP）                                                              | 无限制          | 夹紧（**max 胜**）                                            |
+| `FlexGrow`                                          | `float`                                                                     | 0               | 剩余空间份额                                                  |
+| `FlexShrink`                                        | `float`                                                                     | **1**           | 收缩权重                                                      |
+| `FlexBasis`                                         | `float`（DIP）                                                              | 按内容          | 主轴基准尺寸                                                  |
+| `Gap`                                               | `float`（DIP）                                                              | 0               | 间距兜底                                                      |
+| `RowGap` / `ColumnGap`                              | `float`（DIP）                                                              | 回落 `Gap`      | 行 / 列方向间距                                               |
+| `Padding` / `Margin`                                | `float` / `Thickness`                                                       | 0               | 见 [Styles.md](Styles.md) §5.1                                |
+| `GridTemplateColumns` / `GridTemplateRows`          | `{Fixed / Flex / Auto / Percent}`                                           | 无              | **只能 Style 设置**                                           |
+| `GridRow` / `GridColumn`                            | `uint32`（0 基）                                                            | 自动            | **只能 `Set`**                                                |
+| `GridRowSpan` / `GridColumnSpan`                    | `uint32`                                                                    | 1               | **只能 `Set`**                                                |
 
 ### 8.2 定位
 
-| 属性 | 取值 | 默认 | 说明 |
-| --- | --- | --- | --- |
-| `Position` | `Static` / `Relative` / `Absolute` / `Fixed` | `Static` | 定位方式 |
-| `Left` / `Top` | `float`（DIP） | Auto | `Relative` 下是**偏移量**；`Absolute` 下是**定位** |
-| `Right` / `Bottom` | `float`（DIP） | Auto | `Absolute` 下定位；`Relative` 下无效 |
-| `ZIndex` | `int32` | 0 | **只对 `Absolute` 生效**，同组内升序绘制 |
+| 属性               | 取值                                         | 默认     | 说明                                               |
+| ------------------ | -------------------------------------------- | -------- | -------------------------------------------------- |
+| `Position`         | `Static` / `Relative` / `Absolute` / `Fixed` | `Static` | 定位方式                                           |
+| `Left` / `Top`     | `float`（DIP）                               | Auto     | `Relative` 下是**偏移量**；`Absolute` 下是**定位** |
+| `Right` / `Bottom` | `float`（DIP）                               | Auto     | `Absolute` 下定位；`Relative` 下无效               |
+| `ZIndex`           | `int32`                                      | 0        | **只对 `Absolute` 生效**，同组内升序绘制           |
 
 ---
 
@@ -516,30 +503,20 @@ dui::Panel* box = root->AddChild<dui::Panel>(dui::Style()
 
 写布局前先知道这些，免得按 CSS 直觉踩坑：
 
-| 项 | CSS | 本框架 |
-| --- | --- | --- |
-| 长度 | 支持 `%` / `auto` | **只有 float DIP** |
-| `min` / `max` 冲突 | `min` 胜 | **`max` 胜**（夹紧顺序 min → max） |
-| `flex-shrink` 基准 | shrink 因子 × flex base size | **`shrink × 当前尺寸`** 加权（近似） |
-| `min-height: auto`（内容下限） | 生效 | **文本类生效**（取首行行高；显式写了 `Height` 的不受限） |
-| `justify-content` 空间不足时 | `Center`/`End` 仍生效，向另一侧溢出 | **同 CSS**（`Space*` 退化为 `Start`） |
-| `flex-wrap` | 行列都支持 | **仅 `Row`** |
-| 换行时的 grow / shrink | 仍生效 | **不生效** |
-| `position: relative` 的 `right`/`bottom` | 生效 | **无效**（只认 `Left`/`Top` 偏移） |
-| Grid 的 `justify-content` | 生效 | **不支持**（Grid 不读该属性） |
-| Grid 的 `align-content` / 基线 | 生效 | **不支持 Baseline** |
-| Grid 行列定位 | `grid-row: 2`（1 基） | **`Set(Prop::GridRow, 1)`（0 基）** |
-| Grid 轨道声明 | 可在任意处覆盖 | **只能 `Style` 链** |
-| `overflow` 默认 | `visible` | 一致 |
+| 项                                       | CSS                                 | 本框架                                                   |
+| ---------------------------------------- | ----------------------------------- | -------------------------------------------------------- |
+| 长度                                     | 支持 `%` / `auto`                   | **只有 float DIP**                                       |
+| `min` / `max` 冲突                       | `min` 胜                            | **`max` 胜**（夹紧顺序 min → max）                       |
+| `flex-shrink` 基准                       | shrink 因子 × flex base size        | **`shrink × 当前尺寸`** 加权（近似）                     |
+| `min-height: auto`（内容下限）           | 生效                                | **文本类生效**（取首行行高；显式写了 `Height` 的不受限） |
+| `justify-content` 空间不足时             | `Center`/`End` 仍生效，向另一侧溢出 | **同 CSS**（`Space*` 退化为 `Start`）                    |
+| `flex-wrap`                              | 行列都支持                          | **仅 `Row`**                                             |
+| 换行时的 grow / shrink                   | 仍生效                              | **不生效**                                               |
+| `position: relative` 的 `right`/`bottom` | 生效                                | **无效**（只认 `Left`/`Top` 偏移）                       |
+| Grid 的 `justify-content`                | 生效                                | **不支持**（Grid 不读该属性）                            |
+| Grid 的 `align-content` / 基线           | 生效                                | **不支持 Baseline**                                      |
+| Grid 行列定位                            | `grid-row: 2`（1 基）               | **`Set(Prop::GridRow, 1)`（0 基）**                      |
+| Grid 轨道声明                            | 可在任意处覆盖                      | **只能 `Style` 链**                                      |
+| `overflow` 默认                          | `visible`                           | 一致                                                     |
 
-另有一条容易误判的：`Element::Bounds()` 是**根原点绝对坐标**（`Element.h` 里"相对父"的注释与实现不符，按实现为准）。
-
----
-
-## 10. 相关文档
-
-- [Styles.md](Styles.md)：颜色 / 圆角 / 边框 / 阴影 / 文本 / 继承属性 / 级联优先级。
-- [Event.md](Event.md)：事件绑定、命中顺序与状态位。
-- [Window.md](Window.md)：自绘标题栏 / 异形窗口（标题栏与内容区的 Flex 排布）。
-- [Pitfalls.md](Pitfalls.md) §4.1：flex-shrink 压扁容器导致文字溢出块外。
-- [Arch/04-Layout.md](Arch/04-Layout.md)：布局模块的设计规格（度量、仲裁、属性表）。
+另有一条容易误判的：`Element::Bounds()` 是**根原点绝对坐标**。

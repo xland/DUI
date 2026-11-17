@@ -1,8 +1,8 @@
 # 动画系统（命令式）
 
-> 状态：v0.2 — 已落地。命令式属性动画 + 统一 ticker 已实现，契约以本文为准。
-> 面向使用者的用法指南见 [../Animation.md](../Animation.md)。
-> 相关：[03-Style.md](./03-Style.md)（级联第 1 层）、[16-Image.md](./16-Image.md)（GIF 帧动画）、[06-Events.md](./06-Events.md)（光标闪烁）、[15-Properties.md](./15-Properties.md)（属性主表）、ADR-013（按需呈现）、ADR-020。
+面向使用者的用法指南见 [../Animation.md](../Animation.md)。
+
+相关：[03-Style.md](./03-Style.md)（级联第 1 层）、[16-Image.md](./16-Image.md)（GIF 帧动画）、[06-Events.md](./06-Events.md)（光标闪烁）、[15-Properties.md](./15-Properties.md)（属性主表）、ADR-013（按需呈现）、ADR-020。
 
 ## 1. 决策：只做命令式动画
 
@@ -22,7 +22,11 @@
 
 ### 1.1 明确不做
 
-声明式 `transition` / 关键帧 / `animation` 样式属性、迭代次数、方向、延迟、可配置 Fill、暂停/恢复、seek、Spring、自定义贝塞尔、`DUI_ENABLE_ANIMATION` 编译期裁剪、窗口级 DirectComposition 动画、元素级合成树 / 离屏层。
+声明式 `transition` / 关键帧 / `animation` 样式属性、方向、延迟、可配置 Fill、seek、Spring、自定义贝塞尔、变速（playback rate）、时间轴反转、`DUI_ENABLE_ANIMATION` 编译期裁剪、窗口级 DirectComposition 动画、元素级合成树 / 离屏层。
+
+> **暂停 / 恢复已支持**（M5.68）：`AnimationHandle` 提供 `Pause()` / `Continue()`（相位机 + 累计已推进时长，恢复后从断点接上，总时长不变）；`Stop()` 立即落到终值、`Cancel()` 回落基值。
+>
+> **重播 / 循环已支持**（M5.69）：`Start()` 是"从头重播"（时间轴归零、回到动画起点）；`Loop(n)` 开启循环播放并从头开始第一轮，`n = 0` 为无限 —— 每轮结束触发 `OnFinished`、下一轮开始触发 `OnStarted`。
 
 **注意**：Paint 级 2D transform（`TranslationX` / `TranslationY` / `Rotation` / `Scale`）不是声明式动画能力，而是四个普通 Paint 类属性，已在 §2.1 白名单开放；实现与边界见 [10-Rendering.md](./10-Rendering.md) §6.4 与 ADR-020 补充。
 
@@ -31,16 +35,18 @@
 ## 2. 公共 API
 
 ```cpp
+// Animate 只创建动画（不执行），Start() 才推进
 auto h = card->Animate(dui::Opacity, 0.f,
     { .durationMs = 200, .easing = dui::Easing::EaseOut });
-h.OnFinished(fn);
-h.Cancel();   // 幂等；元素销毁后自动失效
+h.OnStarted(fn).OnPaused(fn).OnStopped(fn).OnFinished(fn);
+h.Start();      // 从头重播；Pause() 冻结 / Continue() 续跑 / Stop() 落终值 / Cancel() 回落基值
+h.Loop();       // 循环播放（0 = 无限）；每轮触发 OnFinished → OnStarted
 
 // 多通道值：四边 / 四角一起补间
 card->Animate(dui::Padding, dui::Thickness(16.f),
-    { .durationMs = 200, .easing = dui::Easing::EaseOut });
+    { .durationMs = 200, .easing = dui::Easing::EaseOut }).Start();
 card->Animate(dui::CornerRadius, dui::CornerRadii{8.f, 8.f, 0.f, 0.f},
-    { .durationMs = 250 });
+    { .durationMs = 250 }).Start();
 ```
 
 定义于 `UI/Animation.h`，经 `UI/UI.h` / `DUI/DUI.h` 聚合，业务侧只需 include 公共入口。
@@ -93,21 +99,30 @@ struct AnimConfig {
 
 | 方法 | 语义 |
 | --- | --- |
-| `OnFinished(std::function<void()> fn)` | 注册完成回调。动画进行中注册则完成时调用一次；已正常完成后注册则**立即调用一次**；已取消或元素已销毁则忽略。重复注册以后者覆盖前者。返回自身便于链式。 |
-| `Cancel() noexcept` | 取消动画、清除动画槽、回落基值并标脏。**幂等**；元素销毁后为 no-op。 |
+| `Start() noexcept` | **从头重播**：时间轴归零、值回到动画起点再推进（任何相位都可调；首次启动时起点取当前显示值，重播沿用原起点）。 |
+| `Pause() noexcept` | 冻结在当前值（仅 `Running` 有效）：记下已推进时长并停表。 |
+| `Continue() noexcept` | 从当前值继续：`Paused` → 恢复；`Idle` → 等同 `Start()`；已是终态 → 不再执行。 |
+| `Stop() noexcept` | 立即落到终值（触发 `OnStopped` 与 `OnFinished`）；同时结束循环模式。 |
+| `Loop(uint32_t times = 0) noexcept` | 开启循环播放并从头开始第一轮；`times` = 总播放轮数（`0` = 无限）。每轮结束触发 `OnFinished`，下一轮开始触发 `OnStarted`；最后一轮结束后 `Completed`。 |
+| `Cancel() noexcept` | 取消动画、清除动画槽、回落基值并标脏。**幂等**；元素销毁后为 no-op；**不触发任何事件**。 |
+| `OnStarted / OnPaused / OnStopped / OnFinished(fn)` | 事件注册，返回句柄副本便于链式。注册时若对应状态已成立 → 立即调用一次；重复注册以后者覆盖前者；**回调保留**（循环每轮、重播都会再次触发）。 |
+| `Phase() / IsRunning() / IsFinished()` | 相位查询（`Idle` / `Running` / `Paused` / `Completed` / `Stopped` / `Cancelled`）。 |
 
-回调在 **UI 线程**、统一 ticker 的 `Tick()` 内执行，且延后到该元素本轮所有补间推进结束之后，避免重入打乱遍历。回调里可以启动新动画、取消其它动画或销毁元素。
+`OnFinished` 在统一 ticker 的 `Tick()` 内执行，且延后到该元素本轮所有补间推进结束之后，避免重入打乱遍历；`OnStarted` / `OnPaused` / `OnStopped` 在控制命令的调用点同步触发。回调都在 **UI 线程**，回调里可以启动新动画、取消其它动画或销毁元素。
 
 ---
 
 ## 3. 语义契约
 
-1. **起点 = 当前显示值**：启动时调 `ResolveProperty(element, prop)`（遍历外路径），它已经包含级联第 1 层，因此中断旧动画时从旧动画的当前值继续，快速反向不跳变。
-2. **同 `(元素, 属性)` 唯一**：新动画替换旧动画 —— 包括已完成但仍保留终值的那条。旧句柄整体作废、不触发其 `OnFinished`。
+1. **起点 = 当前显示值**：`Start()` 时调 `ResolveProperty(element, prop)`（遍历外路径），它已经包含级联第 1 层，因此中断旧动画时从旧动画的当前值继续，快速反向不跳变。
+2. **同 `(元素, 属性)` 唯一**：新动画替换旧动画 —— 包括已完成但仍保留终值的那条。旧句柄整体作废、不触发其回调。
 3. **动画值不污染本地覆盖**：补间结果写入 `Element::animated_`（稀疏数组），作为级联**第 1 层（最高优先级）**；`TryResolveElement()` 最先查它。遍历内 `StyleContext` 与遍历外 `Style::Resolve` 都经过 `TryResolveElement`，同帧结果一致。`Element::Set()` 的 `overrides_`（第 3 层）不被改写。
 4. **标脏按属性标志**：每次写入调 `MarkDirty(PropFlagsOf(prop))`。Paint 标量 / transform 标签为 `kFlagPaint` → 每帧仅重绘、不重排；`Width` / `Height` / `Left` / `Top` 为 `kFlagLayout` → 每帧全量重排，兄弟元素跟着回流。
 5. **完成 = fill forwards**：终值留在动画槽，不再 tick，直到被新动画替换、`Cancel()` 或元素销毁。回调只触发一次。
-6. **取消 / 销毁**：`Cancel()` 移除该属性的动画槽并回落基值；元素析构时 `Lifetime::Kill()` + 从 ticker 注销，`AnimState` 里的生命周期令牌让所有残留句柄自动失效，回调不会被派发到已销毁元素。
+6. **相位机**：`Idle → Running → (Paused ⇄ Running) → Completed / Stopped / Cancelled`。暂停靠 `AnimSlot::elapsedMs`（暂停前累计）+ `startMs`（当前推进段起点）实现 —— 恢复后从断点接上，总时长不变；暂停时长不计入。
+7. **重播**：`Start()` 一律从头重播 —— 时间轴归零（`elapsedMs = 0`、`startMs = now`）、值回到 `from`，并立即把 `from` 写进动画层（避免先闪一下上一次的终值）。`from` 只在**首次**启动时取 `ResolveProperty(element, prop)`，重播沿用原起点；`Loop()` 与 `Start()` 同为重播，额外开启循环。
+8. **循环**：`AnimSlot` 带 `looping` / `loopTotal` / `loopRemaining`（`loopRemaining` 含当前轮；`0` 且 `looping` = 无限）。一轮跑完时：值回到 `from` 并按 `余量 / duration` 重新插值，`loopRemaining` 递减；`loopRemaining` 归零的那一轮结束后转 `Completed`（终值保留）。轮次边界的事件（`OnFinished` → `OnStarted`）用延迟事件列表派发，顺序固定；掉帧跨多轮时最多展开 4 轮事件，其余折叠。
+9. **取消 / 销毁**：`Cancel()` 移除该属性的动画槽并回落基值；元素析构时 `Lifetime::Kill()` + 从 ticker 注销，`AnimShared` 里的生命周期令牌让所有残留句柄自动失效，回调不会被派发到已销毁元素。
 
 ---
 
@@ -150,7 +165,7 @@ struct AnimConfig {
 
 | 文件 | 职责 |
 | --- | --- |
-| `UI/Animation.h` | `AnimProp<T>` 与标签白名单、`AnimConfig`、`AnimationHandle`、`detail::AnimState/AnimSlot`、ticker 桥接声明 |
+| `UI/Animation.h` | `AnimProp<T>` 与标签白名单、`AnimConfig`、`AnimationHandle`、`detail::AnimShared/AnimSlot`、ticker 桥接声明 |
 | `UI/Animation.cpp` | 注册表、插值/缓动、`Element::StartAnimation` / `Element::TickAnimations`、句柄取消与失效 |
 | `UI/Element.h/.cpp` | `Animate()` 模板、`animated_`（层 1）、`anims_`、析构时注销 |
 | `UI/StyleResolve.cpp` | `TryResolveElement()` 的层 1 查询；`ElementTransform()` 合成 transform 矩阵 |
@@ -166,6 +181,7 @@ struct AnimConfig {
 ## 7. 已知边界
 
 - 20 ms 是 Windows 定时器粒度，不是 VSync 对齐的精确帧；补间按 `GetTickCount64()` 的绝对时刻推进，掉帧不会拖长总时长。
+- 循环每轮都从动画起点开始（轮与轮之间值从终点跳回起点，与 CSS `animation-iteration` 同语义）；掉帧跨多轮时事件最多展开 4 轮。
 - `durationMs = 0` 等价于 1 ms：仍要等下一次 tick 才写终值、发回调。
 - 颜色在打包的 8 位通道上插值，不做线性光空间混合。
 - GIF 帧动画与光标闪烁不是样式动画，不读写动画槽，也不受 `Cancel()` 影响。

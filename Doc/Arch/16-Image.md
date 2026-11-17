@@ -1,7 +1,6 @@
 # 图像
 
-> 状态：v0.4 — `dui::Image` 控件已落地（WIC 解码 + 图像批 + 纹理仓库）；GIF 动画与 `dui::Gif` 播放控制已支持；`dui::Svg` 走 Direct2D 内置 SVG（Win10 1703+，图标级子集）。
-> 相关：[10-Rendering.md](./10-Rendering.md)（批与呈现）、[11-Text.md](./11-Text.md)（字形图集，同构的"CPU 侧数据在 UI、GPU 侧资源在 Graphics"分层）、[04-Layout.md](./04-Layout.md)（自然尺寸与布局）、[12-Windowing.md](./12-Windowing.md)（DPI）。
+相关：[10-Rendering.md](./10-Rendering.md)（批与呈现）、[11-Text.md](./11-Text.md)（字形图集，同构的"CPU 侧数据在 UI、GPU 侧资源在 Graphics"分层）、[04-Layout.md](./04-Layout.md)（自然尺寸与布局）、[12-Windowing.md](./12-Windowing.md)（DPI）。
 
 ---
 

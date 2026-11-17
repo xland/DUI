@@ -435,6 +435,7 @@ private:
     AnimationHandle StartAnimation(Prop p, AnimKind kind, const StyleValue& to,
                                    const AnimConfig& cfg);
     void TickAnimations(uint64_t nowMs);
+    void SetAnimatedValue(const StyleValue& v);   // 写动画值（级联第 1 层）并标脏
     uint32_t StateVariantFlags(State s) const;   // 变体属性的失效标志并集
 
     // 成员函数 + 上下文 → std::function 的通用绑定（与 OnClick 同构）
@@ -457,7 +458,11 @@ private:
     friend void ClearDirtyTree(Element* root);
     friend void detail::TickAnimations(uint64_t nowMs);
     friend void detail::CancelAnimation(
-        const std::shared_ptr<detail::AnimState>& state) noexcept;
+        const std::shared_ptr<detail::AnimShared>& shared) noexcept;
+    friend void detail::ControlAnimation(
+        const std::shared_ptr<detail::AnimShared>& shared,
+        detail::AnimCommand cmd,
+        uint32_t times) noexcept;
 
     Element*                   parent_ = nullptr;
     std::vector<Element*>      children_;     // 父持有子，析构递归删除

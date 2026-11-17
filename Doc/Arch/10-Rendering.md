@@ -1,8 +1,8 @@
 # 渲染
 
-> 状态：草案 v0.1 — **渲染主路径已定案**（§9 结论记录）；阴影已落地（box-shadow 子集，Shape 批 kind=3 的 SDF 衰减带，无纹理/离屏）；模糊、离屏缓冲、任意形状投影（drop-shadow）等 P1/P2 项随实现推进补充。
-> 需求来源：保留模式 + 脏区（ADR-005）、按需呈现（"没有失效就没有工作"）、高保真（[12-Windowing.md](./12-Windowing.md) §7.1）、批量化（[00-Overview.md](./00-Overview.md) §3）。
-> 相关：[01-Layering.md](./01-Layering.md) §3（帧生命周期）与 Graphics 模块清单、[02-Decisions.md](./02-Decisions.md) ADR-001（D3D11+DXGI）/ ADR-003（字形光栅）/ ADR-005（保留模式）、[03-Style.md](./03-Style.md) §7（失效表）、[05-Animation.md](./05-Animation.md) §7、[12-Windowing.md](./12-Windowing.md)。
+需求来源：保留模式 + 脏区（ADR-005）、按需呈现（"没有失效就没有工作"）、高保真（[12-Windowing.md](./12-Windowing.md) §7.1）、批量化（[00-Overview.md](./00-Overview.md) §3）。
+
+相关：[01-Layering.md](./01-Layering.md) §3（帧生命周期）与 Graphics 模块清单、[02-Decisions.md](./02-Decisions.md) ADR-001（D3D11+DXGI）/ ADR-003（字形光栅）/ ADR-005（保留模式）、[03-Style.md](./03-Style.md) §7（失效表）、[05-Animation.md](./05-Animation.md) §7、[12-Windowing.md](./12-Windowing.md)。
 
 ## 1. 需求
 

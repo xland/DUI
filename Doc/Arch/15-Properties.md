@@ -1,7 +1,6 @@
 # 属性主表（唯一事实来源）
 
-> 状态：草案 v0.1 — 已合并 03/04/05 三处属性清单。
-> 定位：全框架**唯一**的样式属性定义处。[03-Style.md](./03-Style.md) / [04-Layout.md](./04-Layout.md) / [05-Animation.md](./05-Animation.md) / [11-Text.md](./11-Text.md) 只描述**消费哪些属性与语义**，不再各自维护清单（ADR-024）。
+定位：全框架**唯一**的样式属性定义处。[03-Style.md](./03-Style.md) / [04-Layout.md](./04-Layout.md) / [05-Animation.md](./05-Animation.md) / [11-Text.md](./11-Text.md) 只描述**消费哪些属性与语义**，不再各自维护清单（ADR-024）。
 
 ## 1. 维护约定
 

@@ -1,11 +1,5 @@
 # DUI 样式使用指南（Style 开发者文档）
 
-> **配套工程**：`Samples/Style/main.cpp` 是本文示例的可运行版本，可直接编译运行对照。
-> **截图**：`Doc/Sytles/`，按 `NN-M.png` 命名（NN = 章号，M = 该章第几个示例），均为**按示例代码实机运行**后 1:1 截取。
-> **相关文档**：[Layout.md](Layout.md)（Flex / Grid / 尺寸 / 定位 / 速查）、[Input.md](Input.md)（输入控件）、[Event.md](Event.md)（事件绑定与状态位）、[Pitfalls.md](Pitfalls.md) §4（布局与样式）。
-
----
-
 ## 1. 快速开始
 
 ### 1.1 `dui::Style` 是什么
@@ -106,9 +100,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 注意：**派生样式持基样式的裸指针**，基样式必须是静态存储（`static const dui::Style`），不能是函数里的临时对象。
 
 ```cpp
-#include <windows.h>
-#include "DUI/DUI.h"
-
 // 基样式：派生样式持它的裸指针（parent_），必须是静态存储
 static const dui::Style kCard = dui::Style()
     .Height(64.f)
@@ -119,54 +110,25 @@ static const dui::Style kCard = dui::Style()
     .JustifyContent(dui::Justify::Center)
     .AlignItems(dui::Align::Center);
 
-class DocWindow final : public dui::Window {
-public:
-    DocWindow()
-        : dui::Window(dui::WindowOptions{
-              .title  = L"Doc 02-1",
-              .width  = 630.f,
-              .height = 110.f,
-          }) {}
+// 派生 A：只写差异 —— 背景色
+dui::Panel* cardA = row->AddChild<dui::Panel>(dui::Style::Derive(kCard)
+    .Width(190.f)
+    .Background(0xFF4472C4));
+cardA->AddChild<dui::Text>(L"派生 A：只加蓝底");
 
-protected:
-    void OnCreate() override {
-        dui::Panel* root = Root();
-        root->SetStyle(dui::Style()
-            .Padding(16.f)
-            .FontSize(13.f)
-            .Background(0xFFF3F3F3));
+// 派生 B：差异覆盖两项（背景色 + 圆角）
+dui::Panel* cardB = row->AddChild<dui::Panel>(dui::Style::Derive(kCard)
+    .Width(190.f)
+    .Background(0xFF70AD47)
+    .CornerRadius(18.f));
+cardB->AddChild<dui::Text>(L"派生 B：绿底 + 圆角");
 
-        dui::Panel* row = root->AddChild<dui::Panel>(dui::Style()
-            .FlexDirection(dui::FlexDirection::Row)
-            .Gap(8.f));
-
-        // 派生 A：只写差异 —— 背景色
-        dui::Panel* cardA = row->AddChild<dui::Panel>(dui::Style::Derive(kCard)
-            .Width(190.f)
-            .Background(0xFF4472C4));
-        cardA->AddChild<dui::Text>(L"派生 A：只加蓝底");
-
-        // 派生 B：差异覆盖两项（背景色 + 圆角）
-        dui::Panel* cardB = row->AddChild<dui::Panel>(dui::Style::Derive(kCard)
-            .Width(190.f)
-            .Background(0xFF70AD47)
-            .CornerRadius(18.f));
-        cardB->AddChild<dui::Text>(L"派生 B：绿底 + 圆角");
-
-        // 派生 C：差异覆盖背景色与字号
-        dui::Panel* cardC = row->AddChild<dui::Panel>(dui::Style::Derive(kCard)
-            .Width(190.f)
-            .Background(0xFF7030A0)
-            .FontSize(18.f));
-        cardC->AddChild<dui::Text>(L"派生 C：紫底 + 字号");
-    }
-};
-
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-    dui::Application app;
-    DocWindow win;
-    return app.Run(win);
-}
+// 派生 C：差异覆盖背景色与字号
+dui::Panel* cardC = row->AddChild<dui::Panel>(dui::Style::Derive(kCard)
+    .Width(190.f)
+    .Background(0xFF7030A0)
+    .FontSize(18.f));
+cardC->AddChild<dui::Text>(L"派生 C：紫底 + 字号");
 ```
 
 ![示例 2.1：三份派生样式](Sytles/02-1.png)
@@ -498,37 +460,47 @@ alpha->AddChild<dui::Text>(L"Opacity(0.45)\n整体半透明");
 
 ### 9.1 `Overflow` 裁剪，`Visibility` 隐藏
 
-`Overflow` 决定内容是否被裁到元素盒内：`Visible`（默认，同 CSS，不裁剪）、`Hidden`（裁剪到内容盒）、`Scroll`（裁剪但不画滚动条 —— 框架的滚动条用 `dui::Scroller` 控件实现）。
+`Overflow` 决定内容是否被裁到元素盒内：`Visible`（默认，同 CSS，不裁剪）、`Hidden`（裁到**元素盒 = padding box**，同 CSS）、`Scroll`（与 `Hidden` 同义，只裁不画滚动条 —— 框架的滚动条用 `dui::Scroller` 控件实现）。
 
 `Visibility::Hidden` 则相反：**不可见但仍占位**，后面的元素不会被前移，也不参与命中测试（继承属性，子元素可显式设 `Visible` 反转）。
 
 ```cpp
-// 默认 Visible：内容溢出到盒外（与 CSS 一致）
+// ① 默认 Visible：内容溢出到盒外（与 CSS 一致，不裁剪）
 dui::Panel* visible = row->AddChild<dui::Panel>(dui::Style()
-    .Width(180.f).Height(70.f)
+    .Width(200.f).Height(100.f)
     .Background(0xFFE7E6E6).CornerRadius(4.f)
     .Padding(10.f));
-visible->AddChild<dui::Text>(L"默认 Visible：\n这行字溢出了盒子（不裁剪）", dui::Style().FontSize(16.f));
+visible->AddChild<dui::Text>(L"① 默认 Visible：\n这行字很长很长很长很长很长很长很长，\n排不下就溢出到盒子外面去了",
+                            dui::Style().FontSize(16.f));
 
-// Hidden：内容裁到元素盒内
+// ② Hidden：同样的内容被裁到元素盒内（末行切在盒子下边缘）
 dui::Panel* hidden = row->AddChild<dui::Panel>(dui::Style()
-    .Width(180.f).Height(70.f)
+    .Width(200.f).Height(100.f)
     .Background(0xFFE7E6E6).CornerRadius(4.f)
     .Padding(10.f)
     .Overflow(dui::Overflow::Hidden));
-hidden->AddChild<dui::Text>(L"Hidden 显式裁剪：\n这行字被裁掉了", dui::Style().FontSize(16.f));
+hidden->AddChild<dui::Text>(L"② Overflow::Hidden：\n这行字很长很长很长很长很长很长很长，\n排不下就被裁到盒子里面去了",
+                             dui::Style().FontSize(16.f));
 
-// Visibility::Hidden：不画但占位
+// ③ Visibility::Hidden：不画但占位（后面的盒子不会被前移）
 dui::Panel* invisible = row->AddChild<dui::Panel>(dui::Style()
-    .Width(180.f).Height(70.f)
+    .Width(200.f).Height(100.f)
     .Background(0xFFE7E6E6).CornerRadius(4.f)
     .Padding(10.f)
     .Visibility(dui::Visibility::Hidden));
+
+// ④ 正常对照
+dui::Panel* normal = row->AddChild<dui::Panel>(dui::Style()
+    .Width(200.f).Height(100.f)
+    .Background(0xFF70AD47).CornerRadius(4.f)
+    .Padding(10.f)
+    .Color(0xFFFFFFFF));
+normal->AddChild<dui::Text>(L"④ 正常显示的一格", dui::Style().FontSize(16.f));
 ```
 
 ![示例 9.1：溢出裁剪与可见性](Sytles/09-1.png)
 
-左边第一格文字溢出到盒外，第二格被裁掉，第三格不可见但留下空位，第四格正常显示。
+从左到右：第一格文字溢出到盒外（默认 `Visible` 不裁剪）；第二格同样的内容被**切在盒子的下边缘**（`Hidden` 裁到元素盒）；第三格不可见，但位置留住了空位（`Visibility::Hidden` 占位不绘制）；第四格正常显示。
 
 ---
 
@@ -538,68 +510,59 @@ dui::Panel* invisible = row->AddChild<dui::Panel>(dui::Style()
 
 ### 10.1 视觉与盒模型
 
-| 属性 | 取值 | 默认 | 继承 |
-| --- | --- | --- | --- |
-| `Background` | `0xAARRGGBB` | 透明 | 否 |
-| `Color` | `0xAARRGGBB` | 黑 `0xFF000000` | 是 |
-| `Opacity` | `0..1` | 1 | 否 |
-| `CornerRadius` | `float` / `CornerRadii` | 0 | 否 |
-| `BorderWidth` | `float` / `Thickness` | 0（无边框） | 否 |
-| `BorderColor` | `0xAARRGGBB` | 透明 | 否 |
-| `BorderStyle` | `Solid` / `Dashed` / `Dotted` | `Solid` | 否 |
-| `BoxSizing` | `PaddingBox` / `BorderBox` | `PaddingBox` | 否 |
-| `Shadow` | `(blur, color, offsetX, offsetY)` | 无 | 否 |
-| `Padding` / `Margin` | `float` / `Thickness` | 0 | 否 |
-| `Overflow` | `Visible` / `Hidden` / `Scroll` | `Visible` | 否 |
-| `Visibility` | `Visible` / `Hidden` | `Visible` | 是 |
+| 属性                 | 取值                              | 默认            | 继承 |
+| -------------------- | --------------------------------- | --------------- | ---- |
+| `Background`         | `0xAARRGGBB`                      | 透明            | 否   |
+| `Color`              | `0xAARRGGBB`                      | 黑 `0xFF000000` | 是   |
+| `Opacity`            | `0..1`                            | 1               | 否   |
+| `CornerRadius`       | `float` / `CornerRadii`           | 0               | 否   |
+| `BorderWidth`        | `float` / `Thickness`             | 0（无边框）     | 否   |
+| `BorderColor`        | `0xAARRGGBB`                      | 透明            | 否   |
+| `BorderStyle`        | `Solid` / `Dashed` / `Dotted`     | `Solid`         | 否   |
+| `BoxSizing`          | `PaddingBox` / `BorderBox`        | `PaddingBox`    | 否   |
+| `Shadow`             | `(blur, color, offsetX, offsetY)` | 无              | 否   |
+| `Padding` / `Margin` | `float` / `Thickness`             | 0               | 否   |
+| `Overflow`           | `Visible` / `Hidden` / `Scroll`   | `Visible`       | 否   |
+| `Visibility`         | `Visible` / `Hidden`              | `Visible`       | 是   |
 
 ### 10.2 文本与字体
 
-| 属性 | 取值 | 默认 | 继承 |
-| --- | --- | --- | --- |
-| `FontSize` | `float`（DIP） | 14 | 是 |
-| `FontWeight` | `Normal` / `Medium` / `SemiBold` / `Bold` | `Normal` | 是 |
-| `FontStyle` | `Normal` / `Italic` | `Normal` | 是 |
-| `FontFamily` | `const wchar_t*`（只存指针） | 引擎默认 | 是 |
-| `LineHeight` | `float`（倍数） | 1.2 | 是 |
-| `LetterSpacing` | `float`（DIP） | 0 | 是 |
-| `WordSpacing` | `float`（DIP） | 0 | 是 |
-| `TextAlign` | `Start` / `Center` / `End` | `Start` | 是 |
-| `TextDecoration` | `Underline` / `LineThrough`（可组合） | `None` | 否 |
-| `TextOverflow` | `Clip` / `Ellipsis` | `Clip` | 是 |
-| `Cursor` | `Arrow` / `IBeam` / `Hand` / … | `Arrow` | 是 |
+| 属性             | 取值                                      | 默认     | 继承 |
+| ---------------- | ----------------------------------------- | -------- | ---- |
+| `FontSize`       | `float`（DIP）                            | 14       | 是   |
+| `FontWeight`     | `Normal` / `Medium` / `SemiBold` / `Bold` | `Normal` | 是   |
+| `FontStyle`      | `Normal` / `Italic`                       | `Normal` | 是   |
+| `FontFamily`     | `const wchar_t*`（只存指针）              | 引擎默认 | 是   |
+| `LineHeight`     | `float`（倍数）                           | 1.2      | 是   |
+| `LetterSpacing`  | `float`（DIP）                            | 0        | 是   |
+| `WordSpacing`    | `float`（DIP）                            | 0        | 是   |
+| `TextAlign`      | `Start` / `Center` / `End`                | `Start`  | 是   |
+| `TextDecoration` | `Underline` / `LineThrough`（可组合）     | `None`   | 否   |
+| `TextOverflow`   | `Clip` / `Ellipsis`                       | `Clip`   | 是   |
+| `Cursor`         | `Arrow` / `IBeam` / `Hand` / …            | `Arrow`  | 是   |
 
 ### 10.3 布局
 
-| 属性 | 取值 | 默认 | 继承 |
-| --- | --- | --- | --- |
-| `Width` / `Height` | `float`（DIP） | 按内容 | 否 |
-| `MinWidth` / `MaxWidth` / `MinHeight` / `MaxHeight` | `float`（DIP） | 无限制 | 否 |
-| `Padding` / `Margin` | `float` / `Thickness` | 0 | 否 |
-| `Gap` / `RowGap` / `ColumnGap` | `float`（DIP） | 0 | 否 |
-| `FlexDirection` | `Row` / `Column` | `Column` | 否 |
-| `FlexWrap` | `NoWrap` / `Wrap` | `NoWrap` | 否 |
-| `FlexGrow` / `FlexShrink` / `FlexBasis` | `float` | 0 / 1 / auto | 否 |
-| `JustifyContent` | `Start` / `Center` / `End` / `SpaceBetween` / `SpaceAround` / `SpaceEvenly` | `Start` | 否 |
-| `AlignItems` / `AlignSelf` | `Stretch` / `Start` / `Center` / `End` / `Baseline` | `Stretch` / `Auto` | 否 |
-| `Position` + `Left`/`Top`/`Right`/`Bottom` / `ZIndex` | `Static` / `Relative` / `Absolute` / `Fixed` | `Static` | 否 |
-| `Display` | `Flex` / `Grid` / `None` | `Flex` | 否 |
+| 属性                                                  | 取值                                                                        | 默认               | 继承 |
+| ----------------------------------------------------- | --------------------------------------------------------------------------- | ------------------ | ---- |
+| `Width` / `Height`                                    | `float`（DIP）                                                              | 按内容             | 否   |
+| `MinWidth` / `MaxWidth` / `MinHeight` / `MaxHeight`   | `float`（DIP）                                                              | 无限制             | 否   |
+| `Padding` / `Margin`                                  | `float` / `Thickness`                                                       | 0                  | 否   |
+| `Gap` / `RowGap` / `ColumnGap`                        | `float`（DIP）                                                              | 0                  | 否   |
+| `FlexDirection`                                       | `Row` / `Column`                                                            | `Column`           | 否   |
+| `FlexWrap`                                            | `NoWrap` / `Wrap`                                                           | `NoWrap`           | 否   |
+| `FlexGrow` / `FlexShrink` / `FlexBasis`               | `float`                                                                     | 0 / 1 / auto       | 否   |
+| `JustifyContent`                                      | `Start` / `Center` / `End` / `SpaceBetween` / `SpaceAround` / `SpaceEvenly` | `Start`            | 否   |
+| `AlignItems` / `AlignSelf`                            | `Stretch` / `Start` / `Center` / `End` / `Baseline`                         | `Stretch` / `Auto` | 否   |
+| `Position` + `Left`/`Top`/`Right`/`Bottom` / `ZIndex` | `Static` / `Relative` / `Absolute` / `Fixed`                                | `Static`           | 否   |
+| `Display`                                             | `Flex` / `Grid` / `None`                                                    | `Flex`             | 否   |
 
 ### 10.4 运行时改样式
 
-| 用法 | 作用 | 优先级 |
-| --- | --- | --- |
-| `element->Set(prop, value)` | 改单个属性 | 高于元素 Style |
-| `element->SetStyle(style)` | 整份替换（内部拷贝持有） | 高于元素 Style |
-| `element->When(state, style)` | 状态变体（如 `State::Hover`） | **最高** |
+| 用法                          | 作用                          | 优先级         |
+| ----------------------------- | ----------------------------- | -------------- |
+| `element->Set(prop, value)`   | 改单个属性                    | 高于元素 Style |
+| `element->SetStyle(style)`    | 整份替换（内部拷贝持有）      | 高于元素 Style |
+| `element->When(state, style)` | 状态变体（如 `State::Hover`） | **最高**       |
 
 > 级联优先级：**状态变体 > 本地 `Set` > 元素 Style**；继承属性在元素自身没写时才回退到父级计算值。
-
----
-
-## 11. 相关文档
-
-- [Font.md](Font.md) —— 字体与图标：字体族名、字重、字体图标、内置矢量图标。
-- [Layout.md](Layout.md) —— 盒模型与 Flex 布局（`Padding` / `Gap` / `FlexGrow` 的排布效果）。
-- [Animation.md](Animation.md) —— 命令式属性动画（`Element::Animate`）：可动画属性、缓动、级联优先级。
-- [CustomCtrl.md](CustomCtrl.md) —— 自定义控件：派生 `Element`、`OnPaint` 自绘、`Handle*` 钩子重写点击。

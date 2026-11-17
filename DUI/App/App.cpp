@@ -122,6 +122,18 @@ public:
 
     void OnPointerButton(Vec2 pt, PointerButton button, bool down) override {
         if (down) {
+            if (button != PointerButton::Left) {
+                // 非左键按下（目前只有右键）：**只派发元素级 PointerDown** ——
+                // 不动 pressed 链 / 焦点 / 指针捕获 / IME 插入点：
+                //   · Pressed 视觉态与焦点是左键语义（右键按下不该让按钮亮起、更不该抢焦点）
+                //   · 覆盖 pressed_ 会让左键抬起时 Pressed 卡住、Click 合成失效
+                //   · 窗口捕获服务于左键"拖出窗口外仍能收到抬起"，右键不做拖拽
+                Vec2 local{};
+                Element* hit = HitTest(window_.Root(), pt, &local);
+                DispatchPointerDown(hit, local, button);
+                RequestFrame();
+                return;
+            }
             // 命中滚动条 → 进入滑块拖拽（不参与 Click 合成，也不派发元素事件）
             Vec2 local{};
             Element* hit = HitTest(window_.Root(), pt, &local);

@@ -407,9 +407,21 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             ReleaseCapture();
             self->host_->OnPointerButton(self->DipFromLParam(lp), PointerButton::Left, false);
             return 0;
+        case WM_RBUTTONDOWN:
+            // 右键按下：派发元素级 PointerDown（App.cpp 只派事件，不动 pressed / 焦点 / 捕获）
+            self->host_->OnPointerButton(self->DipFromLParam(lp), PointerButton::Right, true);
+            return 0;
         case WM_RBUTTONUP:
             // 右键抬起交给业务决定是否弹菜单（框架不自动挂钩 WM_CONTEXTMENU）
             self->host_->OnPointerButton(self->DipFromLParam(lp), PointerButton::Right, false);
+            return 0;
+        case WM_MBUTTONDOWN:
+            // 中键按下：同右键，只派元素级 PointerDown
+            self->host_->OnPointerButton(self->DipFromLParam(lp), PointerButton::Middle, true);
+            return 0;
+        case WM_MBUTTONUP:
+            // 中键抬起：只派元素级 PointerUp
+            self->host_->OnPointerButton(self->DipFromLParam(lp), PointerButton::Middle, false);
             return 0;
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {

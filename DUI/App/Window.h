@@ -35,7 +35,7 @@ public:
     virtual void OnDpiScaleChanging(float newScale) { (void)newScale; }
     // 指针输入（M3：物理坐标已换算为窗口客户区 DIP；完整归一化在 M4）
     virtual void OnPointerMove(Vec2 ptDip) = 0;
-    // button = 触发的按键；down = 按下 / 弹起（右键目前只转发抬起）
+    // button = 触发的按键；down = 按下 / 弹起（左键 / 右键 / 中键都转发按下 + 抬起）
     virtual void OnPointerButton(Vec2 ptDip, PointerButton button, bool down) = 0;
     virtual void OnPointerLeave() = 0;
     // 滚轮：ptDip = 指针位置（客户区 DIP）；delta = 滚轮格数（正 = 向上滚）

@@ -96,18 +96,22 @@ void DemoEnterLeave(dui::Panel* root) {
 void DemoDownUp(dui::Panel* root) {
     dui::Panel* col = Demo(root, L"4 Down / Up：冒泡");
     dui::Text* log = col->AddChild<dui::Text>(L"", dui::Style().Height(88.f));
-    auto say = [log](const wchar_t* s) { log->SetText(log->Text_() + s + L"\n"); };
+    auto say = [log](const std::wstring& s) { log->SetText(log->Text_() + s + L"\n"); };
+    // 按键标识：左键与右键都会派发按下 / 抬起事件（ev.button 区分）
+    auto key = [](dui::PointerEvent& e) -> std::wstring {
+        return e.button == dui::PointerButton::Right ? L"右" : L"左";
+    };
     dui::Panel* outer = Box(col,   190.f, 84.f, 0xFFD1D5DB);
     dui::Panel* inner = Box(outer, 120.f, 48.f, 0xFF2563EB);
 
-    col->OnPointerDown([say](dui::PointerEvent&)   { say(L"Down@根"); });
-    outer->OnPointerDown([say](dui::PointerEvent&) { say(L"Down@父"); });
-    inner->OnPointerDown([say, log](dui::PointerEvent&) {
+    col->OnPointerDown([say, key](dui::PointerEvent& e)   { say(L"Down@根(" + key(e) + L")"); });
+    outer->OnPointerDown([say, key](dui::PointerEvent& e) { say(L"Down@父(" + key(e) + L")"); });
+    inner->OnPointerDown([say, key, log](dui::PointerEvent& e) {
         log->SetText(L"");
-        say(L"Down@子");
+        say(L"Down@子(" + key(e) + L")");
     });
-    inner->OnPointerUp([say](dui::PointerEvent&) { say(L"Up@子"); });
-    col->OnPointerUp([say](dui::PointerEvent&)   { say(L"Up@根（冒泡）"); });
+    inner->OnPointerUp([say, key](dui::PointerEvent& e) { say(L"Up@子(" + key(e) + L")"); });
+    col->OnPointerUp([say, key](dui::PointerEvent& e)   { say(L"Up@根(" + key(e) + L")"); });
 }
 
 // ---- 5 移动：读客户区绝对坐标 ----------------------------------------------

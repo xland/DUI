@@ -98,6 +98,7 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 
 - 全部可路由事件（`OnClick`、指针 `Move/Down/Up`、`OnWheel`、键盘 `OnKeyDown/OnKeyUp/OnChar`）都支持 `Phase`；`Enter/Leave` 是直达事件，无阶段。
 - 同一元素可在两个阶段各绑一个处理器（槽互不覆盖）。
+- **按键覆盖左键与右键**（M5.72；中键未转发）：平台层 `WM_LBUTTONDOWN/UP` 与 `WM_RBUTTONDOWN/UP` 都进 `OnPointerButton` → `DispatchPointerDown/Up`，按键由 `PointerEvent::button` 区分。**只有左键改框架状态**（`State::Pressed`、焦点、窗口捕获、Click 合成）；右键按下**只派事件**，不动这些状态（否则右键会点亮按钮、抢焦点，并覆盖左键的 `pressed_` 让 Click 合成失效）。
 - 绑定形态与 `OnClick` 同构：成员函数 + 上下文，或 `std::function`。
 - 派发**只经过有绑定者的元素**（未绑定直接跳过，不产生调用开销）；不做防抖与节流（由开发者自行处理）。
 - 处理器存储按需分配（元素未绑定任何事件时不占这部分内存）。

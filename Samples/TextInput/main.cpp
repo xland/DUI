@@ -7,6 +7,7 @@
 //      元素级 When(State::Focused, ...) 驱动样式（背景变色）
 //    · 键盘事件：元素级 OnKeyDown / OnChar（冒泡；控件内部行为与外部绑定并存）
 //    · 语义事件：OnTextChanged / OnSubmit
+//    · 文本选择：Text 的 user-select 样式（拖选 / 双击选词 / 三击选段 / Ctrl+C 复制）
 //
 //  注意：框架公共头不含 windows.h，wWinMain 入口类型由本文件自带。
 // ============================================================================
@@ -34,7 +35,7 @@ public:
         : dui::Window(dui::WindowOptions{
               .title  = L"DUI TextInput",
               .width  = 620.f,
-              .height = 560.f,
+              .height = 680.f,
           }) {}
 
 protected:
@@ -90,6 +91,19 @@ protected:
         area_->SetText(L"第一行\n第二行\n第三行");
         area_->OnTextChanged([this](const dui::String&) { UpdateStatus(); });
 
+        // ---- 可选中的静态文本（user-select）----
+        root->AddChild<dui::Text>(L"可选中的静态文本（user-select：拖选 / 双击选词 / 三击选段 / Ctrl+C 复制）",
+                                  dui::Style().FontSize(12.f).Color(0xFF6B7280));
+        selectable_ = root->AddChild<dui::Text>(
+            L"按住鼠标左键在这段文字上拖动即可选中，双击选中一个词，三击选中整段；"
+            L"按 Ctrl+C 把选中的文字复制到剪贴板。",
+            dui::Style()
+                .Height(74.f)
+                .Padding(8.f)
+                .FontSize(13.f)
+                .UserSelect(true));
+        selectable_->OnPointerUp([this](dui::PointerEvent&) { UpdateStatus(); });
+
         // ---- 状态栏 ----
         status_ = root->AddChild<dui::Text>(L"", dui::Style().FontSize(12.f).Color(0xFF374151));
         UpdateStatus();
@@ -105,6 +119,10 @@ private:
         s += std::to_wstring(name_->GetText().size());
         s += L"    多行长度：";
         s += std::to_wstring(area_->GetText().size());
+        s += L"    已选字数：";
+        s += std::to_wstring(selectable_ != nullptr && selectable_->HasSelection()
+                                 ? selectable_->SelectionEnd() - selectable_->SelectionStart()
+                                 : 0u);
         s += L"    最后按键：";
         s += lastKey_;
         if (lastChar_ != 0) {
@@ -118,12 +136,14 @@ private:
         if (dui::FocusedElement() == name_) return L"单行输入框";
         if (dui::FocusedElement() == password_) return L"密码框";
         if (dui::FocusedElement() == area_) return L"多行输入框";
+        if (dui::FocusedElement() == selectable_) return L"可选中的静态文本";
         return L"（无）";
     }
 
     dui::TextBox* name_ = nullptr;
     dui::TextBox* password_ = nullptr;
     dui::TextArea* area_ = nullptr;
+    dui::Text* selectable_ = nullptr;
     dui::Text* status_ = nullptr;
     dui::String lastKey_;
     wchar_t lastChar_ = 0;

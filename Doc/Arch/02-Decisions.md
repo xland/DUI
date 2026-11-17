@@ -459,3 +459,29 @@ Doc/Arch/                文档
 **不采用**（曾评估）：把 UI / Text / RichText / Graphics 全部合并成一层 —— `Painter` 是业务可见的自绘 API，合并会让这层扩展面更难发现，且「合并易、拆分贵」。
 
 **落地**：`git mv` 保留历史；全仓 include 路径重写；`DUI.vcxproj` / `.filters` 路径更新（`Text` / `RichText` filter 节点删除，并补登记此前漏登的 `RichDocEditor.*`）；`Samples/CustomCtrl` 取消额外内部头目录、`main.cpp` 去掉多余 include。Debug + Release 编译通过。
+
+---
+
+## ADR-029 窗口热区声明化：`app-region` 样式 + `resizable` 窗口项（2026-11-17）
+
+**背景**：无边框窗口的"哪里能拖、哪里能缩"原先只能由业务重写 `OnNcHitTest` 手算坐标 —— `Samples/CustomFrame` 写死了标题栏高度、按钮宽度、边框厚度（与布局处重复定义），窗口改尺寸 / 换 DPI / 调字体宽度就与布局脱节；每个 frameless 示例都要重写一遍同样的 40 行。
+
+| 决策项 | 结论 | 理由 |
+| --- | --- | --- |
+| 拖动区的声明方式 | **样式属性 `app-region`**（`Prop::AppRegion`，值域 `None` / `Drag` / `NoDrag`） | 拖动区是**内容**的属性（哪块是标题栏），不是窗口坐标 —— 与布局同源，改一处即两处生效；CSS 侧无对应物，但 Electron 的 `-webkit-app-region` 是同样的心智模型 |
+| 传播语义 | **继承属性**：父设 `Drag` → 子默认继承；子设 `NoDrag` 即挖洞（对子树生效） | 直接复用框架既有的"沿父链取最近设置者"读路径（`ResolveProperty` 遍历外读 + `IsInherited`），**不新增任何机制**；父传子符合直觉（点标题文字也能拖窗），子覆盖父提供挖洞 |
+| 缩放热区 | **窗口项 `WindowOptions::resizable`**，默认 `false`，**仅 frameless 有效** | 缩放是**窗口**级能力，不是元素级；有边框窗口用系统自带缩放，框架不插手。默认 false 保证既有 frameless 应用行为零变化（边缘像素仍归业务） |
+| 热区厚度 | 取系统度量 `SM_CXSIZEFRAME + SM_CXPADDEDBORDER`（按窗口 DPI 查询，`GetSystemMetricsForDpi`） | 与原生窗口的可缩放边框同厚、随 DPI 自适应；示例原先写死 6 DIP 并不准 |
+| 判定顺序 | 缩放热区 → 拖动区 → 客户区（框架固定） | 缩放热区必须在最前，否则窗口上边那条窄带会被拖动区整条吃掉，只剩"移动"没有"缩放"（旧示例踩过这个坑） |
+| 区域缓存 | **不做**：复用元素命中测试（`HitTest`）+ 沿父链取最近设置者 | 命中测试已处理 transform 逆变换 / 滚动偏移 / Fixed 层 → 滚动、旋转、缩放下的拖动区自动正确，**无需失效管理**；缓存矩形反而要在滚动 / transform 下失效 |
+| 与业务的优先级 | 框架算默认值 → 写入 `OnNcHitTest` 的 `hit` 入参 → 业务改写后返回 `true` 即覆盖，返回 `false` 沿用默认 | 旧写法（业务直接给 `hit` 赋值）**行为完全不变**；不规则形状（圆、多边形）等特殊需求仍可完全接管 |
+| 有边框窗口 | 框架不介入，业务不接管则交回 `DefWindowProc` | 系统自带缩放与标题栏，框架插手只会打架 |
+
+**不采用**（曾评估）：
+
+- **把 `app-region` 做成非继承、每元素独立**：点标题文字就拖不动窗（文字是子元素），且要到处重复标注。
+- **让"绑定了交互的元素"自动视为 `NoDrag`**：行为不透明（同一元素有时可点有时不可），排查困难。
+- **预收集矩形区域做点-矩形测试**：transform 下区域不是矩形，滚动后失效，徒增缓存与失效复杂度。
+- **在 `Element` 上加 `SetAppRegion()` 专用方法绕过样式系统**：破坏"所有外观 / 布局属性统一走 Style"的一致性，且继承链要另写一套。
+
+**落地**：`Style.h` / `Style.cpp`（枚举 + 属性 + 链式方法）、`StyleResolve.cpp`（`IsInherited` + `PropFlagsOf` = `kFlagNone`）、`App/App.h`（`WindowOptions::resizable`）、`App/App.cpp`（`WindowHostAdapter::OnNcHitTest` 调度 + `DefaultNcHitTest` + `ResizeBorderDip`）；示例 `Samples/CustomFrame`（标题栏 `Drag` + 按钮 `NoDrag` + `resizable`，删掉 40 行手写几何）、`Samples/CircleWindow`（根容器 `Drag`，删掉 `OnNcHitTest` 覆写）；文档：`12-Windowing` §6.1/§6.2、`15-Properties` §4.6、`Doc/Window.md` §4。Debug + Release 编译通过。

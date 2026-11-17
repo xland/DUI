@@ -25,7 +25,10 @@ constexpr DWORD kStyleSystem = WS_OVERLAPPEDWINDOW;
 // frameless = true：无系统边框（标题栏/边框自绘）。
 //   · WS_THICKFRAME 保留 → 配合 WM_NCHITTEST 返回 HT* 可由系统接管缩放；
 //   · WS_POPUP 无标题栏 → 无系统标题栏可盖，客户区由 WM_NCCALCSIZE 扩到整窗；
-//   · 保留 SYSMENU/MINIMIZEBOX/MAXIMIZEBOX → 任务栏按钮与 Alt+F4 正常。
+//   · 保留 SYSMENU/MINIMIZEBOX/MAXIMIZEBOX → 任务栏按钮与 Alt+F4 正常；
+//     其中 WS_MAXIMIZEBOX 还让**双击拖动区最大化**成为原生行为：拖动区命中
+//     HTCAPTION → 双击走 WM_NCLBUTTONDBLCLK → DefWindowProc 据此发
+//     SC_MAXIMIZE / SC_RESTORE（业务收不到指针事件，也无需自己判双击）。
 constexpr DWORD kStyleBorderless = WS_POPUP | WS_THICKFRAME | WS_SYSMENU |
                                     WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 // WS_POPUP 默认不进任务栏 → 补 WS_EX_APPWINDOW
@@ -96,11 +99,13 @@ bool NativeWindow::EnsureClassRegistered(String& error) {
 }
 
 bool NativeWindow::Create(const wchar_t* title, float widthDip, float heightDip,
-                          NativeWindowHost& host, String& error, bool borderless) {
+                          NativeWindowHost& host, String& error, bool borderless,
+                          bool doubleClickMaximize) {
     if (!EnsureClassRegistered(error)) return false;
 
     host_ = &host;
     borderless_ = borderless;
+    dblClickMaximize_ = doubleClickMaximize;
 
     const DWORD style = borderless ? kStyleBorderless : kStyleSystem;
     // 所有窗口统一不建系统重定向表面，内容由 DirectComposition 视觉树交给
@@ -340,6 +345,17 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             }
             break;   // 系统边框窗口交回 DefWindowProc（它本来就会弹系统菜单）
         }
+        case WM_NCLBUTTONDBLCLK: {
+            // 无边框窗口：双击拖动区（标题栏）→ 最大化 / 还原。
+            // 默认落回系统：DefWindowProc 见 HTCAPTION + WS_MAXIMIZEBOX 会发
+            // SC_MAXIMIZE / SC_RESTORE（原生标题栏双击行为）。
+            // 关掉时**吃掉这条消息**，不让它落回系统 → 双击无反应。
+            // 只吃 DBLCLK：单击拖动、右键系统菜单、第一击激活窗口都不受影响。
+            if (wp == HTCAPTION && self->borderless_ && !self->dblClickMaximize_) {
+                return 0;
+            }
+            break;
+        }
         case WM_NCHITTEST: {
             // 非客户区命中：上层把"标题栏 / 边框热区"报给系统，由系统接管
             // 拖标题栏移动窗口、拖边框缩放 —— 业务不必自己处理鼠标与移动逻辑。
@@ -431,14 +447,20 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         case WM_DPICHANGED: {
             const float newScale = static_cast<float>(HIWORD(wp)) / 96.0f;
             if (newScale == self->scale_) return 0;      // 幂等（12-Windowing §7.2-2）
-            const Vec2 dipBefore = self->ClientSizeDip();
+            const Vec2 dipBefore = self->ClientSizeDip();   // 旧缩放 + 旧物理尺寸
             const auto* suggested = reinterpret_cast<const RECT*>(lp);
+            // **先换缩放系数，再调 SetWindowPos** —— SetWindowPos 会**同步**发出
+            // WM_SIZE，那时若缩放仍是旧值，WM_SIZE 会用旧缩放算出错误的客户区
+            // DIP（例：320 物理 ÷ 1.5 = 213），布局盒缩小一圈、文字挤到一角，
+            // 随后 dipBefore/dipAfter 相等又判定"尺寸没变"而不重排 → 错位定格。
+            // 先换缩放后，WM_SIZE 拿到的是正确 DIP 尺寸（12-Windowing §7.2）。
+            self->scale_ = newScale;
+            self->host_->OnDpiScaleChanging(newScale);
             // 系统建议矩形直接采用，不自算尺寸，否则窗口会跳变（§4-2）
             SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
                          suggested->right - suggested->left, suggested->bottom - suggested->top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
-            self->scale_ = newScale;
-            const Vec2 dipAfter = self->ClientSizeDip();
+            const Vec2 dipAfter = self->ClientSizeDip();    // 新缩放 + 新物理尺寸
             const bool dipChanged = dipBefore.x != dipAfter.x || dipBefore.y != dipAfter.y;
             self->host_->OnDpiChanged(newScale, ToDip(*suggested, newScale), dipChanged);
             return 0;

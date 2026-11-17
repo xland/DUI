@@ -320,9 +320,17 @@ public:
     //             <0 排在最后（数值小者先）。
     // ------------------------------------------------------------------
     void SetFocusable(bool on) noexcept { focusable_ = on; }
-    bool IsFocusable() const noexcept { return focusable_; }
+    // 可聚焦：默认 false；编辑控件（TextBox/TextArea）置 true。
+    // virtual：user-select 的文本按样式动态决定可否聚焦（Text 覆写）。
+    virtual bool IsFocusable() const noexcept { return focusable_; }
     void SetTabIndex(int index) noexcept { tabIndex_ = index; }
     int  TabIndex() const noexcept { return tabIndex_; }
+
+    // 是否进入 Tab 链：默认 true（可聚焦即入链）。
+    // 可聚焦但**不入 Tab 链**的元素覆写为 false —— CSS 的 tabindex=-1 语义：
+    // 能被点击取得焦点、能收键盘事件，但 Tab 键不经过它。
+    // （如 user-select 的文本：选中后要收 Ctrl+C，但不该抢 Tab 位。）
+    virtual bool Tabbable() const noexcept { return true; }
 
     // 取得焦点（旧焦点自动清 State::Focused）；Blur 主动放弃焦点
     void Focus();
@@ -420,6 +428,7 @@ protected:
         if (!handlers_) handlers_ = std::make_unique<Handlers>();
         return *handlers_;
     }
+    bool focusable_ = false;   // 可聚焦（子类覆写 IsFocusable 时要读它）
 
 private:
     // 命令式动画（实现在 UI/Animation.cpp）
@@ -436,7 +445,6 @@ private:
 
     std::unique_ptr<Handlers> handlers_;
 
-    bool focusable_ = false;   // 可聚焦（Tab 链成员）
     int  tabIndex_ = 0;        // Tab 链次序（见 SetTabIndex 注释）
     bool hidden_ = false;      // visibility: hidden（布局期写；命中 / 绘制读）
 

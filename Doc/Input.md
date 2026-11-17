@@ -33,6 +33,7 @@ dui::RichEditor* rich = root->AddChild<dui::RichEditor>();        // 富文本
 - **文本样式走继承**：`FontFamily` / `FontSize` / `FontWeight` / `FontStyle`（斜体）/ `TextDecoration`（下划线、删除线）都能用，写在父容器上对子输入框生效。
 - **不支持 `TextAlign`**：属性存在，但输入框控件不读它。
 - **有自然尺寸下限**：单行至少 120 DIP 宽、高至少是"字号 × 行高"；多行至少 200 × 80 DIP。下限只作用于**自然尺寸** —— 显式写了 `Width` / `Height` 就不受它约束。
+- **单行文本垂直居中**：文本在**内容盒**内垂直居中（行盒居中 + 墨迹视觉居中补偿，与 `Text` 元素同一口径）—— 内容盒比行高小则上下对称裁剪，不会只裁底部（`Height` 32 + `Padding(6)` + 14 DIP 文字：内容盒 20 DIP < 行高 22.2 DIP，文字仍完整可见且居中）。
 - **显式高度不够会被裁**：控件按**内容盒**裁剪绘制，而内容盒高 = `Height` − `Padding` 上下 − 边框上下。若它小于文字的实际行高（默认 `LineHeight = 1.2`，配上雅黑行距系数后 14 DIP 的行高约 **22.2 DIP**），**文字底部（以及选区色带底部）会被切掉**。所以 14 DIP 文字配 `Padding(8)` 时，`Height` 要给到 **40 DIP**（内容盒 24 DIP ≥ 22.2）；或者干脆**不设 `Height`**，让控件按自然尺寸自适应（≈ 行高 + 内边距）。
 
 ### 1.2 焦点
@@ -50,6 +51,33 @@ input->When(dui::State::Focused, dui::Style().Background(0xFFDCEEFF));
 ```
 
 获得焦点时若没有选区，**光标会跳到文本末尾**；失去焦点时**选区被清除**（避免留下看不见的选区）。
+
+### 1.3 静态文本的选择（`user-select`）
+
+输入框能选自己框内的文字；**普通 `dui::Text`（静态文本）默认不能选** —— 与浏览器一致，需要时用样式显式打开：
+
+```cpp
+dui::Text* label = root->AddChild<dui::Text>(L"按住拖动即可选中这段文字", dui::Style()
+    .UserSelect(true)          // 关闭（默认）= 不允许选择
+    .Background(0xFFFFFFFF));
+```
+
+打开后：
+
+| 操作 | 行为 |
+| --- | --- |
+| 按住拖动 | 选区随鼠标扩展；拖出文本框仍能继续扩选 |
+| 双击 | 选词（中文逐字、英文按单词） |
+| 三击 | 选段（整行） |
+| `Ctrl+C` | 复制选中文本到系统剪贴板 |
+| `Ctrl+A` | 全选 |
+| `←` `→` | 移动光标（`Shift` 扩展选区、`Ctrl` 按词移动） |
+| `Home` `End` | 行首 / 行尾（`Shift` 扩展选区） |
+
+- 选中的文本**会取得焦点**（才能收 `Ctrl+C` 等键盘事件），但**不进 Tab 链** —— `Tab` 键不会跳到它（CSS `tabindex=-1` 语义）。
+- 焦点离开时选区清空；选区底色取 `selectionColor`（默认 `0x803399FF` 半透明蓝），画在文字之下。
+- 查询与控制：`Selectable()` / `SelectionStart()` / `SelectionEnd()` / `HasSelection()` / `SelectedText()` / `SelectAll()` / `Deselect()`。
+- 选区落在**排版结果**上：设了 `text-overflow: ellipsis` 时，选中并复制到的是**截断后**那段文字。
 
 ---
 
@@ -312,6 +340,14 @@ float h = view->ContentHeight();        // 排版后的文档总高（DIP，不�
 | 模型 | `richtext::RichDoc` / `Block` / `BlockStyle` / `Run` / `RunStyle` / `BlockKind` / `ListType` / `Align` |
 | JSON | `richtext::ParseRichDoc(json, out)`（**只有导入**） |
 | 编辑原语 | `richtext::RichDocEditor.h`：`InsertText` / `DeleteRange` / `SplitBlock` / `MergeRuns` 等（纯函数，段内 UTF-16 偏移） |
+
+### 6.3 `Text`（静态文本的选择）
+
+| 分类 | API |
+| --- | --- |
+| 样式 | `Style::UserSelect(bool)`（属性名 `user-select`，默认 false = 不允许选择） |
+| 状态 | `Selectable()` / `HasSelection()` |
+| 选区 | `SelectionStart()` / `SelectionEnd()` / `SelectedText()` / `SelectAll()` / `Deselect()` |
 
 ---
 

@@ -57,8 +57,17 @@ public:
         return window_.OnClosing();
     }
 
+    // DPI 变化的**前置**：先把缩放系数换过来（尺寸调整还没发生，不重排）——
+    // 窗口层在 SetWindowPos 之前调用，否则它同步发出的 WM_SIZE 会用旧缩放
+    // 算出错误的客户区 DIP 尺寸，布局盒缩小一圈（12-Windowing §7.2）。
+    void OnDpiScaleChanging(float newScale) override {
+        pendingOldScale_ = window_.scale_;   // 旧值留档（OnDpiChanged 要用）
+        window_.scale_ = newScale;
+    }
+
     void OnDpiChanged(float newScale, const Rect& suggestedDip, bool clientDipChanged) override {
-        const float oldScale = window_.scale_;
+        const float oldScale = pendingOldScale_ != 0.f ? pendingOldScale_ : window_.scale_;
+        pendingOldScale_ = 0.f;
         window_.scale_ = newScale;
         // §4-5 分级失效：DIP 尺寸不变 → 只重绘不重排；字形按新 pixelSize 重光栅
         // （图集按 (字体, 字形, 像素尺寸) 缓存，新档位按需生成，旧档位 LRU 淘汰）
@@ -128,8 +137,13 @@ public:
             pressPt_ = pt;
             pressed_ = hit;
             SetPressedChain(hit, true);
-            // 点击取得焦点（命中可聚焦元素或其可聚焦祖先；06-Events §6）
+            // 点击取得焦点（命中可聚焦元素或其可聚焦祖先；06-Events §6）；
+            // 没命中可聚焦元素（点窗口空白 / 点非可聚焦元素）→ **清焦点**（浏览器语义）：
+            // 编辑控件随之失焦 → 选区消失、光标停闪。否则选区会留在一个"看起来仍聚焦着"
+            // 的控件上（用户已不打算继续输入）；而看不见的选区会让后续 Delete/输入
+            // 替换掉用户看不见的内容（与 TextBox 失焦清选区同一条理由）。
             if (Element* f = FindFocusable(hit)) SetFocus(f);
+            else SetFocus(nullptr);
             DispatchPointerDown(hit, local, button);      // 按下（冒泡）
         } else if (button != PointerButton::Left) {
             // 非左键抬起：只派发元素级弹起，不动 pressed / 焦点 / Click 状态机
@@ -232,12 +246,20 @@ public:
         window_.SyncImeCaret();   // 输入后光标右移 → 同步 IME 插入点
     }
 
-    // 指针形态：命中链就近者胜 —— 元素指定了 cursor 就用它；没指定则沿链向上取
-    // 父级的（与 CSS 的 cursor 继承同效）；都没指定再看是否为编辑控件（I-beam）。
-    // 非客户区命中：转发给业务（frameless 的标题栏 / 边框热区）
+    // 非客户区命中（WM_NCHITTEST）：框架默认值 → 交给业务覆盖。
+    //   框架默认（仅无边框窗口）：① 缩放热区（resizable）② app-region 拖动区
+    //                              ③ 客户区
+    //   业务返回 true  → 采用 hit（业务可先改写框架默认值再返回）
+    //   业务返回 false → 采用框架默认值
+    // 有边框窗口：框架不介入（缩放由系统自带），业务不接管则交回 DefWindowProc。
     bool OnNcHitTest(Vec2 pt, int& hit) override {
         HitTestCode code = HitTestCode::Client;
-        if (!window_.OnNcHitTest(pt, code)) return false;
+        if (window_.options_.frameless) code = DefaultNcHitTest(pt);
+        if (window_.OnNcHitTest(pt, code)) {
+            hit = static_cast<int>(code);
+            return true;
+        }
+        if (!window_.options_.frameless) return false;   // 有边框：交回系统默认
         hit = static_cast<int>(code);
         return true;
     }
@@ -297,6 +319,55 @@ public:
 private:
     void RequestFrame() noexcept {
         if (framePending_ != nullptr) *framePending_ = true;
+    }
+
+    float pendingOldScale_ = 0.f;   // DPI 变化前的缩放（OnDpiScaleChanging 留档）
+
+    // 框架默认的非客户区命中（仅无边框窗口有效）：
+    //   ① 缩放热区（resizable 且未最大化）→ HT* 缩放码
+    //   ② app-region 拖动区（元素命中 + 继承链）→ HTCAPTION
+    //   ③ 其余 → HTCLIENT
+    // 顺序固定：**缩放热区优先于拖动区** —— 否则窗口上边那条窄带会被拖动区
+    // 整条吃掉，只剩"移动窗口"、没有"缩放窗口"（12-Windowing §6.2）。
+    HitTestCode DefaultNcHitTest(Vec2 pt) const {
+        // ① 缩放热区：厚度取系统边框度量，与原生窗口同厚、随 DPI 自适应
+        if (window_.options_.resizable && !window_.IsMaximized()) {
+            const float b = ResizeBorderDip();
+            if (b > 0.f) {
+                const Vec2 size = window_.ClientSizeDip();
+                const bool left   = pt.x < b;
+                const bool right  = pt.x > size.x - b;
+                const bool top    = pt.y < b;
+                const bool bottom = pt.y > size.y - b;
+                if (top && left)     return HitTestCode::TopLeft;
+                if (top && right)    return HitTestCode::TopRight;
+                if (bottom && left)  return HitTestCode::BottomLeft;
+                if (bottom && right) return HitTestCode::BottomRight;
+                if (top)    return HitTestCode::Top;
+                if (left)   return HitTestCode::Left;
+                if (right)  return HitTestCode::Right;
+                if (bottom) return HitTestCode::Bottom;
+            }
+        }
+        // ② app-region：命中元素 → 沿父链取最近设置者（继承属性，StyleResolve）
+        //    Drag → 拖动窗口；NoDrag / None → 普通客户区
+        Element* hit = HitTest(window_.Root(), pt);
+        if (hit != nullptr) {
+            const StyleValue v = ResolveProperty(hit, Prop::AppRegion);
+            if (v.u == static_cast<uint32_t>(AppRegion::Drag)) return HitTestCode::Caption;
+        }
+        return HitTestCode::Client;
+    }
+
+    // 缩放热区厚度（DIP）：系统边框度量（SM_CXSIZEFRAME + SM_CXPADDEDBORDER，
+    // 物理像素，按窗口 DPI 查询）÷ 缩放系数。与原生窗口的可缩放边框同厚。
+    float ResizeBorderDip() const {
+        const float scale = native_.Scale();
+        if (scale <= 0.f) return 0.f;
+        const UINT dpi = static_cast<UINT>(scale * 96.f + 0.5f);
+        const int frame = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi);
+        const int pad = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+        return static_cast<float>(frame + pad) / scale;
     }
 
     Window&  window_;
@@ -429,7 +500,8 @@ int Application::Run(Window& window) {
     // 建 HWND（隐藏、按显示器 DPI 定尺寸）
     if (!native.Create(window.options_.title, window.options_.width,
                        window.options_.height, host, lastError_,
-                       window.options_.frameless)) {
+                       window.options_.frameless,
+                       window.options_.doubleClickMaximize)) {
         return 1;   // lastError_ 已填（App.h 契约：失败返回非 0）
     }
     window.native_ = &native;   // 平台窗口对象（定时器等平台能力）

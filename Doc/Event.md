@@ -235,8 +235,11 @@ element->HasFocus();           // 注意：元素上没有 IsFocused()，只有 
 - 焦点**唯一**，挂在元素上；换焦点时旧元素清 `State::Focused`、新元素置位 → **状态变体自动生效**。
 - **可聚焦**：默认否，需要显式 `SetFocusable(true)`（`TextBox` / `TextArea` / `RichEditor` 构造即置真）。
 - **点击取得焦点**：按下时沿命中元素的祖先链找**最近的可聚焦元素**并 `SetFocus`。
+- **点空白处 = 失焦**：按下时**没命中可聚焦元素**（点窗口空白、点普通标签/面板）→ **清焦点**（浏览器语义）。编辑框的选区随之消失、光标停闪；否则选区会留在一个"看起来还聚焦着"的框里，用户随后敲键盘会误改看不见的内容。
 - **Tab 链**：树序（深度优先）收集可聚焦元素，按 `tabIndex` 排序 ——
   `> 0` 组（数值升序）→ `0` 组（文档序）→ `< 0` 组（数值升序）；`Shift+Tab` 反向，到头循环。
+- **可聚焦 ≠ 进 Tab 链**：Tab 链成员还要求 `Element::Tabbable()`（默认 true）。可聚焦但不入链的元素
+  （CSS `tabindex=-1` 语义）仍能取得焦点、收键盘事件，但 `Tab` 键不经过它 —— `user-select` 的文本即如此（见 §5.3）。
 - 窗口**失活**（切到别的应用）→ 清焦点（编辑控件随之失焦、选区消失、光标停闪）；**最小化除外**（保留焦点）；系统对话框弹出期间也不清。
 
 ### 5.2 键盘事件
@@ -266,6 +269,34 @@ box->OnChar([](dui::KeyEvent& ev) {
 - **控件行为与外部绑定并存**：`TextBox` 的编辑逻辑走 `Element::HandleKeyDown/HandleChar` 钩子，钩子**先于**同元素的绑定执行；钩子消费后事件不再向上冒泡，但**绑定仍会收到**（`ev.handled` 已是 `true`）。
 - **没有焦点元素时，键盘事件被丢弃**（`OnChar` / `OnKeyUp` 同理）；但 `Tab` 是例外 —— 框架的默认处理在"未被消费"时生效，即使当前没有焦点，`Tab` 也会把焦点移到第一个可聚焦元素。
 - `Tab` 键输入框**不消费** → 框架移动焦点（不会往文本里插制表符）。
+
+### 5.3 文本选择（`user-select`）
+
+`dui::Text` 默认**不允许选择文本**（与浏览器一致）。样式打开后才可选择：
+
+```cpp
+auto* label = new dui::Text(L"按住鼠标拖过这段文字即可选中");
+label->SetStyle(dui::Style().UserSelect(true));
+```
+
+打开后：
+
+| 操作 | 行为 |
+| --- | --- |
+| 按住拖动 | 选区随鼠标扩展；拖出文本框仍能继续扩选（元素持有指针捕获） |
+| 双击 | 选词（中文逐字、英文按单词） |
+| 三击 | 选段（整行） |
+| `Ctrl+C` | 复制选中文本到系统剪贴板 |
+| `Ctrl+A` | 全选 |
+| `←` `→` | 移动光标；`Shift` 扩展选区；`Ctrl+←/→` 按词移动 |
+| `Home` `End` | 行首 / 行尾（`Shift` 扩展选区） |
+
+要点：
+
+- **选中的文本会取得焦点**（才能收 `Ctrl+C` 等键盘事件），但**不进 Tab 链** —— `Tab` 键不会跳到它（CSS `tabindex=-1` 语义）。
+- 焦点离开（点别处 / 切到别的控件）时选区清空，与浏览器一致。
+- 选区底色取样式 `selectionColor`（默认半透明蓝），画在文字之下。
+- 查询与控制：`Selectable()` / `SelectionStart()` / `SelectionEnd()` / `HasSelection()` / `SelectedText()` / `SelectAll()` / `Deselect()`。
 
 ---
 
@@ -371,7 +402,8 @@ panel->OnPointerUp([this](dui::PointerEvent& ev) {
 | 指针 | `OnClick` / `OnPointerEnter` / `OnPointerLeave` / `OnPointerMove` / `OnPointerDown` / `OnPointerUp` |
 | 滚轮 | `OnWheel` |
 | 键盘 | `OnKeyDown` / `OnKeyUp` / `OnChar` |
-| 焦点 | `dui::FocusedElement()` / `dui::IsFocused(e)` / `dui::SetFocus(e)` / `e->Focus()` / `e->Blur()` / `e->HasFocus()` / `e->SetFocusable(bool)` / `e->SetTabIndex(int)` |
+| 焦点 | `dui::FocusedElement()` / `dui::IsFocused(e)` / `dui::SetFocus(e)` / `e->Focus()` / `e->Blur()` / `e->HasFocus()` / `e->SetFocusable(bool)` / `e->IsFocusable()` / `e->Tabbable()` / `e->SetTabIndex(int)` |
+| 文本选择 | `dui::Style().UserSelect(bool)` / `Text::Selectable()` / `SelectionStart()` / `SelectionEnd()` / `HasSelection()` / `SelectedText()` / `SelectAll()` / `Deselect()` |
 | 捕获 | `e->SetCapture()` / `e->ReleaseCapture()` / `e->HasCapture()` |
 | 状态 | `e->SetState(dui::State, bool)` / `e->HasState(dui::State)` / `e->When(dui::State, const Style&)` |
 | 阶段 | `dui::Phase::Bubble`（默认） / `dui::Phase::Tunnel` |
@@ -383,7 +415,7 @@ panel->OnPointerUp([this](dui::PointerEvent& ev) {
 
 以下是**当前没有实现**的能力（架构稿 [Arch/06-Events.md](Arch/06-Events.md) 里描述过，但代码中搜不到）：
 
-1. **无双击 / 右键语义事件**：只有 `OnClick`；右键只有"抬起"被转发（`WM_RBUTTONUP`），要弹菜单得自己判 `ev.button`。
+1. **无双击 / 右键语义事件**：只有 `OnClick`；右键只有"抬起"被转发（`WM_RBUTTONUP`），要弹菜单得自己判 `ev.button`。窗口级的双击不在此列 —— 标题栏双击最大化由系统原生行为提供（见 [Window.md](Window.md)）。`Text` 的双击选词 / 三击选段是控件**内部**行为，不对外派发双击事件。
 2. **无 `PointerCancel`、无触摸 / 触控笔**：平台层只转发左键按下 / 抬起与右键抬起；`PointerButton::Middle` 有定义但不下发。
 3. **无 IME 组合串事件**（`Composition*`）与组合串内联预览；IME 提交经 `WM_IME_CHAR` 走 `OnChar`。
 4. **无加速键 / 快捷键表**：键盘事件只冒泡到根，框架不做匹配。

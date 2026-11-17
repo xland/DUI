@@ -72,6 +72,20 @@ struct WindowOptions {
     // 初始显示时置于窗口所在显示器**工作区**正中（不含任务栏）。
     // 默认 true；设 false 沿用系统在 CW_USEDEFAULT 处的层叠摆放。
     bool center = true;
+    // true → 无边框窗口可拖边框缩放：框架自动生成四边 / 四角缩放热区（等价
+    // HTLEFT / HTTOP / 四角命中码，拖动由系统接管）。热区厚度取系统边框度量
+    // （SM_CXSIZEFRAME + SM_CXPADDEDBORDER，按窗口 DPI 查询），与原生窗口同厚、
+    // 随 DPI 自适应；最大化状态下自动失效。
+    // 仅 frameless 有意义 —— 有边框窗口用系统自带缩放，框架不插手。
+    // 默认 false（不生成热区）：无边框窗口的边缘像素仍归业务。
+    bool resizable = false;
+    // 无边框窗口双击拖动区（标题栏）→ 最大化 / 还原。
+    // true  → 系统原生行为（DefWindowProc 见 WS_MAXIMIZEBOX 发 SC_MAXIMIZE）；
+    // false → 框架吃掉 WM_NCLBUTTONDBLCLK，双击无反应。
+    // 仅 frameless 有效（有边框窗口的系统标题栏本来就是这个行为，框架不碰）；
+    // 仅对 app-region: drag 的区域有意义 —— 整窗 drag 的窗口（如圆形小挂件）
+    // 双击任意位置都最大化往往不是想要的。默认 true（与原生窗口一致）。
+    bool doubleClickMaximize = true;
 };
 
 class Window {

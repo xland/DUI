@@ -38,6 +38,7 @@ bool IsInherited(Prop p) {
     case Prop::TextOverflow:
     case Prop::Visibility:   // 可见性：父设 hidden 则子树隐藏（子可显式设 visible 反转）
     case Prop::Cursor:   // 光标：父元素设了，子元素未设则沿用（同 CSS 的 cursor 继承）
+    case Prop::AppRegion:   // 窗口拖动区：父设 drag 则子树继承（子设 no-drag 挖洞）
         return true;
     default:
         return false;
@@ -391,6 +392,10 @@ uint32_t PropFlagsOf(Prop p) {
         return kFlagLayout;
     case Prop::Cursor:
         return kFlagNone;   // 光标形态不影响布局也不影响绘制
+    case Prop::AppRegion:
+        return kFlagNone;   // 只影响窗口非客户区命中，不影响布局 / 绘制 / 文本
+    case Prop::UserSelect:
+        return kFlagNone;   // 只影响交互（可选中 / 可聚焦），不影响布局与绘制
     default:
         return kFlagLayout;   // 未知属性按最坏情况处理
     }

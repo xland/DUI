@@ -24,9 +24,11 @@ void WakeUiPump() {
 }
 
 // 深度优先收集可聚焦元素（文档序）
+// Tab 链成员 = 可聚焦 **且** 可进 Tab 链（Element::Tabbable；可聚焦但不入链的
+// 元素——如 user-select 的文本——仍能取得焦点收键盘事件，但不占 Tab 位）。
 void CollectFocusable(Element* e, std::vector<Element*>& out) {
     if (e == nullptr) return;
-    if (e->IsFocusable()) out.push_back(e);
+    if (e->IsFocusable() && e->Tabbable()) out.push_back(e);
     for (Element* c : e->Children()) CollectFocusable(c, out);
 }
 

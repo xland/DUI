@@ -86,7 +86,7 @@ DUI.slnx                 解决方案：x64 单一平台，十九个工程（1 �
 DUI/                     库工程（DUI.vcxproj，静态库）
   DUI.h                  公共入口（业务代码唯一 include）
   Core/                  Result、String/Color/Rect/Thickness、协程 Task<T>/Task<void> + PostUi 安全回投 + 剪贴板 Clipboard（M5.32）+ Dispatcher/Threading + Json/Utf8
-  UI/                    Style（声明集 + 链式构造合一）、Element、Panel、Text/Button、Icon（内置矢量图标）、TextBox/TextArea、Image/Gif/Svg、Canvas/Scroller、Focus、事件（M1 骨架）+ 富文本文档模型 RichDoc/CssValue/RichDocJson（M7；2026-11-11 由 RichText/ 并入）
+  UI/                    Style（声明集 + 链式构造合一）、Element、Panel、Text/Button（Text 支持 user-select 文本选择，M5.63）、Icon（内置矢量图标）、TextBox/TextArea、Image/Gif/Svg、Canvas/Scroller、Focus、事件（M1 骨架）+ 富文本文档模型 RichDoc/CssValue/RichDocJson（M7；2026-11-11 由 RichText/ 并入）
   App/                   Application、Window/WindowOptions（M1 骨架）+ 窗口壳 NativeWindow（M2；2026-11-11 由 Core 迁入）+ 系统对话框 Dialog（M7）+ 原生弹出菜单 Menu（M5.34）+ 渲染管线 Frame
   Graphics/              Device（D3D11/Flip Model/BGRA8）+ Painter（有序绘制指令 + 状态槽 / SDF 圆角矩形 / 字形 / 形状 / 图像）（M3/M5/M5.6/B2）+ ImageCodec（WIC）/ SvgRaster（Direct2D SVG 光栅化）+ DWrite 排版 + GlyphAtlas 灰度图集（M5；2026-11-11 由 Text/ 并入）
 Samples/                 示例工程（每个示例一个子目录 = 一个工程）

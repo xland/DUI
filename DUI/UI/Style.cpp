@@ -108,6 +108,7 @@ Style& Style::Visibility(dui::Visibility v)   { return SetU(Prop::Visibility, st
 Style& Style::Overflow(dui::Overflow v)       { return SetU(Prop::Overflow, static_cast<uint32_t>(v)); }
 Style& Style::SelectionColor(dui::Color c)   { return SetU(Prop::SelectionColor, c); }
 Style& Style::CaretColor(dui::Color c)       { return SetU(Prop::CaretColor, c); }
+Style& Style::UserSelect(bool on)            { return SetU(Prop::UserSelect, on ? 1u : 0u); }
 Style& Style::Cursor(dui::Cursor v)          { return SetU(Prop::Cursor, static_cast<uint32_t>(v)); }
 Style& Style::Gap(float dip)                  { return SetF(Prop::Gap, dip); }
 Style& Style::RowGap(float dip)               { return SetF(Prop::RowGap, dip); }
@@ -200,6 +201,11 @@ Style& Style::BorderStyle(dui::BorderStyle v) {
 
 Style& Style::BoxSizing(dui::BoxSizing v) {
     return SetU(Prop::BoxSizing, static_cast<uint32_t>(v));
+}
+
+// 窗口拖动区（app-region；继承属性）
+Style& Style::AppRegion(dui::AppRegion v) {
+    return SetU(Prop::AppRegion, static_cast<uint32_t>(v));
 }
 
 // 阴影（10-Rendering）：f = blur，extra[0/1] = offsetX/Y，u = 颜色（含 alpha）

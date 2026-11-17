@@ -4,7 +4,7 @@
 //  演示：WindowOptions::transparent（DirectComposition + PREMULTIPLIED 合成）、
 //        CreateEllipticRgn + SetWindowRgn 裁剪窗口有效区域、
 //        dui::Canvas 画半透明圆盘与细线圆边框、
-//        整个客户区都是 HTCAPTION（鼠标拖任意位置移动窗口）。
+//        根容器 app-region: drag（整个圆内都是拖动区，鼠标拖任意位置移动窗口）。
 //
 //  构建产物：Build\CircleWindow\Debug|Release\CircleWindow.exe
 // ============================================================================
@@ -35,13 +35,19 @@ public:
               .height      = kSize,
               .frameless   = true,
               .transparent = true,
+              // 整窗都是拖动区 → 双击任意位置都会最大化（原生语义）。
+              // 圆形小挂件不想要这个行为，关掉。
+              .doubleClickMaximize = false,
           }) {}
 
 protected:
     void OnCreate() override {
         dui::Panel* root = Root();
+        // app-region: drag → 整个客户区都是拖动区（子元素自动继承）：
+        // 圆形窗口没有标题栏的概念，拖任意位置即可移动窗口。
         root->SetStyle(dui::Style()
-            .FlexDirection(dui::FlexDirection::Column));
+            .FlexDirection(dui::FlexDirection::Column)
+            .AppRegion(dui::AppRegion::Drag));
 
         // Canvas 铺满客户区：半透明填充圆 + 细线圆边框。transparent 窗口每帧
         // 清屏为全透明，圆外不画任何东西，所以圆形外观不依赖 SetWindowRgn 的
@@ -66,10 +72,10 @@ protected:
             .FontSize(13.f).Color(0xFFD0E4FF)
             .TextAlign(dui::TextAlign::Center));
         surface->AddChild<dui::Text>(L"拖动任意位置移动窗口", dui::Style()
-            .FontSize(12.f).Color(0xFF9FB6D0)
+            .FontSize(12.f).Color(0xFF00FF66)
             .TextAlign(dui::TextAlign::Center));
         surface->AddChild<dui::Text>(L"Alt + F4 关闭", dui::Style()
-            .FontSize(12.f).Color(0xFF9FB6D0)
+            .FontSize(12.f).Color(0xFFFF0066)
             .TextAlign(dui::TextAlign::Center));
 
         ApplyCircleRegion();
@@ -78,10 +84,8 @@ protected:
     void OnDpiChanged(const dui::DpiChanged&) override { ApplyCircleRegion(); }
     void OnStateChanged() override                     { ApplyCircleRegion(); }
 
-    bool OnNcHitTest(dui::Vec2, dui::HitTestCode& hit) override {
-        hit = dui::HitTestCode::Caption;   // 整个客户区都是标题栏，可拖任意位置
-        return true;
-    }
+    // 注意：这里**不需要**写 OnNcHitTest —— 根容器的 app-region: drag 已经
+    // 让整个圆内成为拖动区（12-Windowing §6.2）。
 
 private:
     void ApplyCircleRegion() {

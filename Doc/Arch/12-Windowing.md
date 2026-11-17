@@ -161,6 +161,7 @@ struct WindowOptions {
     float height = 600.f;      // DIP
     bool frameless = false;    // true → 无系统标题栏 / 边框，业务自绘标题栏
     bool center = true;        // 初始显示在显示器工作区正中（默认；设 false 沿用系统层叠位置）
+    bool resizable = false;    // true → 无边框窗口可拖边框缩放（框架生成缩放热区，§6.2）
 };
 
 class Window {
@@ -173,6 +174,8 @@ public:
 protected:
     // 非客户区命中：ptDip = 客户区 DIP；返回 true → 采用 hit
     //   Caption = 拖动可移动窗口；四边 / 四角 = 拖边框可缩放
+    //   入参 hit 已带**框架默认值**（缩放热区 + app-region，见 §6.2）：
+    //   业务可直接改写后返回 true 覆盖；返回 false → 沿用框架默认值
     virtual bool OnNcHitTest(Vec2 ptDip, HitTestCode& hit) { return false; }
     // 尺寸 / 最大化还原状态变化（业务自绘按钮换图标）
     virtual void OnStateChanged() {}
@@ -188,20 +191,62 @@ protected:
 | 客户区 | `WM_NCCALCSIZE`（`wParam=TRUE`）**原样保留 `rgrc[0]` 并返回 0**：入参 `rgrc[0]` 是系统建议的新窗口矩形，出参即客户区矩形；不调 `DefWindowProc` 扣边框 → 客户区覆盖整窗（否则 `WS_THICKFRAME` 会在内容外留一圈非客户区，边框色设为"无"时那圈透出桌面）。`rgrc[1]` 是**上一次**的窗口矩形，绝不可赋给 `rgrc[0]` |
 | 尺寸语义 | 无边框时 `width/height` 就是**整窗**尺寸（不做 `AdjustWindowRect` 边框补偿 —— 补了会大出左右各 8px，业务按 DIP 布局就错位） |
 | 最大化 | `WM_GETMINMAXINFO` 把 `ptMaxPosition` / `ptMaxSize` 约束到工作区：否则系统把窗口放到比工作区还大（边框外扩），底边/右边被屏幕切掉 |
-| 命中 | `WM_NCHITTEST`（屏幕坐标 → 客户区 DIP）→ 上抛业务 → 返回 `HTCAPTION` / `HT*`，**移动与缩放由系统接管**，业务不必自己处理鼠标与窗口几何 |
+| 命中 | `WM_NCHITTEST`（屏幕坐标 → 客户区 DIP）→ **框架算默认值**（缩放热区 + app-region 拖动区，见 §6.2）→ 交给业务覆盖 → 返回 `HTCAPTION` / `HT*`，**移动与缩放由系统接管**，业务不必自己处理鼠标与窗口几何 |
 | 初始位置 | `WindowOptions.center`（默认 `true`）→ `Application::Run` 在 `OnCreate`/`Show` 之前调 `NativeWindow::CenterOnScreen()`：`MonitorFromWindow` + `MONITORINFO.rcWork` 取工作区（排除任务栏），按**整窗物理像素**算中心；跨屏时以窗口所在显示器为准；设 `false` 沿用系统 `CW_USEDEFAULT` 层叠摆放 |
 | 系统菜单 | 无边框窗口没有系统标题栏，`DefWindowProc` 不知道该在哪弹菜单 → `WM_NCRBUTTONUP` + `wParam == HTCAPTION` 时用 `GetSystemMenu(hwnd, FALSE)` + `TrackPopupMenuEx(..., TPM_RETURNCMD)` 弹系统菜单，选中项转发成 `WM_SYSCOMMAND`（`SC_*` 由 `DefWindowProc` 执行：移动 / 缩放走系统模态循环，关闭走 `WM_CLOSE`）。菜单项的启用 / 置灰由系统在 `WM_INITMENUPOPUP` 自动维护，业务不必手动 `EnableMenuItem` |
 
 业务侧的坑：
 
-1. **四边四角的缩放热区必须先于标题栏判定**：上边这条窄带压在标题栏上，若先判 `HTCAPTION`，上边与左上 / 右上角会全部变成"移动窗口"，拖不动大小。顺序应为：四边四角 → `HT*` → 按钮区 `HTCLIENT` → 标题栏其余 `HTCAPTION` → 内容区 `HTCLIENT`。
-2. **标题栏里的按钮必须排除在 `HTCAPTION` 热区之外**：命中标题栏的点击会被系统当成"拖标题栏"，按钮收不到 `WM_LBUTTONDOWN`，永远点不动。按钮区只需让出最上面一条 `kResizeBorder` 给上边 / 右上角缩放（原生窗口的标题栏顶端同样是一条 resize 带），其余部分返回 `HTCLIENT` 即可照常点击。
-3. **边框热区会吃掉客户区边缘几像素**：缩放热区（示例 8 DIP）覆盖客户区四边，内容贴边处点不到 —— 布局时留出余量，或把热区做窄。热区之外建议显式返回 `HTCLIENT`（不要 `return false` 落到 `DefWindowProc`），否则 `WS_THICKFRAME` 会在窗口最外圈又报一套 `HT*`，最大化时容易误触缩放。
-4. **最大化后 `IsMaximized()` 为真**：此时没有可拖的边框，缩放热区要自行禁用。
+1. **缩放热区优先于拖动区**（框架固定此顺序）：窗口上边那条窄带压在标题栏上，若先判 `HTCAPTION`，上边与左上 / 右上角会全部变成"移动窗口"，拖不动大小。M5.61 起该顺序由框架保证，业务不必自己排。
+2. **拖动区里的可交互元素必须"挖洞"**：命中拖动区的点击会被系统当成"拖标题栏"，元素收不到 `WM_LBUTTONDOWN`，永远点不动。M5.61 起用 `app-region: no-drag` 声明（见 §6.2），不必再手算按钮区矩形。
+3. **边框热区会吃掉客户区边缘几像素**：缩放热区覆盖客户区四边，内容贴边处点不到 —— 布局时留出余量，或把热区做窄。热区之外框架显式返回 `HTCLIENT`（不落回 `DefWindowProc`），否则 `WS_THICKFRAME` 会在窗口最外圈又报一套 `HT*`，最大化时容易误触缩放。
+4. **最大化后 `IsMaximized()` 为真**：此时没有可拖的边框，框架自动停用缩放热区。
 5. **拖边框缩放时 Windows 进入模态循环**：主消息循环被挂起，`WM_SIZE` 连续到达 → 框架在 `OnResized` 里**就地渲染**（否则拖动过程中内容不跟手，松开才更新）。
-6. 双击标题栏最大化需要框架支持双击事件，当前未提供。
+6. **双击拖动区 → 最大化 / 还原是系统原生行为**（实测可用）：拖动区命中 `HTCAPTION` → 双击走非客户区消息 `WM_NCLBUTTONDBLCLK` → `DefWindowProc` 见窗口带 `WS_MAXIMIZEBOX`（无边框窗口样式已含）即发 `SC_MAXIMIZE` / `SC_RESTORE`。**不需要**框架提供"元素双击事件"—— 拖动区的指针事件被系统接管，业务根本收不到。注意这是**拖动区**语义而非"标题栏"语义：整窗 drag 的窗口（如 `Samples/CircleWindow`）双击任意位置也会最大化。
 
-配套示例：`Samples/CustomFrame`（自绘标题栏 + iconfont 图标按钮 + 阴影 + 移动 + 缩放）。
+配套示例：`Samples/CustomFrame`（自绘标题栏 + 矢量图标按钮 + 阴影 + 移动 + 缩放）、`Samples/CircleWindow`（异形窗口 + 整窗拖动区）。
+
+---
+
+### 6.2 拖动区与缩放热区（M5.61）
+
+无边框窗口的"哪里能拖、哪里能缩"由**内容声明**，不再由业务手算坐标：
+
+| 能力 | 声明方式 | 语义 |
+| --- | --- | --- |
+| 拖动区（移动窗口） | 元素样式 `app-region: drag` | 该元素区域命中 `HTCAPTION` → 拖动由系统接管 |
+| 拖动区挖洞（恢复交互） | 元素样式 `app-region: no-drag` | 该元素**及其子树**不参与拖动 |
+| 缩放热区（缩放窗口） | `WindowOptions::resizable = true` | 框架生成四边 / 四角热区，命中 `HT*` → 系统接管缩放 |
+
+**`app-region` 是继承属性**（属性表见 [15-Properties.md](./15-Properties.md) §4.6）：父设 `drag` → 子元素默认继承（点标题文字也能拖窗）；子元素显式设 `no-drag` 即恢复交互 —— 与 Electron 的 `-webkit-app-region` 同语义。
+
+判定实现在 App 层（`App/App.cpp` `WindowHostAdapter::OnNcHitTest`），顺序固定：
+
+```
+① 缩放热区（resizable 且未最大化）→ HT*      ← 必须在最前，否则上边被拖动区吃掉
+② app-region：命中元素 → 沿父链取最近设置者
+     Drag → HTCAPTION
+③ 其余 → HTCLIENT
+```
+
+- **不缓存区域矩形**：命中判定复用元素命中测试（`HitTest`，已处理 transform 逆变换、滚动偏移、Fixed 层），再沿父链取最近设置者（`ResolveProperty` 遍历外读 = 继承语义）。因此**滚动 / 旋转 / 缩放下的拖动区自动正确**，无需失效管理。
+- **缩放热区厚度**：取系统边框度量 `SM_CXSIZEFRAME + SM_CXPADDEDBORDER`（按窗口 DPI 查询，`GetSystemMetricsForDpi`），与原生窗口的可缩放边框同厚、随 DPI 自适应。
+- **业务仍可完全接管**：`OnNcHitTest` 的入参 `hit` 已带框架默认值，业务改写后返回 `true` 即覆盖；返回 `false` 则沿用框架默认值。旧的"业务自己算全部热区"写法**行为不变**（它直接给 `hit` 赋值）。
+- **有边框窗口框架不介入**：缩放由系统自带（`WS_OVERLAPPEDWINDOW` 含 `WS_THICKFRAME`），业务不接管则交回 `DefWindowProc`。
+
+**双击拖动区**（系统原生行为，框架可关）：
+
+| 项 | 行为 |
+| --- | --- |
+| 默认（`doubleClickMaximize = true`） | 双击拖动区 → `WM_NCLBUTTONDBLCLK` → `DefWindowProc` 见 `WS_MAXIMIZEBOX` 发 `SC_MAXIMIZE` / `SC_RESTORE` |
+| `doubleClickMaximize = false` | 框架在 `WndProc` 里**吃掉** `WM_NCLBUTTONDBLCLK` → 双击无反应（单击拖动、右键系统菜单、第一击激活窗口都不受影响） |
+| 适用范围 | 仅 `frameless`（有边框窗口的系统标题栏本来就是原生行为，框架不碰）；**整窗粒度** —— 同一窗口内无法让"标题栏响应双击、其它拖动区不响应"（那需要元素级判定，会让窗口壳层反向依赖 UI 层命中测试） |
+
+**副作用（须告知使用者）**：
+
+1. 拖动区内的元素收不到鼠标消息 —— 系统接管后没有 hover 高亮、没有 click、没有滚轮。
+2. 忘记标 `no-drag` → 控件**静默点不动**（不报错）。
+3. 缩放热区盖住窗口最外圈几像素 —— 贴边的控件（含贴边滚动条）需自行内缩。
 
 ---
 
@@ -227,7 +272,8 @@ protected:
 6. **`GetCursorPos` / `ScreenToClient` 在 DPI 感知进程下返回物理像素**，所有坐标入口都要过一遍换算，漏一处就是命中偏移。
 7. **最小化时不得按"有脏标记"进帧**。最小化 → 客户区尺寸为 0 → 渲染帧直接返回且**不清脏标记** → 脏标记恒为真 → 消息循环永远进不了 `WaitMessage()` → 退化成忙转（CPU 100%）。正确做法：最小化期间直接阻塞等消息，恢复时由 `WM_SIZE` → 重排 + 重绘；脏标记保留不丢（保证最小化期间的内容变更不丢）。同时停掉光标闪烁节拍（窗口不可见，闪烁无意义），恢复后自动重启。
 8. **`WM_ACTIVATE` 必须上抛给上层**：`WA_INACTIVE` 表示用户已把交互交给别的窗口 → UI 层的焦点应随之离开（编辑控件失焦：选区消失、光标隐藏、闪烁停表，见 [06-Events.md](./06-Events.md) §3.3）。注意最小化同样发 `WA_INACTIVE`，须区分（最小化保留焦点，还原后可直接继续输入）—— 判定要延迟到下一轮消息处理之后（`WM_SIZE` 到达后 `IsIconic()` 才准）。
-9. **无边框窗口的 `WM_NCCALCSIZE` 不能把 `rgrc[1]` 拷进 `rgrc[0]`**：`wParam=TRUE` 时
+9. **DPI 变化必须"先换缩放系数，再调 `SetWindowPos`"**：`SetWindowPos` 会**同步**发出 `WM_SIZE`，那时若缩放还是旧值，`WM_SIZE` 就用旧缩放算出错误的客户区 DIP 尺寸（例：150% → 100% 时 `320 物理 ÷ 1.5 = 213 DIP`），布局盒凭空缩小一圈；随后 `dipBefore` 与 `dipAfter` 又相等 → 判定"尺寸没变"→ **不重排** → 错位定格（文字挤到一角、命中区偏移、部分区域拖不动）。所以顺序必须是：记下旧缩放 → 换新缩放（`OnDpiScaleChanging` 通知上层）→ `SetWindowPos` → 再算 `dipChanged` 决定重排 / 重绘。
+10. **无边框窗口的 `WM_NCCALCSIZE` 不能把 `rgrc[1]` 拷进 `rgrc[0]`**：`wParam=TRUE` 时
    `rgrc[0]` 入参是**系统建议的新窗口矩形**（出参写客户区矩形），`rgrc[1]` 是**上一次**的窗口矩形。
    无边框只需原样保留 `rgrc[0]` 返回 0（不调 `DefWindowProc` 扣边框）→ 客户区 = 整窗。
    若写成 `rgrc[0] = rgrc[1]`，客户区会慢一次尺寸变更；**最小化后还原时 `rgrc[1]` 恰是离屏的

@@ -28,6 +28,11 @@ public:
     // 矩形（整窗物理坐标）按 newScale 换算的 DIP 值；clientDipChanged =
     // 客户区 DIP 尺寸是否变化（§4-5 分级失效：不变只重绘，不重排）
     virtual void OnDpiChanged(float newScale, const Rect& suggestedDip, bool clientDipChanged) = 0;
+    // DPI 变化的**前置**通知：在窗口尺寸调整（SetWindowPos）**之前**发出，
+    // 让上层先把缩放系数换过来 —— SetWindowPos 会同步发出 WM_SIZE，那时若
+    // 缩放还是旧值，WM_SIZE 会用旧缩放算出错误的客户区 DIP 尺寸，布局盒
+    // 缩小一圈（12-Windowing §7.2）。这里只换系数，不触发重排。
+    virtual void OnDpiScaleChanging(float newScale) { (void)newScale; }
     // 指针输入（M3：物理坐标已换算为窗口客户区 DIP；完整归一化在 M4）
     virtual void OnPointerMove(Vec2 ptDip) = 0;
     // button = 触发的按键；down = 按下 / 弹起（右键目前只转发抬起）
@@ -67,8 +72,11 @@ public:
     // borderless = true → 无系统边框（WS_POPUP）+ DWM 阴影，业务自绘标题栏。
     //   注意：无边框时 widthDip/heightDip 就是**整窗**尺寸（客户区覆盖全窗，
     //   WM_NCCALCSIZE 处理），不再做 AdjustWindowRect 边框补偿。
+    // doubleClickMaximize = false → 无边框窗口双击拖动区不最大化（吃掉
+    //   WM_NCLBUTTONDBLCLK）；true = 系统原生行为（默认）。
     bool Create(const wchar_t* title, float widthDip, float heightDip,
-                NativeWindowHost& host, String& error, bool borderless = false);
+                NativeWindowHost& host, String& error, bool borderless = false,
+                bool doubleClickMaximize = true);
 
     void Show();
     // 把窗口移到所在显示器工作区正中（尺寸不变）。显示前调用，构建过程仍不可见。
@@ -113,6 +121,7 @@ private:
     HWND  hwnd_ = nullptr;
     float scale_ = 1.f;
     bool   borderless_ = false;   // 无边框（业务自绘标题栏与边框）
+    bool   dblClickMaximize_ = true;   // 无边框窗口双击拖动区是否最大化（原生行为）
     NativeWindowHost* host_ = nullptr;
     HBITMAP caretBmp_ = nullptr;   // 隐形系统 caret 的位图（1×N 全透明）
     int caretHeight_ = 0;         // 当前 caret 位图高度（变化时重建）

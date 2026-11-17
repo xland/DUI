@@ -39,6 +39,17 @@
 ### 1.9 最小化 + 文本框聚焦 → CPU 忙转（M5.9）
 根因链：最小化时客户区 0 尺寸 → `RenderFrame` 首行 return 但**不清脏标记** → 主循环永远进不了 `WaitMessage`。修法：① 最小化时主循环直接 `WaitMessage()`（恢复由 `WM_SIZE` 触发重排，脏标记保留）；② `SyncTickTimer` 最小化停表。
 
+### 1.10 DPI 变化：`SetWindowPos` 前必须先换缩放系数（M5.62，实测复现）
+`SetWindowPos` 会**同步**发出 `WM_SIZE`。若此时缩放系数还是旧值，`WM_SIZE` 就会用旧缩放算出错误的客户区 DIP 尺寸：
+
+- 150% → 100%：窗口物理 480 → 320，缩放 1.5 → 1.0；
+- 若 `WM_SIZE` 先于换缩放到达 → `320 物理 ÷ 1.5 = 213 DIP` → **布局盒凭空缩小一圈**；
+- 随后 `dipBefore`(=320 DIP) 与 `dipAfter`(=320 DIP) 相等 → 判定"尺寸没变" → **不重排** → 错位定格。
+
+症状（`Samples/CircleWindow` 实测）：圆（按固定 DIP 坐标画）位置正确、文字（按布局盒居中）挤到一角、命中区偏移 → **部分区域拖不动窗口**。
+
+修法（顺序即正确性）：记下旧缩放 → 换新缩放（`OnDpiScaleChanging` 通知上层，窗口层与上层各有一份 `scale_`）→ `SetWindowPos` → 再算 `dipChanged` 决定重排 / 重绘。验证时注意：`WM_DPICHANGED` 属于"只允许系统发送"的消息，`PostMessage` / `SendMessage` 都会被系统过滤（`ERROR_NOACCESS`），进程内自投递也拦 —— 只能**直接调窗口过程**（`CallWindowProc`）模拟。
+
 ---
 
 ## 2. D3D11 / DXGI

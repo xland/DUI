@@ -421,8 +421,28 @@ Rect TextBox::ContentBox() const {
 
 Vec2 TextBox::TextOrigin() const {
     const Rect c = ContentBox();
-    // 掩码模式：整段显示文本上移 maskDy_（绘制/命中/光标/IME 共用同一原点）
-    return Vec2{c.x - scrollX_, c.y - scrollY_ + maskDy_};
+    // 文本原点（绘制 / 命中 / 光标 / IME 共用同一原点）
+    float dy = 0.f;
+    auto* para = ParaOf(para_);
+    if (para != nullptr) {
+        if (multiline_) {
+            // 多行：文本顶对齐（文档语义）；仅掩码字符需要垂直补偿
+            dy = maskDy_;
+        } else {
+            // 单行：文本在内容盒内**垂直居中**
+            //   ① 行盒居中：内容盒比行高多出的空间上下平分（框比字高就对称裁剪，
+            //      而不是只裁底部 —— 旧实现从内容盒顶部起画，文字明显偏下）。
+            //   ② 视觉居中补偿：行盒居中 ≠ 视觉居中 —— DWrite 的 PROPORTIONAL 行距把
+            //      baseline 压在 ascent×factor 处（雅黑 1.27 em），而汉字墨迹只到
+            //      0.83 em → 行盒居中时墨迹仍偏下 1~2 DIP。按墨迹中心补偿，
+            //      与 Text 元素同一口径（UI/Layout.cpp 的"视觉居中"）。
+            const float lineH = para->size.y;
+            dy = (c.h - lineH) * 0.5f;
+            dy += para->inkValid ? (lineH * 0.5f - (para->baseline - para->inkCenter))
+                                 : maskDy_;   // 墨迹数据不可用 → 退回掩码补偿
+        }
+    }
+    return Vec2{c.x - scrollX_, c.y - scrollY_ + dy};
 }
 
 uint32_t TextBox::HitTestIndex(const Vec2& ptAbs) const {

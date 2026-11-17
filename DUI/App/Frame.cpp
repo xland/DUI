@@ -19,21 +19,21 @@ namespace dui {
 namespace {
 
 void DrawTextContent(Element* e, const StyleContext& ctx, graphics::Painter& p, float scale) {
-    auto* para = static_cast<text::Paragraph*>(static_cast<const Text*>(e)->ParaHandle());
+    const Text* t = static_cast<const Text*>(e);
+    auto* para = static_cast<text::Paragraph*>(t->ParaHandle());
     if (para == nullptr) return;
     const StyleValue cv = ResolveProperty(e, Prop::Color, ctx);
-    const StyleValue av = ResolveProperty(e, Prop::TextAlign, ctx);
-    // 内容盒 = 元素盒去掉内边距（border-box 盒模型时再去掉边框宽度）
-    const Rect content = ContentRectOf(e);
-    // textAlign（15-Properties §4.1）：段落按自然宽左排，绘制期在内容盒剩余宽度内
-    // 整体平移。不改 Paragraph 排版，故 TextBox 的水平滚动与命中测试不受影响；
-    // 多行文本按最长行整体对齐（不逐行居中）。
-    const float boxW = content.w;
-    const float textW = para->size.x;
-    float dx = 0.f;
-    if (av.u == static_cast<uint32_t>(TextAlign::Center)) dx = (boxW - textW) * 0.5f;
-    else if (av.u == static_cast<uint32_t>(TextAlign::End)) dx = boxW - textW;
-    const Vec2 origin{content.x + dx, content.y};   // 文本原点 = 内容盒左上
+    // 文本原点 = 内容盒左上 + textAlign 的整体平移（与命中测试共用 Text::TextOriginDip，
+    // 保证选区高亮与鼠标命中位置一致）。
+    const Vec2 origin = t->TextOriginDip(ctx);
+    // 选区底色（user-select；M5.63）—— 压在文字之下（浏览器同序）
+    if (t->HasSelection()) {
+        std::vector<Rect> rects;
+        text::Engine::Get().SelectionRects(para, t->SelectionStart(), t->SelectionEnd(), rects);
+        const Color sel = ResolveProperty(e, Prop::SelectionColor, ctx).u;
+        for (const Rect& r : rects)
+            p.FillRoundedRect(Rect{origin.x + r.x, origin.y + r.y, r.w, r.h}, 0.f, sel, 1.f, scale);
+    }
     text::Engine::Get().Draw(para, p, scale, origin, cv.u);
 }
 

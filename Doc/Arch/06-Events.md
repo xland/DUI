@@ -118,6 +118,7 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 - 焦点唯一，挂在元素上（`UI/Focus.h`）：`FocusedElement()` / `IsFocused()` / `SetFocus()`；`Element::Focus()/Blur()/HasFocus()`。换焦点时旧元素清 `State::Focused`、新元素置位 → 元素状态变体自动生效（03-Style §6.2）。
 - Tab 链：树序（深度优先）收集可聚焦元素（`SetFocusable(true)`），按 `tabIndex` 排序 —— `>0` 组（数值升序）→ `0` 组（文档序）→ `<0` 组（数值升序）；`Shift+Tab` 反向，到头循环。Tab 键在焦点元素未消费时由框架默认处理（移动焦点）。
 - 点击取得焦点：指针按下命中可聚焦元素（或其可聚焦祖先）时 `SetFocus`。
+- **点空白处 = 失焦**：按下时**没命中可聚焦元素**（点窗口空白、点非可聚焦元素）→ `SetFocus(nullptr)`（浏览器语义）。编辑控件随之失焦 → 选区消失、光标停闪；否则选区会留在一个"看起来仍聚焦着"的控件上，而看不见的选区会让后续 Delete/输入替换掉用户看不见的内容。
 
 **光标闪烁（闪烁节拍）**：编辑控件的光标按固定周期持续闪烁，由框架的**统一 ticker**驱动。
 
@@ -278,10 +279,29 @@ list->OnPointerDown(fn, dui::Phase::Tunnel);
 
 - 焦点唯一，挂在元素上；`Focus()` / `Blur()`（M5.9 落地，见 §3.3；`ClearFocus()` 未单列，`Blur()` 即清焦点）。
 - **窗口失活即失焦**（切到别的应用 → 焦点离开窗口，见 §3.3）；最小化除外（保留焦点）。
-- **Tab 链**：按树序（深度优先）+ 元素可设 `focusable`（`SetFocusable(true)`）/ `tabIndex`（`SetTabIndex`）排序；`Shift+Tab` 反向。
+- **Tab 链**：按树序（深度优先）+ 元素可设 `focusable`（`SetFocusable(true)`）/ `tabIndex`（`SetTabIndex`）排序；`Shift+Tab` 反向。Tab 链成员 = **可聚焦且可进 Tab 链**（`Element::Tabbable()`，默认 true）—— 可聚焦但不入链的元素（CSS `tabindex=-1` 语义）仍能取得焦点、收键盘事件，但 `Tab` 键不经过它。
 - 焦点变化 → 更新元素 `State::Focused` → 元素状态变体自动生效（[03-Style.md](./03-Style.md) §6.2），无需开发者干预。
 - 方向键导航（列表/网格内移动焦点）由具体控件实现，事件系统只提供路由与焦点服务。
 - 加速键/快捷键：`KeyDown` 冒泡到根，由根上注册的加速键表匹配（P1）。
+
+### 6.1 文本选择（`user-select`；M5.63）
+
+`dui::Text` 支持样式 `user-select: true` 打开文本选择（默认**关闭**，与浏览器一致）：
+
+| 交互 | 行为 |
+| --- | --- |
+| 拖选 | 按下定位、拖动扩选、抬起结束。拖动期间元素持有**指针捕获**（`SetCapture()`），故拖出文本框仍能继续扩选 |
+| 双击 | 选词。CJK 逐字成词（浏览器对中文的行为），ASCII 字母 / 数字连成一个词，其余按同类段成词 |
+| 三击 | 选段（按行，引擎 `LineInfos` 给行区间） |
+| `Ctrl+C` | 复制选中文本到系统剪贴板（`Clipboard::WriteText`） |
+| `Ctrl+A` | 全选 |
+| `←` / `→` | 移动光标；`Shift` 扩展选区；`Ctrl+←/→` 按词移动 |
+| `Home` / `End` | 行首 / 行尾；`Shift` 扩展选区 |
+
+- **连击判定由元素自行做**：窗口类未开 `CS_DBLCLKS`，收不到 `WM_LBUTTONDBLCLK` → 按"时间（500 ms）+ 位置（4 DIP）"判定连击（`Text` 内部计数）。
+- **焦点**：可选中的文本**可聚焦但不入 Tab 链**（CSS `tabindex=-1` 语义）—— 点击取得焦点以接收 `Ctrl+C` 等键盘事件，但 `Tab` 键不经过它；焦点离开时选区清空（浏览器行为）。
+- **绘制**：选区底色（`selectionColor`）画在文字**之下**（浏览器同序）；选区矩形与鼠标命中共用 `Text::TextOriginDip()`（含 `textAlign` 的整体平移），两者严格一致。
+- **API**：`Selectable()` / `SelectionStart()` / `SelectionEnd()` / `HasSelection()` / `SelectedText()` / `SelectAll()` / `Deselect()`。
 
 ---
 

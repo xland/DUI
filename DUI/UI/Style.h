@@ -85,6 +85,12 @@ enum class Prop : uint16_t {
     // 盒模型（M5.58；追加在表尾）：
     //   BoxSizing u = dui::BoxSizing（ContentBox / BorderBox；非继承）
     BoxSizing,
+    // 窗口拖动区（M5.61；追加在表尾，不重排已有属性 ID）：
+    //   AppRegion u = dui::AppRegion（None / Drag / NoDrag；**继承属性**）
+    AppRegion,
+    // 文本选择（M5.63；追加在表尾）：
+    //   UserSelect u = 0/1（**非继承**；同 CSS user-select，默认 none = 不可选）
+    UserSelect,
 };
 
 // 状态位（03-Style §6.2 已定全集）；disabled/selected 等写入方见文档
@@ -160,6 +166,13 @@ enum class BorderStyle : uint8_t { Solid, Dashed, Dotted };
 // PaddingBox = 宽高含内边距、不含边框（框架默认：边框是内描边，不占盒、不挤压内容）；
 // BorderBox  = 宽高含内边距与边框（边框占盒内空间 → 内容区 = 盒 − 内边距 − 边框）
 enum class BoxSizing : uint8_t { PaddingBox, BorderBox };
+// 窗口拖动区（app-region；12-Windowing §6.2；**继承属性**）：
+//   None   = 未设置（默认）：不参与拖动
+//   Drag   = 该元素区域可拖动窗口（等价 HTCAPTION，拖动由系统接管）
+//   NoDrag = 该元素区域不参与拖动，对**子树**生效（挖掉父级的 Drag，恢复交互）
+// 语义：父设 Drag → 子元素默认继承（点标题文字也能拖窗）；子元素显式设 NoDrag
+// 才恢复交互 —— 与 Electron 的 -webkit-app-region 同语义。
+enum class AppRegion : uint8_t { None, Drag, NoDrag };
 // 文本溢出表现（CSS text-overflow 子集；继承属性，同 CSS）
 enum class TextOverflow : uint8_t { Clip, Ellipsis };
 enum class Easing : uint8_t { Linear, EaseIn, EaseOut, EaseInOut };   // AnimConfig::easing（05-Animation §4）
@@ -290,9 +303,16 @@ public:
     // 盒模型（CSS box-sizing；非继承）：ContentBox = 宽高不含边框（默认）、
     // BorderBox = 宽高含边框（内容区 = 盒 − 边框 − 内边距）
     Style& BoxSizing(dui::BoxSizing v);
+    // 窗口拖动区（app-region；继承属性）：该元素区域可拖动窗口（拖动由系统接管）。
+    // 子元素设 NoDrag 可挖洞（恢复交互，如标题栏里的按钮）。
+    // 仅对无边框窗口有意义（12-Windowing §6.2）。
+    Style& AppRegion(dui::AppRegion v);
     // 文本编辑（TextBox/TextArea）
     Style& SelectionColor(dui::Color c);        // 选区底色（默认半透明蓝）
     Style& CaretColor(dui::Color c);            // 光标色（默认取文本色）
+    // 文本选择（CSS user-select 子集；M5.63）：true = 允许用户拖选本元素文本并复制；
+    // 默认 false（不允许选择）。仅 dui::Text 有效（非继承）。
+    Style& UserSelect(bool on);
     // 指针形态（鼠标光标；语义同 CSS 的 cursor）
     // 生效范围 = 指针位于该元素上时；命中链就近者胜（未指定则沿链取父级的，
     // 与 CSS 的 cursor 继承同效）。不需要 hover 变体：指针不在元素上时，

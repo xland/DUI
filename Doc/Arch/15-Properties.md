@@ -159,6 +159,8 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 | --- | --- | --- | --- | --- | --- | --- |
 | `visibility` | Enum（`dui::Visibility`） | ✓ | Layout | ✗ | Visible | **已落地**：**继承属性**（同 CSS）；`Hidden` = 占位但不画、不命中；子元素可显式设 `Visible` 反转父的隐藏。命中测试没有 `StyleContext`，故可见性在布局期算好后落到元素上（`Element::Hidden()`），绘制与命中读同一份结果 |
 | `cursor` | Enum | ✓ | — | ✗ | Default | 由 Event 层读取 |
+| `appRegion` | Enum（`dui::AppRegion`） | ✓ | — | ✗ | None | **已落地（M5.61）**：窗口拖动区（app-region）。`None` = 不参与；`Drag` = 该元素区域可拖动窗口（等价 `HTCAPTION`，拖动由系统接管）；`NoDrag` = 该区域不参与拖动，**对子树生效**（挖掉父级的 `Drag`）。**继承属性**：父设 `Drag` → 子元素默认继承（点标题文字也能拖窗），子元素显式设 `NoDrag` 即恢复交互 —— 与 Electron 的 `-webkit-app-region` 同语义。只影响**窗口非客户区命中**（`WM_NCHITTEST`），不影响布局 / 绘制 / 文本（失效标志为"无"）。仅无边框窗口有意义（12-Windowing §6.2） |
+| `userSelect` | Bool | ✗ | — | ✗ | false | **已落地（M5.63）**：文本选择（CSS `user-select` 子集，仅取"允许 / 不允许"两态）。`true` = 允许用户拖选 `dui::Text` 的文本并复制（Ctrl+C）；默认 `false` = **不允许选择**。**非继承**（同 CSS）。可选中的文本**可聚焦但不进 Tab 链**（CSS `tabindex=-1` 语义：点击取得焦点以接收 Ctrl+C 等键盘事件，Tab 键不经过它）。选区底色取 `selectionColor`。只影响交互，不影响布局 / 绘制（失效标志为"无"）。详见 [06-Events.md](./06-Events.md) §6.1 |
 
 ### 4.7 动画相关属性
 

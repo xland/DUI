@@ -357,7 +357,7 @@ bool DispatchWheel(Element* hit, const Vec2& pt, float delta, bool horizontal) {
     ev.delta = delta;
     ev.horizontal = horizontal;
     return PhasedDispatch(hit, ev, &Element::Handlers::tunnelWheel,
-                          &Element::Handlers::wheel);
+                          &Element::Handlers::wheel, &Element::HandleWheel);
 }
 
 // ---------------------------------------------------------------------------

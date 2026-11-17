@@ -7,25 +7,14 @@
 #include <algorithm>
 
 #include "Graphics/Graphics.h"
+#include "UI/ScrollBar.h"
 
 namespace dui {
 
 namespace {
 
-// 滚动条布局常量；外观（厚/色/圆角/边框）走样式（Track* / Thumb* 属性）
-constexpr float kMinThumb = 28.f;       // 滑块最小长度（DIP）
-
 bool InRect(const Rect& r, const Vec2& p) {
     return p.x >= r.x && p.x <= r.Right() && p.y >= r.y && p.y <= r.Bottom();
-}
-
-// 滑块悬停加深：只提 alpha（RGB 不变），比例 kThumbHoverBoost
-constexpr float kThumbHoverBoost = 1.6f;
-
-Color BoostAlpha(Color c, float k) {
-    const uint32_t a = (c >> 24) & 0xFFu;
-    const uint32_t na = std::min<uint32_t>(255u, static_cast<uint32_t>(a * k + 0.5f));
-    return (c & 0x00FFFFFFu) | (na << 24);
 }
 
 }  // namespace
@@ -99,39 +88,33 @@ bool Scroller::HorizontalBarVisible() const {
 }
 
 Rect Scroller::VerticalTrackRect() const {
-    const Rect v = Viewport();
-    const float t = BarThickness(true, false);
-    // 贴边：轨道占视口最右 t DIP，纵向铺满视口高（不留内缩间隙）
-    return Rect{v.Right() - t, v.y, t, std::max(0.f, v.h)};
+    // 贴**元素右缘**（浏览器语义：滚动条在 padding box 外缘 = border 内缘）。
+    // 框架的 border 是内描边（不占布局空间）→ padding box = 元素盒内缩边框宽。
+    // 早期版本贴"内容盒右缘"，有 padding 时滚动条会离右边缘隔一段（看着不贴边）。
+    const Rect b = Bounds();
+    const Rect pb{b.x + border_.left, b.y + border_.top,
+                  std::max(0.f, b.w - border_.left - border_.right),
+                  std::max(0.f, b.h - border_.top - border_.bottom)};
+    return sb::VerticalTrackRect(pb, BarThickness(true, false));
 }
 
 Rect Scroller::VerticalThumbRect() const {
     const Rect t = VerticalTrackRect();
-    const float max = MaxScrollY();
-    if (max <= 0.f || t.h <= 0.f) return t;
-    const float ratio = Viewport().h / std::max(1.f, contentSize_.y);
-    const float len = std::clamp(t.h * ratio, std::min(kMinThumb, t.h), t.h);
-    const float pos = t.y + (offset_.y / max) * (t.h - len);
-    const float th = BarThickness(true, true);   // 滑块厚可异于轨道，居中
-    return Rect{t.x + (t.w - th) * 0.5f, pos, th, len};
+    return sb::VerticalThumbRect(t, BarThickness(true, true), contentSize_.y, Viewport().h, offset_.y);
 }
 
 Rect Scroller::HorizontalTrackRect() const {
-    const Rect v = Viewport();
-    const float t = BarThickness(false, false);
-    // 贴边：轨道占视口最下 t DIP，横向铺满视口宽（不留内缩间隙）
-    return Rect{v.x, v.Bottom() - t, std::max(0.f, v.w), t};
+    // 贴元素下缘（同上）
+    const Rect b = Bounds();
+    const Rect pb{b.x + border_.left, b.y + border_.top,
+                  std::max(0.f, b.w - border_.left - border_.right),
+                  std::max(0.f, b.h - border_.top - border_.bottom)};
+    return sb::HorizontalTrackRect(pb, BarThickness(false, false));
 }
 
 Rect Scroller::HorizontalThumbRect() const {
     const Rect t = HorizontalTrackRect();
-    const float max = MaxScrollX();
-    if (max <= 0.f || t.w <= 0.f) return t;
-    const float ratio = Viewport().w / std::max(1.f, contentSize_.x);
-    const float len = std::clamp(t.w * ratio, std::min(kMinThumb, t.w), t.w);
-    const float pos = t.x + (offset_.x / max) * (t.w - len);
-    const float th = BarThickness(false, true);
-    return Rect{pos, t.y + (t.h - th) * 0.5f, len, th};
+    return sb::HorizontalThumbRect(t, BarThickness(false, true), contentSize_.x, Viewport().w, offset_.x);
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +240,7 @@ void Scroller::PaintBar(graphics::Painter& p, const Rect& r, bool thumb, float s
     const float radius = ResolveProperty(this, rad).f;
     Color color = ResolveProperty(this, bg).u;
     // 滑块悬停 → 加深（只提 alpha）；轨道不变
-    if (thumb && ThumbHovered()) color = BoostAlpha(color, kThumbHoverBoost);
+    if (thumb && ThumbHovered()) color = sb::BoostAlpha(color, sb::kThumbHoverBoost);
     if (color != 0) p.FillRoundedRect(r, radius, color, 1.f, scale);
 
     const float border = ResolveProperty(this, bw).f;

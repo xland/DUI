@@ -12,7 +12,7 @@
 | `OnPointerEnter` | `PointerEvent` | 直达        | 悬停链差分驱动，不冒泡                     |
 | `OnPointerLeave` | `PointerEvent` | 直达        | 同上                                       |
 | `OnPointerMove`  | `PointerEvent` | 隧道 / 冒泡 |                                            |
-| `OnPointerDown`  | `PointerEvent` | 隧道 / 冒泡 | **左键与右键**都派发；按键看 `ev.button`    |
+| `OnPointerDown`  | `PointerEvent` | 隧道 / 冒泡 | **左/右/中键**都派发；按键看 `ev.button`   |
 | `OnPointerUp`    | `PointerEvent` | 隧道 / 冒泡 | 同上                                       |
 | `OnWheel`        | `WheelEvent`   | 隧道 / 冒泡 | 置 `handled` 可阻止滚动容器消费            |
 | `OnKeyDown`      | `KeyEvent`     | 隧道 / 冒泡 | 从**焦点元素**出发                         |
@@ -21,9 +21,9 @@
 
 **除 `OnPointerEnter` / `OnPointerLeave` 外，其余绑定都接受可选的 `Phase` 参数**（默认 `Phase::Bubble`）。
 
-> **按下 / 抬起覆盖左键与右键**（中键暂未转发）。`PointerEvent::button` 标明是哪个键（`Left` / `Right`）。
+> **按下 / 抬起覆盖左键、右键与中键**。`PointerEvent::button` 标明是哪个键（`Left` / `Right` / `Middle`）。
 >
-> **只有左键会改框架状态**：右键的按下**只派事件**，不会设置 `State::Pressed`、不会改焦点、不会取指针捕获 —— 按钮不会因右键按下而亮起，右键也不会抢走输入焦点（焦点与按压态是左键语义）。
+> **只有左键会改框架状态**：右键与中键的按下**只派事件**，不会设置 `State::Pressed`、不会改焦点、不会取指针捕获 —— 按钮不会因右键 / 中键按下而亮起，右键也不会抢走输入焦点（焦点与按压态是左键语义）。
 
 ### 1.2 三种绑定形态
 
@@ -194,6 +194,7 @@ target->When(dui::State::Pressed, dui::Style().Background(0xFFC7DEFF));
 - 同一元素可以在两个阶段**各绑一个**处理器（槽互不覆盖）。
 - 隧道阶段**不执行**控件内部的 `Handle*` 钩子（钩子只在冒泡阶段跑）。
 - 冒泡阶段每个元素上**先跑控件钩子、再跑该元素的绑定**；钩子消费（返回 `true`）或 `ev.handled` 为真 → **停止向上冒泡**，但**同一元素上的绑定仍然会收到**（此时 `ev.handled` 已被置位）。
+- **滚轮也有控件钩子 `HandleWheel`**（M5.74 新增）：`TextArea` 用它消费滚轮、滚自己的内容（`TextBox` / `TextArea` 内容溢出时）。钩子消费后滚轮**不再**交给祖先 `Scroller`；内容没溢出时不消费 → 滚轮照常滚祖先 `Scroller`。
 
 ![示例 EV3-1：隧道 / 冒泡与 handled](Event/EV3-1.png)
 
@@ -392,8 +393,8 @@ panel->OnPointerUp([this](dui::PointerEvent& ev) {
 
 ## 9. 已知限制与不支持项
 
-1. **无双击事件**：只有 `OnClick`；`Text` 的双击选词 / 三击选段是控件**内部**行为，不对外派发双击事件。右键有独立的按下 / 抬起事件（按 `ev.button` 区分）。
-2. **无 `PointerCancel`、无触摸 / 触控笔**：平台层只转发左键与右键的按下 / 抬起（中键未转发）。
+1. **无双击事件**：只有 `OnClick`；`Text` 的双击选词 / 三击选段与 `TextBox` 的双击选词 / 三击选行都是控件**内部**行为，不对外派发双击事件。右键有独立的按下 / 抬起事件（按 `ev.button` 区分）。
+2. **无 `PointerCancel`、无触摸 / 触控笔**：平台层转发左键 / 右键 / 中键的按下与抬起。
 3. **无 IME 组合串事件**与组合串内联预览；IME 提交经 `WM_IME_CHAR` 走 `OnChar`。
 4. **无加速键 / 快捷键表**：键盘事件只冒泡到根，框架不做匹配。
 5. **无焦点事件绑定**（`GotFocus` / `LostFocus`）：只有 `protected` 虚钩子 `OnFocusChanged(bool)`；焦点变化通常用 `State::Focused` 状态变体感知。

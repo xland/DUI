@@ -177,6 +177,10 @@ public:
         }
 
         if (clipped) EndClip(st);
+
+        // Overlay：画在元素内容之上、裁剪之外（父级上下文）——贴边缘的滚动条等。
+        // 与 CollectScroller 画 Scroller 滚动条同一层：坐标是父单元空间。
+        if (!hidden) e->PaintOverlay(*painter_, scale_);
     }
 
     // 收尾：提交主树最后一个单元，再统一画窗口级 Fixed 层（盖过所有普通内容，

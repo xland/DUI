@@ -2264,6 +2264,8 @@ bool RichEditor::InsertionPoint(Rect& outRect) const {
 
 bool RichEditor::HandlePointerDown(PointerEvent& ev) {
     if (!editable_) return false;
+    // 只有左键参与编辑（右键 / 中键按下自 M5.72 起也会派发到这里，但不应挪动插入点）
+    if (ev.button != PointerButton::Left) return false;
     Focus();
     const Vec2 origin = ContentOrigin();
     impl_->dragging = true;

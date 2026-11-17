@@ -98,7 +98,7 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 
 - 全部可路由事件（`OnClick`、指针 `Move/Down/Up`、`OnWheel`、键盘 `OnKeyDown/OnKeyUp/OnChar`）都支持 `Phase`；`Enter/Leave` 是直达事件，无阶段。
 - 同一元素可在两个阶段各绑一个处理器（槽互不覆盖）。
-- **按键覆盖左键与右键**（M5.72；中键未转发）：平台层 `WM_LBUTTONDOWN/UP` 与 `WM_RBUTTONDOWN/UP` 都进 `OnPointerButton` → `DispatchPointerDown/Up`，按键由 `PointerEvent::button` 区分。**只有左键改框架状态**（`State::Pressed`、焦点、窗口捕获、Click 合成）；右键按下**只派事件**，不动这些状态（否则右键会点亮按钮、抢焦点，并覆盖左键的 `pressed_` 让 Click 合成失效）。
+- **按键覆盖左键、右键与中键**（M5.72）：平台层 `WM_LBUTTONDOWN/UP`、`WM_RBUTTONDOWN/UP`、`WM_MBUTTONDOWN/UP` 都进 `OnPointerButton` → `DispatchPointerDown/Up`，按键由 `PointerEvent::button` 区分。**只有左键改框架状态**（`State::Pressed`、焦点、窗口捕获、Click 合成）；右键 / 中键按下**只派事件**，不动这些状态（否则右键会点亮按钮、抢焦点，并覆盖左键的 `pressed_` 让 Click 合成失效）。
 - 绑定形态与 `OnClick` 同构：成员函数 + 上下文，或 `std::function`。
 - 派发**只经过有绑定者的元素**（未绑定直接跳过，不产生调用开销）；不做防抖与节流（由开发者自行处理）。
 - 处理器存储按需分配（元素未绑定任何事件时不占这部分内存）。
@@ -116,6 +116,8 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 
 - 平台层：`WM_KEYDOWN/WM_KEYUP/WM_CHAR/WM_SYSCHAR/WM_IME_CHAR` → `NativeWindowHost::OnKeyDown/OnKeyUp/OnChar`；`WM_IME_CHAR` 被吃掉（否则 `DefWindowProc` 会再生成一个 `WM_CHAR`，同一字符插入两次）。
 - 控件内部行为与外部绑定**并存**：`Element::HandleKeyDown/HandleKeyUp/HandleChar` 等受保护虚函数是控件自身行为（TextBox 的编辑逻辑走这里）；派发时钩子先执行，钩子消费（返回 true）则不再向上冒泡，但同一元素上的外部绑定仍会收到该事件（可见 `ev.handled` 已被置位）。
+- **滚轮钩子 `Element::HandleWheel`**（M5.74 新增）：`TextArea` 靠它消费滚轮、滚自己的内容（内容溢出时）；钩子消费 → 滚轮不再交给祖先 `Scroller`；不消费（内容没溢出）→ 滚轮照常冒泡给祖先 `Scroller`。滚轮钩子与指针钩子一样**只在冒泡阶段**执行。
+- **Overlay 绘制钩子 `Element::PaintOverlay`**（M5.75 新增）：画在**元素内容之上、裁剪之外**（父级上下文），坐标与 `Bounds()` 同空间。用途是"贴元素边缘、又不能被内容裁剪切掉"的东西 —— 如 `TextBox` / `TextArea` 的滚动条（要贴边框内侧、盖住 padding 区）。与 `OnPaint` 的分工：`OnPaint` 在内容裁剪内、在子元素之下；`PaintOverlay` 在裁剪外、在子元素之上（与 `Scroller` 画自己滚动条同一层）。
 - 焦点唯一，挂在元素上（`UI/Focus.h`）：`FocusedElement()` / `IsFocused()` / `SetFocus()`；`Element::Focus()/Blur()/HasFocus()`。换焦点时旧元素清 `State::Focused`、新元素置位 → 元素状态变体自动生效（03-Style §6.2）。
 - Tab 链：树序（深度优先）收集可聚焦元素（`SetFocusable(true)`），按 `tabIndex` 排序 —— `>0` 组（数值升序）→ `0` 组（文档序）→ `<0` 组（数值升序）；`Shift+Tab` 反向，到头循环。Tab 键在焦点元素未消费时由框架默认处理（移动焦点）。
 - 点击取得焦点：指针按下命中可聚焦元素（或其可聚焦祖先）时 `SetFocus`。
@@ -299,6 +301,12 @@ list->OnPointerDown(fn, dui::Phase::Tunnel);
 | `Ctrl+A` | 全选 |
 | `←` / `→` | 移动光标；`Shift` 扩展选区；`Ctrl+←/→` 按词移动 |
 | `Home` / `End` | 行首 / 行尾；`Shift` 扩展选区 |
+
+> **分词规则集是共享的**（M5.73）：`UI/TextUtil.h` 的 `dui::seg` 命名空间（M5.73 新增）是唯一的规则来源 —— CJK 逐字、ASCII 字母 / 数字连成词、代理对算一个码点。`dui::Text`（`user-select`）与 `dui::TextBox` / `dui::TextArea`（M5.73 起支持双击选词 / 三击选行）共用它，保证同一个输入框里静态文本与可编辑文本双击选出的词一致。
+>
+> **连击判定**（两者同一套）：窗口类没开 `CS_DBLCLKS`，收不到 `WM_LBUTTONDBLCLK` → 按"时间（500 ms）+ 位置（4 DIP）"自行计数。
+>
+> **密码框的选词按显示文本分词**：`TextBox` 掩码模式下 `display_` 全是掩码符 → 词边界退化成单个掩码符，不会因选区长度泄漏真实内容的词结构。
 
 - **连击判定由元素自行做**：窗口类未开 `CS_DBLCLKS`，收不到 `WM_LBUTTONDBLCLK` → 按"时间（500 ms）+ 位置（4 DIP）"判定连击（`Text` 内部计数）。
 - **焦点**：可选中的文本**可聚焦但不入 Tab 链**（CSS `tabindex=-1` 语义）—— 点击取得焦点以接收 `Ctrl+C` 等键盘事件，但 `Tab` 键不经过它；焦点离开时选区清空（浏览器行为）。

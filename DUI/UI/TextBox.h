@@ -61,6 +61,8 @@ protected:
     Vec2 MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) const override;
     // 自绘：选区 → 文本 → 光标
     void OnPaint(graphics::Painter& painter, const StyleContext& ctx, float scale) override;
+    // 滚动条画在内容之上、裁剪之外（贴元素右缘，可盖住 padding 区）
+    void PaintOverlay(graphics::Painter& p, float scale) override;
     // 内容裁剪（文本溢出裁到内容盒）
     bool ContentClipRect(Rect& out) const override;
     // 首行基线（相对内容盒顶部，DIP）：供 align-items: baseline 对齐用
@@ -81,6 +83,8 @@ protected:
     bool HandlePointerDown(PointerEvent& ev) override;
     bool HandlePointerMove(PointerEvent& ev) override;
     bool HandlePointerUp(PointerEvent& ev) override;
+    // 滚轮：内容溢出时滚自己的内容（多行纵向 / 单行横向），不再冒泡给祖先 Scroller
+    bool HandleWheel(WheelEvent& ev) override;
 
     bool multiline_ = false;   // 多行（TextArea）
 
@@ -103,6 +107,15 @@ private:
     void RebuildDisplay();
     void ResetBlinkPhase();   // 交互后光标立即可见（重置闪烁相位）
     void UpdateMaskOffset() const;  // 掩码文本的垂直居中补偿（排版就绪后调用）
+    // 双击：选中 index 所在的词；三击：选中 index 所在的显示行
+    void SelectWordAt(uint32_t index);
+    void SelectLineAt(uint32_t index);
+    // 条厚：纵向取 *Width、横向取 *Height（与 Scroller 同款样式属性）
+    float BarThickness(bool vertical, bool thumb) const;
+    // 按样式画一段轨道或滑块
+    void PaintBar(graphics::Painter& p, const Rect& r, bool thumb, float scale);
+    bool ThumbHovered() const;
+    void RefreshThumbHover();
 
     // ---- 几何 ----
     Rect  ContentBox() const;                  // 内容盒（绝对 DIP）
@@ -111,6 +124,21 @@ private:
     void EnsureCaretVisible();
     void ClampScroll();
 
+    // ---- 滚动条（M5.74：多行 TextArea 纵向）----
+    // 只做纵向：多行自动换行 → 内容不会横向溢出；单行的横向滚动仍由
+    // "光标跟随可见"驱动（scrollX_），但不画条 —— 条会盖住垂直居中的文字。
+    float MaxScrollX() const;
+    float MaxScrollY() const;
+    bool VerticalBarVisible() const;
+    Rect VerticalTrackRect() const;
+    Rect VerticalThumbRect() const;
+    void PaintScrollBars(graphics::Painter& p, float scale);
+    // 点是否落在纵向滚动条上；非 const（记录指针位置供悬停判定）
+    bool HitScrollBar(const Vec2& ptDip);
+    void BeginBarDrag(Vec2 ptDip);
+    void UpdateBarDrag(Vec2 ptDip);
+    void EndBarDrag();
+
     String   text_;          // 真实文本
     String   display_;       // 显示文本（密码模式为掩码）
     uint32_t caret_ = 0;     // 光标（选区活动端）
@@ -118,6 +146,17 @@ private:
     uint32_t dragAnchor_ = 0;
     bool     dragging_ = false;
     Vec2     pressPos_{};     // 本次按下位置（判定"是否真拖动"，用于补合成 Click）
+    // 连击计数（双击选词 / 三击选行）：窗口类没开 CS_DBLCLKS，收不到
+    // WM_LBUTTONDBLCLK，故按"时间 + 位置"自行判定（与 dui::Text 同一套规则）。
+    uint32_t clickCount_ = 0;
+    uint64_t lastClickMs_ = 0;
+    Vec2     lastClickPos_{};
+    // 滚动条交互状态（滑块拖拽 + 悬停判定）
+    bool     barDragActive_ = false;
+    float    barDragStartPt_ = 0.f;
+    float    barDragStartOffset_ = 0.f;
+    Vec2     barPointer_{};      // 最近指针位置（滑块悬停判定）
+    bool     thumbHover_ = false;
     bool     password_ = false;
     wchar_t  maskChar_ = L'\u2022';  // 密码掩码字符（'•'）
     bool     caretVisible_ = true;   // 光标闪烁相位（false = 隐藏相位）

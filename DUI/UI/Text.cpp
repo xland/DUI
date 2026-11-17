@@ -13,6 +13,7 @@
 
 #include "Core/Clipboard.h"
 #include "Graphics/TextEngine.h"
+#include "UI/TextUtil.h"
 #include "UI/UI.h"
 
 namespace dui {
@@ -25,94 +26,8 @@ constexpr uint64_t kDoubleClickMs = 500;
 constexpr float kClickSlopDip = 4.f;    // 连击的位置容差
 constexpr float kDragSlopDip = 4.f;     // 拖动判定容差（与框架的 Click 合成一致）
 
-// 字符类别（分词用）：CJK 逐字成词（浏览器对中文的行为），
-// ASCII 字母 / 数字连成一个词，其余按同类段成词。
-enum class CharClass : uint8_t { Space, Word, Cjk, Surrogate, Punct };
-
-CharClass ClassOf(wchar_t c) {
-    if (c >= 0x4E00 && c <= 0x9FFF) return CharClass::Cjk;   // CJK 统一表意
-    if (c >= 0x3400 && c <= 0x4DBF) return CharClass::Cjk;   // 扩展 A
-    if (c >= 0x3040 && c <= 0x30FF) return CharClass::Cjk;   // 日文假名 / 注音
-    if (c >= 0xAC00 && c <= 0xD7AF) return CharClass::Cjk;   // 韩文音节
-    if (c >= 0xD800 && c <= 0xDFFF) return CharClass::Surrogate;
-    if (c < 0x80) {
-        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-            (c >= '0' && c <= '9') || c == '_')
-            return CharClass::Word;
-        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') return CharClass::Space;
-        return CharClass::Punct;
-    }
-    return CharClass::Punct;
-}
-
-bool IsHighSurrogate(wchar_t c) { return c >= 0xD800 && c <= 0xDBFF; }
-bool IsLowSurrogate(wchar_t c)  { return c >= 0xDC00 && c <= 0xDFFF; }
-
-// 索引吸附到码点边界（代理对的后半段不算独立位置）
-uint32_t SnapToCodePoint(const String& s, uint32_t i) {
-    if (i > 0 && i < s.size() && IsLowSurrogate(s[i]) && IsHighSurrogate(s[i - 1])) return i - 1;
-    return i;
-}
-
-// 按字符移动（跳过代理对：一次一个码点）
-uint32_t NextIndex(const String& s, uint32_t i, int dir) {
-    const uint32_t n = static_cast<uint32_t>(s.size());
-    if (dir < 0) {
-        if (i == 0) return 0;
-        const uint32_t j = i - 1;
-        if (j > 0 && IsLowSurrogate(s[j]) && IsHighSurrogate(s[j - 1])) return j - 1;
-        return j;
-    }
-    if (i >= n) return n;
-    const uint32_t j = i + 1;
-    if (j < n && IsHighSurrogate(s[i]) && IsLowSurrogate(s[j])) return j + 1;
-    return j;
-}
-
-// index 处字符所属的同类段 [a, b)：CJK 逐字、ASCII 词整体、代理对算一个码点
-void SameClassSpan(const String& s, uint32_t index, uint32_t& a, uint32_t& b) {
-    const uint32_t n = static_cast<uint32_t>(s.size());
-    const CharClass c = ClassOf(s[index]);
-    if (c == CharClass::Surrogate) {
-        // 代理对：整体算一个码点
-        if (index + 1 < n && IsHighSurrogate(s[index]) && IsLowSurrogate(s[index + 1])) {
-            a = index;
-            b = index + 2;
-        } else if (index > 0 && IsLowSurrogate(s[index]) && IsHighSurrogate(s[index - 1])) {
-            a = index - 1;
-            b = index + 1;
-        } else {
-            a = index;
-            b = index + 1;
-        }
-        return;
-    }
-    a = index;
-    b = index + 1;
-    while (a > 0 && ClassOf(s[a - 1]) == c) --a;
-    while (b < n && ClassOf(s[b]) == c) ++b;
-}
-
-// 词边界（Ctrl+← / Ctrl+→）：向左取所在词的开头，向右取所在词的末尾
-uint32_t WordEdge(const String& s, uint32_t i, int dir) {
-    const uint32_t n = static_cast<uint32_t>(s.size());
-    if (dir < 0) {
-        const uint32_t j = std::min(i, n);
-        if (j == 0) return 0;
-        uint32_t a = 0, b = 0;
-        SameClassSpan(s, j - 1, a, b);
-        return a;
-    }
-    uint32_t j = std::min(i, n);
-    if (j >= n) return n;
-    if (ClassOf(s[j]) == CharClass::Space) {
-        while (j < n && ClassOf(s[j]) == CharClass::Space) ++j;
-        if (j >= n) return n;
-    }
-    uint32_t a = 0, b = 0;
-    SameClassSpan(s, j, a, b);
-    return b;
-}
+// 字符类别与分词规则集见 UI/TextUtil.h（Text 与 TextBox 共用，保证选词行为一致）：
+//   seg::ClassOf / seg::SnapToCodePoint / seg::NextIndex / seg::SameClassSpan / seg::WordEdge
 
 }  // namespace
 
@@ -286,9 +201,9 @@ void Text::SelectWordAt(uint32_t index) {
     const String& s = CurrentText();
     const uint32_t n = static_cast<uint32_t>(s.size());
     if (n == 0) return;
-    index = SnapToCodePoint(s, std::min(index, n - 1));
+    index = seg::SnapToCodePoint(s, std::min(index, n - 1));
     uint32_t a = 0, b = 0;
-    SameClassSpan(s, index, a, b);
+    seg::SameClassSpan(s, index, a, b);
     selAnchor_ = a;
     selCaret_ = b;
 }
@@ -314,7 +229,7 @@ void Text::MoveCaret(int dir, bool extend, bool byWord) {
     const String& s = CurrentText();
     // 文本变短后旧索引可能越界 → 先夹到长度内再算下一步
     uint32_t caret = std::min(selCaret_, static_cast<uint32_t>(s.size()));
-    caret = byWord ? WordEdge(s, caret, dir) : NextIndex(s, caret, dir);
+    caret = byWord ? seg::WordEdge(s, caret, dir) : seg::NextIndex(s, caret, dir);
     selCaret_ = caret;
     if (!extend) selAnchor_ = caret;   // 不按 Shift → 选区收缩到光标
     MarkDirty(kFlagPaint);

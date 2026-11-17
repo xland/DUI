@@ -97,9 +97,13 @@ void DemoDownUp(dui::Panel* root) {
     dui::Panel* col = Demo(root, L"4 Down / Up：冒泡");
     dui::Text* log = col->AddChild<dui::Text>(L"", dui::Style().Height(88.f));
     auto say = [log](const std::wstring& s) { log->SetText(log->Text_() + s + L"\n"); };
-    // 按键标识：左键与右键都会派发按下 / 抬起事件（ev.button 区分）
+    // 按键标识：左键 / 右键 / 中键都会派发按下 / 抬起事件（ev.button 区分）
     auto key = [](dui::PointerEvent& e) -> std::wstring {
-        return e.button == dui::PointerButton::Right ? L"右" : L"左";
+        switch (e.button) {
+        case dui::PointerButton::Right:  return L"右";
+        case dui::PointerButton::Middle: return L"中";
+        default:                         return L"左";
+        }
     };
     dui::Panel* outer = Box(col,   190.f, 84.f, 0xFFD1D5DB);
     dui::Panel* inner = Box(outer, 120.f, 48.f, 0xFF2563EB);

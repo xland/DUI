@@ -13,6 +13,8 @@
 #include "Core/Clipboard.h"
 #include "Graphics/Graphics.h"
 #include "Graphics/TextEngine.h"
+#include "UI/ScrollBar.h"
+#include "UI/TextUtil.h"
 
 namespace dui {
 
@@ -22,26 +24,21 @@ constexpr size_t kMaxUndo = 100;
 constexpr float kMinBoxWidth = 120.f;      // 单行输入框最小自然宽（DIP）
 constexpr float kMinAreaWidth = 200.f;     // 多行输入框最小自然宽（DIP）
 constexpr float kMinAreaHeight = 80.f;     // 多行输入框最小自然高（DIP）
+// 连击判定（双击选词 / 三击选行）：窗口类没开 CS_DBLCLKS，收不到
+// WM_LBUTTONDBLCLK，故按"时间 + 位置"自行判定（与 dui::Text 同一套规则）。
+constexpr uint64_t kDoubleClickMs = 500;
+constexpr float kClickSlopDip = 4.f;       // 连击的位置容差
 
 text::Paragraph* ParaOf(void* p) { return static_cast<text::Paragraph*>(p); }
 
-bool IsHighSurrogate(wchar_t c) { return c >= 0xD800 && c <= 0xDBFF; }
-bool IsLowSurrogate(wchar_t c) { return c >= 0xDC00 && c <= 0xDFFF; }
-
-// 按字符移动（跳过代理对：增删一个码点而非半个）
-uint32_t NextIndex(const String& s, uint32_t i, int dir) {
-    const uint32_t n = static_cast<uint32_t>(s.size());
-    if (dir < 0) {
-        if (i == 0 || n == 0) return 0;
-        const uint32_t j = i - 1;
-        if (j > 0 && IsLowSurrogate(s[j]) && IsHighSurrogate(s[j - 1])) return j - 1;
-        return j;
-    }
-    if (i >= n) return n;
-    const uint32_t j = i + 1;
-    if (j < n && IsHighSurrogate(s[i]) && IsLowSurrogate(s[j])) return j + 1;
-    return j;
+bool InRect(const Rect& r, const Vec2& p) {
+    return p.x >= r.x && p.x <= r.Right() && p.y >= r.y && p.y <= r.Bottom();
 }
+
+// 代理对判定与按码点移动：见 UI/TextUtil.h（seg 命名空间，Text 与 TextBox 共用）
+using seg::IsHighSurrogate;
+using seg::IsLowSurrogate;
+using seg::NextIndex;
 
 // 换行归一：\r\n / \r → \n
 String NormalizeNewlines(const String& s) {
@@ -261,6 +258,181 @@ void TextBox::MoveToLineEdge(bool toEnd, bool extend, bool whole) {
 }
 
 // ---------------------------------------------------------------------------
+// 双击选词 / 三击选行（M5.73）
+// ---------------------------------------------------------------------------
+
+// 双击：选中 index 所在的词。
+// 按**显示文本**分词（display_）而非真实文本：密码模式下显示全是掩码字符 →
+// 词边界退化成单个掩码符，不会因选区长度泄漏真实内容的词结构。
+void TextBox::SelectWordAt(uint32_t index) {
+    const uint32_t n = static_cast<uint32_t>(display_.size());
+    if (n == 0) return;
+    index = seg::SnapToCodePoint(display_, std::min(index, n - 1));
+    uint32_t a = 0, b = 0;
+    seg::SameClassSpan(display_, index, a, b);
+    anchor_ = a;
+    caret_ = b;
+}
+
+// 三击：选中 index 所在的**显示行**（软换行后的视觉行，与排版结果一致）。
+// 行尾不含换行符（text::LineInfo::end 的定义），故不会把 '\n' 选进去。
+void TextBox::SelectLineAt(uint32_t index) {
+    auto* para = ParaOf(para_);
+    if (para == nullptr) return;
+    std::vector<text::LineInfo> lines;
+    text::Engine::Get().LineInfos(para, lines);
+    for (const text::LineInfo& li : lines) {
+        if (index >= li.start && index <= li.end) {
+            anchor_ = li.start;
+            caret_ = li.end;
+            return;
+        }
+    }
+    // 没落到任何行（度量异常）→ 退回全选
+    anchor_ = 0;
+    caret_ = static_cast<uint32_t>(text_.size());
+}
+
+// ---------------------------------------------------------------------------
+// 滚动条（M5.74）
+//
+// 内容超出可视区时出现滚动条：多行纵向（TextArea），单行横向（长文本）。
+// 几何 / 配色与 Scroller 共用 UI/ScrollBar.h；滚动条**浮在内容之上**（overlay），
+// 不占布局宽度 —— 免得"条出现 → 文字重排 → 条消失"的布局抖动。
+// ---------------------------------------------------------------------------
+
+float TextBox::MaxScrollX() const {
+    if (multiline_) return 0.f;   // 多行自动换行 → 不会横向溢出
+    auto* para = ParaOf(para_);
+    if (para == nullptr) return 0.f;
+    const Rect c = ContentBox();
+    return std::max(0.f, para->size.x - c.w);
+}
+
+float TextBox::MaxScrollY() const {
+    if (!multiline_) return 0.f;
+    auto* para = ParaOf(para_);
+    if (para == nullptr) return 0.f;
+    const Rect c = ContentBox();
+    return std::max(0.f, para->size.y - c.h);
+}
+
+bool TextBox::VerticalBarVisible() const {
+    return MaxScrollY() > 0.f;
+}
+
+float TextBox::BarThickness(bool vertical, bool thumb) const {
+    const Prop p = vertical ? (thumb ? Prop::ScrollbarThumbWidth : Prop::ScrollbarTrackWidth)
+                            : (thumb ? Prop::ScrollbarThumbHeight : Prop::ScrollbarTrackHeight);
+    return std::max(0.f, ResolveProperty(this, p).f);
+}
+
+Rect TextBox::VerticalTrackRect() const {
+    // 贴**元素右缘**（浏览器语义：滚动条在 padding box 外缘）。
+    // 框架的 border 是内描边（画在盒内缘、不占布局空间）→ 轨道 = 元素盒内缩边框宽，
+    // 滚动条贴在边框内侧、不压边框，也不像"贴内容盒右缘"那样隔着一段 padding。
+    const Thickness bw = ValueAsThickness(ResolveProperty(this, Prop::BorderWidth));
+    const Rect b = Bounds();
+    const Rect inner{b.x + bw.left, b.y + bw.top,
+                     std::max(0.f, b.w - bw.left - bw.right),
+                     std::max(0.f, b.h - bw.top - bw.bottom)};
+    return sb::VerticalTrackRect(inner, BarThickness(true, false));
+}
+
+Rect TextBox::VerticalThumbRect() const {
+    const Rect c = ContentBox();
+    const auto* para = ParaOf(para_);
+    return sb::VerticalThumbRect(VerticalTrackRect(), BarThickness(true, true),
+                                 para != nullptr ? para->size.y : 0.f, c.h, scrollY_);
+}
+
+// 指针是否在滑块上：Hover 态 = 指针在本控件内（离开时状态被清），
+// 再用记录的指针位置判是否落在滑块矩形内
+bool TextBox::ThumbHovered() const {
+    if (!HasState(State::Hover)) return false;
+    return InRect(VerticalThumbRect(), barPointer_);
+}
+
+// 滑块悬停态变化 → 标脏重绘（滑块为自绘，无状态变体，靠这里触发刷新）
+void TextBox::RefreshThumbHover() {
+    const bool hovered = ThumbHovered();
+    if (hovered == thumbHover_) return;
+    thumbHover_ = hovered;
+    MarkDirty(kFlagPaint);
+}
+
+// 按样式画一段轨道或滑块：背景填充 + 可选边框（与 Scroller 同款）
+void TextBox::PaintBar(graphics::Painter& p, const Rect& r, bool thumb, float scale) {
+    if (r.w <= 0.f || r.h <= 0.f) return;
+    const Prop bg  = thumb ? Prop::ScrollbarThumbBackgroundColor : Prop::ScrollbarTrackBackgroundColor;
+    const Prop rad = thumb ? Prop::ScrollbarThumbCornerRadius : Prop::ScrollbarTrackCornerRadius;
+    const Prop bc  = thumb ? Prop::ScrollbarThumbBorderColor : Prop::ScrollbarTrackBorderColor;
+    const Prop bw  = thumb ? Prop::ScrollbarThumbBorderWidth : Prop::ScrollbarTrackBorderWidth;
+
+    const float radius = ResolveProperty(this, rad).f;
+    Color color = ResolveProperty(this, bg).u;
+    // 滑块悬停 → 加深（只提 alpha）；轨道不变
+    if (thumb && ThumbHovered()) color = sb::BoostAlpha(color, sb::kThumbHoverBoost);
+    if (color != 0) p.FillRoundedRect(r, radius, color, 1.f, scale);
+
+    const float border = ResolveProperty(this, bw).f;
+    if (border > 0.f) {
+        const Color borderColor = ResolveProperty(this, bc).u;
+        if (borderColor != 0) p.StrokeRoundRect(r, radius, border, borderColor, scale);
+    }
+}
+
+void TextBox::PaintScrollBars(graphics::Painter& p, float scale) {
+    if (!VerticalBarVisible()) return;
+    PaintBar(p, VerticalTrackRect(), false, scale);
+    PaintBar(p, VerticalThumbRect(), true, scale);
+}
+
+bool TextBox::HitScrollBar(const Vec2& pt) {
+    // 记录指针位置（与内容盒 / 滑块矩形同空间）供滑块悬停判定
+    if (InRect(ContentBox(), pt)) {
+        barPointer_ = pt;
+        RefreshThumbHover();
+    }
+    return VerticalBarVisible() && InRect(VerticalTrackRect(), pt);
+}
+
+void TextBox::BeginBarDrag(Vec2 pt) {
+    barDragActive_ = true;
+    barDragStartPt_ = pt.y;
+    barDragStartOffset_ = scrollY_;
+
+    // 点在轨道空白处 → 直接跳页（Web 常见行为）
+    const Rect track = VerticalTrackRect();
+    const Rect thumb = VerticalThumbRect();
+    if (pt.y < thumb.y || pt.y > thumb.Bottom()) {
+        const float max = MaxScrollY();
+        const float travel = std::max(1.f, track.h - thumb.h);
+        const float frac = ((pt.y - track.y) - thumb.h * 0.5f) / travel;
+        const float target = barDragStartOffset_ + std::clamp(frac, 0.f, 1.f) * max;
+        scrollY_ = std::clamp(target, 0.f, max);
+        barDragStartOffset_ = target;   // 跳页后以新位置为拖拽起点
+        MarkDirty(kFlagPaint);
+    }
+}
+
+void TextBox::UpdateBarDrag(Vec2 pt) {
+    if (!barDragActive_) return;
+    const Rect track = VerticalTrackRect();
+    const Rect thumb = VerticalThumbRect();
+    const float max = MaxScrollY();
+    if (max <= 0.f) return;
+    const float travel = std::max(1.f, track.h - thumb.h);
+    const float target = barDragStartOffset_ + (pt.y - barDragStartPt_) / travel * max;
+    scrollY_ = std::clamp(target, 0.f, max);
+    MarkDirty(kFlagPaint);
+}
+
+void TextBox::EndBarDrag() {
+    barDragActive_ = false;
+}
+
+// ---------------------------------------------------------------------------
 // 编辑操作
 // ---------------------------------------------------------------------------
 
@@ -453,21 +625,17 @@ uint32_t TextBox::HitTestIndex(const Vec2& ptAbs) const {
 }
 
 void TextBox::ClampScroll() {
-    auto* para = ParaOf(para_);
-    const Rect c = ContentBox();
-    if (para == nullptr) {
+    if (ParaOf(para_) == nullptr) {
         scrollX_ = 0.f;
         scrollY_ = 0.f;
         return;
     }
     if (multiline_) {
         scrollX_ = 0.f;
-        const float maxY = std::max(0.f, para->size.y - c.h);
-        scrollY_ = std::clamp(scrollY_, 0.f, maxY);
+        scrollY_ = std::clamp(scrollY_, 0.f, MaxScrollY());
     } else {
         scrollY_ = 0.f;
-        const float maxX = std::max(0.f, para->size.x - c.w);
-        scrollX_ = std::clamp(scrollX_, 0.f, maxX);
+        scrollX_ = std::clamp(scrollX_, 0.f, MaxScrollX());
     }
 }
 
@@ -608,6 +776,9 @@ bool TextBox::InsertionPoint(Rect& outRect) const {
 void TextBox::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) {
     auto* para = ParaOf(para_);
     if (para == nullptr) return;
+    // 夹紧滚动偏移：内容变短 / 控件变矮后旧偏移可能越界（滑块位置会算错）。
+    // EnsureCaretVisible 里也夹一次，但那只在光标相关路径上触发。
+    ClampScroll();
     const Vec2 origin = TextOrigin();
     const Color textColor = ResolveProperty(this, Prop::Color, ctx).u;
 
@@ -634,6 +805,12 @@ void TextBox::OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale
             p.FillRoundedRect(Rect{origin.x + cr.x, origin.y + cr.y, cr.w, cr.h}, 0.f, cc, 1.f, scale);
         }
     }
+}
+
+// 滚动条：画在**内容之上、裁剪之外**（父级上下文）—— 才能贴到元素右缘、
+// 盖住 padding 区而不被内容裁剪切掉。
+void TextBox::PaintOverlay(graphics::Painter& p, float scale) {
+    PaintScrollBars(p, scale);
 }
 
 // ---------------------------------------------------------------------------
@@ -719,10 +896,57 @@ bool TextBox::HandleChar(KeyEvent& ev) {
     return true;
 }
 
+// 滚轮：内容溢出时滚自己的内容，不再冒泡给祖先 Scroller。
+// 纵向（多行 TextArea）用普通滚轮；横向（单行长文本）用 Shift+滚轮 —— 与
+// Scroller 的轴向约定一致（Shift+滚轮 = 横向）。
+bool TextBox::HandleWheel(WheelEvent& ev) {
+    if (ev.delta == 0.f) return false;
+    constexpr float kWheelStep = 48.f;   // 每格滚动量（DIP），与 Scroller 一致
+    const bool wantVertical = !ev.horizontal;
+    const float max = wantVertical ? MaxScrollY() : MaxScrollX();
+    if (max <= 0.f) return false;   // 该轴不可滚 → 不消费，冒泡给祖先 Scroller
+    const float cur = wantVertical ? scrollY_ : scrollX_;
+    const float next = std::clamp(cur - ev.delta * kWheelStep, 0.f, max);
+    if (next == cur) return false;   // 已在边界 → 不消费（让祖先也能滚）
+    if (wantVertical) scrollY_ = next;
+    else              scrollX_ = next;
+    MarkDirty(kFlagPaint);
+    ev.handled = true;
+    return true;
+}
+
 bool TextBox::HandlePointerDown(PointerEvent& ev) {
+    // 只有左键参与编辑（右键 / 中键按下自 M5.72 起也会派发到这里，但不应挪动插入点）
+    if (ev.button != PointerButton::Left) return false;
+
+    // 滚动条命中 → 进滑块拖拽（不挪光标、不进文本拖选）
+    if (HitScrollBar(ev.pos)) {
+        BeginBarDrag(ev.pos);
+        SetCapture();   // 拖出控件仍能继续拖滑块
+        ResetBlinkPhase();
+        return false;
+    }
+
     const uint32_t idx = HitTestIndex(ev.pos);
-    caret_ = anchor_ = idx;
-    dragAnchor_ = idx;
+
+    // 连击计数（双击选词 / 三击选行）：窗口类没开 CS_DBLCLKS → 收不到
+    // WM_LBUTTONDBLCLK，故按"时间 + 位置"自行判定（与 dui::Text 同一套规则）。
+    const uint64_t now = GetTickCount64();
+    const bool isRepeat = lastClickMs_ != 0 && (now - lastClickMs_) <= kDoubleClickMs &&
+                          std::abs(ev.pos.x - lastClickPos_.x) <= kClickSlopDip &&
+                          std::abs(ev.pos.y - lastClickPos_.y) <= kClickSlopDip;
+    clickCount_ = isRepeat ? clickCount_ + 1 : 1;
+    lastClickMs_ = now;
+    lastClickPos_ = ev.pos;
+
+    if (clickCount_ >= 3) {
+        SelectLineAt(idx);          // 三击：选整行
+    } else if (clickCount_ == 2) {
+        SelectWordAt(idx);          // 双击：选词
+    } else {
+        caret_ = anchor_ = idx;     // 单击：落光标，清选区
+    }
+    dragAnchor_ = anchor_;   // 拖选锚点 = 选区固定端（双击后拖动 = 从词首扩选）
     dragging_ = true;
     goalX_ = -1.f;
     pressPos_ = ev.pos;
@@ -730,11 +954,21 @@ bool TextBox::HandlePointerDown(PointerEvent& ev) {
     // 捕获期间框架的 Move/Up 直达本控件（坐标换算到同一单元空间，命中测试照常）。
     SetCapture();
     ResetBlinkPhase();     // 点击后光标立即可见
+    EnsureCaretVisible();  // 选中的词 / 行可能在可视区之外 → 滚进视野
     MarkDirty(kFlagPaint);
     return false;   // 不消费：事件继续冒泡给祖先
 }
 
 bool TextBox::HandlePointerMove(PointerEvent& ev) {
+    // 滑块悬停判定用的指针位置（拖拽中不需要更新 —— 位置由拖拽逻辑自己算）
+    if (!barDragActive_) {
+        barPointer_ = ev.pos;
+        RefreshThumbHover();
+    }
+    if (barDragActive_) {
+        UpdateBarDrag(ev.pos);
+        return false;
+    }
     if (!dragging_) return false;
     if (!HasState(State::Pressed)) {   // 按钮已抬起（未落在本控件上时收不到 Up）
         dragging_ = false;
@@ -750,6 +984,12 @@ bool TextBox::HandlePointerMove(PointerEvent& ev) {
 }
 
 bool TextBox::HandlePointerUp(PointerEvent& ev) {
+    // 滑块拖拽结束：不合成 Click（点滚动条不是点文本）
+    if (barDragActive_) {
+        EndBarDrag();
+        ReleaseCapture();
+        return false;
+    }
     dragging_ = false;
     ReleaseCapture();
     // 捕获期间框架不合成 Click（App/App.cpp：抬起即释放捕获时跳过 Click 合成）→

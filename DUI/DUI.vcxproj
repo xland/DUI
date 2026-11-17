@@ -93,6 +93,8 @@
     <ClInclude Include="UI\Text.h" />
     <ClInclude Include="UI\Icon.h" />
     <ClInclude Include="UI\TextBox.h" />
+    <ClInclude Include="UI\TextUtil.h" />
+    <ClInclude Include="UI\ScrollBar.h" />
     <ClInclude Include="UI\Image.h" />
     <ClInclude Include="UI\Gif.h" />
     <ClInclude Include="UI\Animation.h" />

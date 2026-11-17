@@ -406,6 +406,14 @@ public:
     virtual bool HandlePointerDown(PointerEvent&) { return false; }
     virtual bool HandlePointerMove(PointerEvent&) { return false; }
     virtual bool HandlePointerUp(PointerEvent&) { return false; }
+    // 滚轮钩子（子类重写）：控件自身要消费滚轮时返回 true（如 TextArea 滚自己的
+    // 内容）。置 ev.handled 同样会阻止滚动容器消费 —— 与绑定共用同一语义。
+    virtual bool HandleWheel(WheelEvent&) { return false; }
+    // Overlay 绘制钩子（M5.75）：画在**元素内容之上、裁剪之外**（父级上下文）——
+    // 典型用途是贴元素边缘的滚动条（要盖住 padding 区、又不被内容裁剪切掉）。
+    // 与 OnPaint 的区别：OnPaint 在内容裁剪内、且在子元素之下；本钩子在
+    // 子元素之上、裁剪之外。坐标与 Bounds() 同空间（父单元空间）。
+    virtual void PaintOverlay(graphics::Painter&, float) {}
 
 protected:
     void AttachChild(Element* child);

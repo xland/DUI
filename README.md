@@ -1,12 +1,12 @@
 # DUI
 
-仅支持Windows（1703），体积小（300KB），零依赖，性能好，内存占用低，使用方便，功能齐全的 C++ GUI 开发框架。
+仅支持Windows（1703），体积小（300KB），零依赖，性能好，内存占用低（37MB），使用方便，功能齐全的 C++ GUI 开发框架。
 
 ![Hello World](Doc/Images/helloworld.png)
 
-## 文档
+> 基于 Direct3D 11、DXGI、DirectWrite，支持硬件加速。静息状态无CPU、GPU占用。
 
-**使用指南**：
+## 文档
 
 - [事件系统指南](Doc/Event.md) —— 冒泡、捕获、滚轮、键盘、拖拽、捕获等。
 - [布局使用指南](Doc/Layout.md) —— Flex、绝对定位、主轴、交叉轴、弹性布局等。

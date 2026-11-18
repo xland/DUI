@@ -4,7 +4,7 @@
 
 ![Hello World](Doc/Images/helloworld.png)
 
-> 基于 Direct3D 11、DXGI、DirectWrite，支持硬件加速。静息状态无CPU、GPU占用。
+> 基于 Direct3D 11、DXGI、DirectWrite 技术，支持硬件加速。静息状态无CPU、GPU占用。
 
 ## 文档
 

@@ -1,5 +1,7 @@
 # 图像
 
+面向使用者的完整指南见 [Image.md](../Image.md)（图像控件、尺寸与 DPI、富文本插图、剪贴板与 data URI）。
+
 相关：[10-Rendering.md](./10-Rendering.md)（批与呈现）、[11-Text.md](./11-Text.md)（字形图集，同构的"CPU 侧数据在 UI、GPU 侧资源在 Graphics"分层）、[04-Layout.md](./04-Layout.md)（自然尺寸与布局）、[12-Windowing.md](./12-Windowing.md)（DPI）。
 
 ---

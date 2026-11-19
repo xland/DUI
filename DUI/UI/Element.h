@@ -6,10 +6,13 @@
 
 #pragma once
 
+#include <any>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -83,6 +86,34 @@ struct DragOverFilesEvent {
     std::vector<String> paths;
     bool     enter = false;
     bool     handled = false;
+};
+
+// 自定义事件（Web CustomEvent 语义）：type = 事件名，detail = 任意负载（std::any）。
+// 由 element->DispatchEvent(ev) 派发，沿元素树做捕获 → 目标 → 冒泡三阶段路由。
+// 字段对齐 DOM Event：
+//   target      = 派发目标（DispatchEvent 的调用者，全程不变）
+//   source      = 当前处理器宿主（= DOM currentTarget，路由中逐站变化）
+//   bubbles     = false 时只派目标阶段（但捕获阶段仍走祖先）
+//   cancelable  = true 时 PreventDefault() 才置 defaultPrevented
+//   handled     = StopPropagation() 置位：阻止进入后续节点（同节点其余监听器仍跑）
+//   immediateStop = StopImmediatePropagation() 置位：连同节点其余监听器一起阻止
+struct CustomEvent {
+    String     type;
+    std::any   detail;
+    Element*   target = nullptr;   // 派发目标（调用 DispatchEvent 的元素）
+    Element*   source = nullptr;   // 当前宿主（DOM currentTarget）
+    bool       bubbles = true;
+    bool       cancelable = false;
+    bool       handled = false;          // = stopPropagation，可由监听器直接置
+    bool       defaultPrevented = false;
+    bool       immediateStop = false;    // = stopImmediatePropagation
+
+    void PreventDefault() noexcept { if (cancelable) defaultPrevented = true; }
+    void StopPropagation() noexcept { handled = true; }
+    void StopImmediatePropagation() noexcept { handled = true; immediateStop = true; }
+    // DOM eventPhase：1 捕获 / 2 目标 / 3 冒泡（0 = 尚未派发）
+    enum PhaseCode : uint8_t { kNone = 0, kCapturing = 1, kAtTarget = 2, kBubbling = 3 };
+    uint8_t    eventPhase = kNone;
 };
 
 // ---------------------------------------------------------------------------
@@ -343,6 +374,24 @@ public:
         (phase == Phase::Tunnel ? h.tunnelChar : h.ch) = std::move(fn);
     }
 
+    // ------------------------------------------------------------------
+    // 自定义事件（Web CustomEvent 语义，与上面固定槽不同：按 type 名路由）
+    //   AddEventListener(type, fn, capture) —— 同一 type / 阶段可绑多个监听器，
+    //     返回监听 id；capture = true 在捕获阶段（根 → 目标的父）收到。
+    //   RemoveEventListener(id) —— 按 id 精确解绑，派发中调用也安全（当站早已快照）。
+    //   DispatchEvent(ev) —— 捕获 → 目标 → 冒泡三阶段路由；返回 !defaultPrevented。
+    //     目标阶段 capture / bubble 监听器都按注册顺序触发，与 Web 一致。
+    // ------------------------------------------------------------------
+    uint64_t AddEventListener(const String& type, std::function<void(CustomEvent&)> fn,
+                              bool capture = false);
+    template <class Ctx>
+    uint64_t AddEventListener(const String& type, Ctx* ctx, void (Ctx::*fn)(CustomEvent&),
+                              bool capture = false) {
+        return AddEventListener(type, [ctx, fn](CustomEvent& e) { (ctx->*fn)(e); }, capture);
+    }
+    bool RemoveEventListener(uint64_t id) noexcept;
+    bool DispatchEvent(CustomEvent& ev);
+
     // 指针/点击/滚轮/键盘处理器集合：按需分配 —— 未绑定任何事件的元素不占这部分内存。
     // tunnel* 为隧道阶段专用槽，与冒泡槽互不覆盖（同一元素可两阶段各绑一个）。
     struct Handlers {
@@ -504,6 +553,16 @@ private:
     static void BindMember(std::function<void(E&)>& slot, Ctx* ctx, void (Ctx::*fn)(E&)) {
         slot = [ctx, fn](E& e) { (ctx->*fn)(e); };
     }
+
+    // 自定义事件监听器（按 type 分桶；无监听的元素零开销）
+    struct CustomListener {
+        uint64_t id = 0;
+        bool capture = false;
+        std::function<void(CustomEvent&)> fn;
+    };
+    std::unique_ptr<std::unordered_map<String, std::vector<CustomListener>>> customListeners_;
+    uint64_t nextListenerId_ = 1;
+    void InvokeCustomListeners(CustomEvent& ev);
 
     std::unique_ptr<Handlers> handlers_;
 

@@ -15,6 +15,8 @@
 | `OnPointerDown`  | `PointerEvent` | 隧道 / 冒泡 | **左/右/中键**都派发；按键看 `ev.button`   |
 | `OnPointerUp`    | `PointerEvent` | 隧道 / 冒泡 | 同上                                       |
 | `OnWheel`        | `WheelEvent`   | 隧道 / 冒泡 | 置 `handled` 可阻止滚动容器消费            |
+| `OnDropFiles`    | `DropFilesEvent` | 隧道 / 冒泡 | 拖入文件；置 `handled` 表示接受            |
+| `OnDragOverFiles`| `DragOverFilesEvent` | 隧道 / 冒泡 | 拖拽悬停；置 `handled` 表示可放            |
 | `OnKeyDown`      | `KeyEvent`     | 隧道 / 冒泡 | 从**焦点元素**出发                         |
 | `OnKeyUp`        | `KeyEvent`     | 隧道 / 冒泡 | 同上                                       |
 | `OnChar`         | `KeyEvent`     | 隧道 / 冒泡 | 字符输入（IME 提交也走这里）               |
@@ -49,7 +51,7 @@ btn->OnClick(&OnButtonC);
 
 ### 1.3 事件对象
 
-三个**扁平的**结构体（没有公共基类，也没有 `timestamp`）：
+五个**扁平的**内建事件结构体（没有公共基类，也没有 `timestamp`）；另有独立的 `CustomEvent`（§9.1）：
 
 ```cpp
 struct PointerEvent {
@@ -76,9 +78,25 @@ struct KeyEvent {
     bool          alt = false;
     bool          handled = false;
 };
+
+struct DropFilesEvent {
+    dui::Element* source = nullptr;
+    dui::Vec2     pos{};
+    std::vector<dui::String> paths;    // 拖入的文件路径
+    bool          handled = false;     // 置 true 表示消费
+};
+
+struct DragOverFilesEvent {
+    dui::Element* source = nullptr;
+    dui::Vec2     pos{};
+    std::vector<dui::String> paths;
+    bool          enter = false;       // true = DragEnter，false = DragOver
+    bool          handled = false;     // 置 true → DROPEFFECT_COPY，否则 NONE
+};
 ```
 
 - `source` 是**当前收到事件的元素**，不是原始命中目标 —— 点击落在子元素上时，冒泡到祖先的处理器里 `source` 就是那个祖先。
+- 拖放事件的 `paths` 与坐标口径见 [Window.md](./Window.md) §6.2。
 - `PointerEvent` **没有** `buttons` / `modifiers` 掩码；`KeyEvent` 的修饰键是三个独立 `bool`。
 - `Click` 复用 `PointerEvent`（`button` 恒为 `Left`，`pos` = 抬起处坐标）。
 
@@ -366,7 +384,7 @@ slider->OnPointerUp([this, slider](dui::PointerEvent&) {
 
 ## 8. 控件语义事件与窗口钩子
 
-元素级的 10 个绑定之外，还有各自的"语义事件"：
+元素级绑定之外，还有各自的"语义事件"：
 
 | 对象                   | API                                                                          | 说明                                                                                     |
 | ---------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
@@ -391,7 +409,146 @@ panel->OnPointerUp([this](dui::PointerEvent& ev) {
 
 ---
 
-## 9. 已知限制与不支持项
+## 9. 组件间通信与自定义事件
+
+两个自定义组件之间通信有两类做法：**内建 `CustomEvent`**（Web `CustomEvent` 语义，按事件名路由、支持冒泡与解绑，见 §9.1）适合"广播 / 通知 / 祖先监听子孙"；**直接通信**（持有指针或回调注入）适合固定关系的点对点调用，见 §9.2 起。
+
+### 9.1 内建自定义事件 `CustomEvent` ★
+
+框架自带 Web `CustomEvent` 语义的实现：`dui::CustomEvent` + `Element::AddEventListener` / `RemoveEventListener` / `DispatchEvent`。按 `String` 事件名路由，`std::any detail` 携带任意负载，沿元素树走**捕获 → 目标 → 冒泡**三阶段。
+
+```cpp
+// 发送方：在任意元素上派发
+dui::CustomEvent ev;
+ev.type = L"item-selected";
+ev.detail = 42;                     // 任意类型，整数 / 结构体 / 指针均可
+ev.bubbles = true;
+ev.cancelable = true;
+bool notPrevented = sender->DispatchEvent(ev);   // 返回 !defaultPrevented
+
+// 接收方：监听（可在任意元素，含祖先）
+uint64_t id = card->AddEventListener(L"item-selected", [](dui::CustomEvent& e) {
+    int value = std::any_cast<int>(e.detail);     // 取负载
+    dui::Element* from = e.target;                // 派发目标（sender）
+    dui::Element* here = e.source;                // 当前宿主（= DOM currentTarget）
+});
+card->RemoveEventListener(id);                    // 精确解绑
+```
+
+**事件对象字段**（对齐 DOM Event）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `type` | 事件名（`String`），`AddEventListener` 按它匹配 |
+| `detail` | 任意负载（`std::any`），`std::any_cast<T>()` 取；类型不符抛异常（框架无异常约定，取前自己保证类型） |
+| `target` | 派发目标（`DispatchEvent` 的调用元素），全程不变；未手填时框架自动设为派发者 |
+| `source` | 当前处理器宿主（DOM `currentTarget`），路由中逐站变化 |
+| `bubbles` | `false` 时跳过冒泡阶段（捕获与目标阶段仍走），默认 `true` |
+| `cancelable` | `true` 时 `PreventDefault()` 才生效，默认 `false` |
+| `handled` | `StopPropagation()` 置位：阻止进入后续节点，但**同节点其余监听器仍执行** |
+| `defaultPrevented` | `PreventDefault()` 的结果；`DispatchEvent` 返回其反值 |
+| `immediateStop` | `StopImmediatePropagation()` 置位：连同同节点后续监听器一起阻止 |
+| `eventPhase` | `1` 捕获 / `2` 目标 / `3` 冒泡 / `0` 派发前或派发后 |
+
+**三阶段路由**（与内建事件的隧道 / 冒泡同构，但多了独立的目标阶段）：
+
+```
+[捕获] 根 ──▶ … ──▶ 目标的父      只触发 capture = true 的监听器
+[目标] 目标元素                    capture / bubble 监听器都按注册顺序触发
+[冒泡] 目标的父 ──▶ … ──▶ 根       只触发 capture = false 的监听器；bubbles = false 时跳过
+```
+
+- `AddEventListener(type, fn, capture = false)`：`capture = true` 只在捕获阶段收到，默认在目标 / 冒泡阶段收。同一 type 可绑**多个**监听器（与固定 `OnXxx` 单槽不同）。也有 `AddEventListener(type, ctx, &Ctx::fn, capture)` 成员函数重载。
+- 返回 `uint64_t id`（>0）供 `RemoveEventListener(id)` 精确解绑；**派发中解绑安全**（每站先把监听器拷快照再调用）。
+- 监听器里 `StopPropagation()` 不截断同节点其余监听器（对齐 DOM）；要截断用 `StopImmediatePropagation()`。
+- 目标元素自身无监听器时，`DispatchEvent` 仍会沿祖先链路由 —— 适合祖先统一监听子孙事件（无需知道具体哪个子项，`target` 就是来源）。
+- `std::any` 取负载前须保证类型正确（`std::any_cast` 类型不符会抛异常）。
+
+下面的直接通信手段在**点对点、关系固定**时依然更简单，按需选用：
+
+### 9.1 直接持有指针（最常用）
+
+建组件时把对方指针存成成员，在事件处理器里直接调用。`Samples/Event` 的日志面板就是这么做的：
+
+```cpp
+class MyPage : public dui::Window {
+    dui::Text* log_ = nullptr;
+    void OnCreate() override {
+        log_ = Root()->AddChild<dui::Text>(/* ... */);
+        auto* btn = Root()->AddChild<dui::Panel>(/* ... */);
+        btn->OnClick([this](dui::PointerEvent&) {
+            log_->SetText(L"按钮被点了");   // 组件 A → 组件 B
+        });
+    }
+};
+```
+
+适合父子 / 同窗内的固定关系；指针生命周期自负（存成窗口成员最简单）。
+
+### 9.2 `std::function` 回调注入（可复用控件推荐）
+
+控件暴露一个回调槽，外部决定接到谁身上 —— 框架自己的 `TextBox::OnTextChanged` / `OnSubmit`、`AnimationHandle::OnFinished` 就是这个形态。`Samples/CustomCtrl` 的滑块：
+
+```cpp
+class Slider : public dui::Panel {
+public:
+    void OnChanged(std::function<void(float)> f) { onChanged_ = std::move(f); }
+    // 内部值变化时：onChanged_(value_);
+private:
+    std::function<void(float)> onChanged_;
+};
+
+slider->OnChanged([label](float v) { label->SetText(std::to_wstring(v)); });
+```
+
+**单槽赋值语义**：同一事件后绑覆盖先绑；没有多订阅者，也没有解绑 API（元素销毁时处理器一并析构）。与 `Element::OnXxx` 的规则一致。
+
+### 9.3 冒泡 + `handled`（祖先监听子孙）
+
+祖先能在隧道 / 冒泡阶段收到子孙的内建事件并拦截（见 §4），适合"父容器统一管理子项交互"：
+
+```cpp
+card->OnPointerDown([](dui::PointerEvent& ev) {
+    ev.handled = true;   // 子孙后续的冒泡阶段不再收到
+}, dui::Phase::Tunnel);
+```
+
+注意 `ev.source` 是**当前收到事件的元素**（冒泡到祖先时就是祖先），不是原始命中项。要区分具体哪个子项，用 9.1 / 9.2 显式传。
+
+### 9.4 手工遍历元素树
+
+框架**没有** `FindByName` / `FindById` / `GetElementById`，`Element` 也没有 `Name` / `Id` 字段。只有 `Root()`、`Element::Parent()` / `Children()`；跨组件定位要自己按业务标记递归找。组件之间大量互找时，更简单的做法是在建窗时把指针存成成员（9.1）。
+
+### 9.5 跨线程回投（`PostUi`）
+
+后台线程不能直接碰 UI。取目标元素的 `Lifetime` 令牌（**必须在 UI 线程取**），用 `PostUi` 回投；令牌失效后回调自动丢弃：
+
+```cpp
+auto life = target->Lifetime();          // UI 线程
+dui::PostUi(life, [target] { target->SetText(L"后台任务完成"); });
+```
+
+无令牌的裸投是 `dui::Dispatcher::Ui()->Post(fn)`，自行保证执行时元素仍存活。详见 [Async.md](./Async.md)。
+
+### 9.6 跨线程派发
+
+`DispatchEvent` 必须在 UI 线程调用（它触碰元素树）。后台线程要发自定义事件，用 `PostUi` 回投，带 `Lifetime` 令牌防元素销毁后回调悬空：
+
+```cpp
+auto life = target->Lifetime();          // UI 线程取
+dui::PostUi(life, [target, life] {
+    dui::CustomEvent ev;
+    ev.type = L"job-done";
+    ev.detail = result;
+    target->DispatchEvent(ev);
+});
+```
+
+详见 [Async.md](./Async.md)。
+
+---
+
+## 10. 已知限制与不支持项
 
 1. **无双击事件**：只有 `OnClick`；`Text` 的双击选词 / 三击选段与 `TextBox` 的双击选词 / 三击选行都是控件**内部**行为，不对外派发双击事件。右键有独立的按下 / 抬起事件（按 `ev.button` 区分）。
 2. **无 `PointerCancel`、无触摸 / 触控笔**：平台层转发左键 / 右键 / 中键的按下与抬起。
@@ -403,7 +560,8 @@ panel->OnPointerUp([this](dui::PointerEvent& ev) {
 8. **处理器上下文是裸指针**，生命周期自负 —— 没有 weak token / `Lifetime` 托管。
 9. **绑定不能链式**（返回 `void`）；同一元素同一阶段的同一事件重复绑定 → 后者覆盖前者。
 10. **无防抖 / 节流**：`OnPointerMove` 之类高频事件需自行限流。
-11. **事件对象不可扩展**：三个扁平结构体，没有基类、没有 `timestamp`、没有 `buttons` / `modifiers` 掩码。
+11. **内建事件对象不可扩展**：五个扁平结构体（`PointerEvent` / `WheelEvent` / `KeyEvent` / `DropFilesEvent` / `DragOverFilesEvent`），没有基类、没有 `timestamp`、没有 `buttons` / `modifiers` 掩码；要自定义负载用 `CustomEvent`（§9.1）。
 12. **`Enter` / `Leave` 的 `pos` 是新命中元素的坐标**（`leave` 也用新坐标）。
 13. **`Scroller` 没有自己的事件 API**（滚动进度、滚动结束都无通知）；`RichEditor` 也没有内容变更事件。
 14. **指针形态（`cursor`）不是事件**：由命中链就近者胜决定，不走事件系统。
+15. **自定义事件不支持跨窗口**：`CustomEvent` 沿元素树路由，只能在单个窗口的树内传播；跨窗口 / 全局广播需应用层自行桥接（见 §9 的回调注入或 `PostUi`）。`std::any` 取负载前须保证类型正确（`any_cast` 类型不符会抛异常）。

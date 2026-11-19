@@ -29,6 +29,8 @@ LPCWSTR ToWinCursor(dui::Cursor c) {
     case dui::Cursor::Crosshair:  return IDC_CROSS;
     case dui::Cursor::Move:       return IDC_SIZEALL;
     case dui::Cursor::SizeAll:    return IDC_SIZEALL;
+    case dui::Cursor::SizeWE:     return IDC_SIZEWE;
+    case dui::Cursor::SizeNS:     return IDC_SIZENS;
     case dui::Cursor::NotAllowed: return IDC_NO;
     case dui::Cursor::Help:       return IDC_HELP;
     default:                      return IDC_ARROW;

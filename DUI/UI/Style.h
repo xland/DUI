@@ -175,7 +175,7 @@ enum class Easing : uint8_t { Linear, EaseIn, EaseOut, EaseInOut };   // AnimCon
 
 // 鼠标光标形态（语义同 CSS 的 cursor；仅系统内置形态）
 enum class Cursor : uint8_t {
-    Arrow, IBeam, Hand, Wait, Crosshair, Move, SizeAll, NotAllowed, Help,
+    Arrow, IBeam, Hand, Wait, Crosshair, Move, SizeAll, SizeWE, SizeNS, NotAllowed, Help,
 };
 
 // 样式值：prop + 主值（f/u）+ Thickness 扩展槽。

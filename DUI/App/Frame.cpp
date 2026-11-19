@@ -549,7 +549,9 @@ void Application::RenderFrame(Window& window, const NativeWindow& native,
     collector.Finish();
 
     for (text::AtlasPage& page : atlas.Pages()) {
-        if (page.dirty) {
+        // dirty 是进程级图集标志，对所有 Device 共享：新窗口 / 重建的 Device 首次
+        // 渲染时页已非 dirty（字形命中缓存未重新光栅），但本设备尚无纹理 → 必传。
+        if (page.dirty || !device.HasGlyphPage(page.id)) {
             device.UploadGlyphPage(page.id, page.w, page.h, page.bits.data());
             page.dirty = false;
         }

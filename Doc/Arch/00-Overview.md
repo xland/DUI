@@ -103,6 +103,7 @@ Samples/                 示例工程（每个示例一个子目录 = 一个工�
   CustomFrame/           自定义窗口边框与标题栏演示（WindowOptions::frameless + DWM 阴影 + 拖动移动 + 拖边框缩放 + 矢量 Icon 标题栏按钮）
   CircleWindow/          圆形半透明窗口（WindowOptions::transparent + DirectComposition / SetWindowRgn 圆裁剪 / 全窗口 HTCAPTION 拖动 / Canvas 细线圆边框）
   Menu/                  系统原生弹出菜单（dui::Menu 链式构建 / 分隔条 / 多级子菜单 / 多个复选勾 / 右键 PointerEvent::button 触发）
+  Tray/                  系统托盘示例（Tray + SetQuitOnLastWindowClosed(false)：关窗不退出 / 左键重开窗 / 右键菜单退出）
   CustomCtrl/            自定义控件演示（派生 Element：自然尺寸 / OnPaint 自绘 / 指针拖拽 / 状态变体 / 变更回调）
   Animation/             动画示例集（属性补间 / 缓动 / 句柄 / 位置·旋转·缩放 / 布局尺寸对照 / 组合动画）
   Async/                 异步示例（协程 Background/Foreground：子线程跑任务，过程中切回 UI 更新界面）

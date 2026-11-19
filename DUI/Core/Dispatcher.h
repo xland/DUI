@@ -50,8 +50,11 @@ public:
     void Post(std::function<void()> fn);
     // 仅 UI 线程调用：执行当前积压任务（执行期间新 Post 的进下一轮）
     void Drain();
-    // Application::Run 安装唤醒目标（跨线程 Post 后 PostMessage 唤醒消息泵）
+    // Application::Run 安装唤醒目标窗口：有窗口时 PostMessage 唤醒（最稳）。
     void SetWakeTarget(HWND hwnd, UINT wakeMessage);
+    // 无窗口阶段的唤醒目标线程：hwnd 为空时改走 PostThreadMessage。
+    // 窗口全部销毁且退出策略为"不退出"时由 Application 设置。
+    void SetWakeThread(DWORD threadId) noexcept;
 
     static Dispatcher* Ui();           // 进程级 UI Dispatcher（未安装返回 nullptr）
     static void SetUi(Dispatcher* d);  // UI 线程安装/卸载
@@ -61,6 +64,7 @@ private:
     std::vector<std::function<void()>> queue;
     HWND hwnd = nullptr;
     UINT wakeMsg = 0;
+    DWORD wakeThread = 0;
 };
 
 }  // namespace dui

@@ -29,6 +29,7 @@
 #include "UI/RichDocJson.h"
 #include "App/Dialog.h"
 #include "App/Menu.h"
+#include "App/Tray.h"
 #include "App/App.h"
 
 namespace dui {

@@ -48,6 +48,10 @@ public:
     // 字形图集页（R8）：创建或全量更新；页被 LRU 整页释放后调 Release
     void UploadGlyphPage(uint32_t id, uint32_t w, uint32_t h, const uint8_t* bits);
     void ReleaseGlyphPage(uint32_t id);
+    // 本设备是否已持有该页 / 图像（进程级图集的 dirty 标志对所有设备共享，
+    // 新设备的首次渲染须靠它判定"缺资源"并全量补传，见 Frame.cpp / TextureStore::Sync）
+    bool HasGlyphPage(uint32_t id) const noexcept;
+    bool HasImage(uint32_t id) const noexcept;
 
     // 图像纹理（BGRA8）：创建或全量更新；控件释放纹理后由 TextureStore 调 Release
     void UploadImage(uint32_t id, uint32_t w, uint32_t h, const uint8_t* bgra);

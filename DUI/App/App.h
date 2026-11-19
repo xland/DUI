@@ -16,7 +16,10 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <unordered_map>
+#include <vector>
 
 #include <windows.h>      // 公共 API 直接使用 HWND 等 Win32 类型
 
@@ -35,6 +38,7 @@
 namespace dui {
 
 class NativeWindow;          // App/Window.h：App/Frame.cpp 组装层使用（避免依赖内部头）
+class Application;           // 下方定义；Window::App() 返回指针，此处只需前置声明
 namespace graphics {
 class Device;
 }
@@ -113,6 +117,10 @@ public:
     // 原生窗口句柄：OnCreate 起有效（此时 HWND 已建、窗口尚未显示）。
     HWND NativeHandle() const noexcept;
 
+    // 本窗口所属的 Application（AddWindow 起有效，堆对象地址稳定）。
+    // 用途：OnClosing 里查 WindowCount() 判断是不是最后一个窗口再决定是否弹确认框。
+    Application* App() noexcept { return app_; }
+
     // ---- 系统原生弹出菜单（App/Menu.h）------------------------------------
     // 同步模态：菜单弹出期间框架主消息循环挂起，返回后执行选中项回调。
     // 不传位置 → 弹在当前鼠标位置；posDip 为客户区 DIP 坐标。
@@ -161,6 +169,7 @@ private:
     WindowOptions options_;
     float scale_ = 1.f;
     void* native_ = nullptr;           // NativeWindow*（App 层窗口壳对象）
+    Application* app_ = nullptr;       // 所属 Application（AddWindow 设置）
     std::unique_ptr<Panel> root_;
     uintptr_t tickTimer_ = 0;          // UI 统一节拍定时器（0 = 未启动）
     unsigned  tickPeriodMs_ = 0;       // 当前周期（变化时才重设 SetTimer）
@@ -182,21 +191,66 @@ public:
     Application();
     ~Application();
 
-    // 建 HWND → OnCreate → Show → 消息循环 → 退出码；窗口创建失败返回非 0，
+    // 单窗口便捷入口（兼容既有代码）：AddWindow(window) + Run() 的语法糖。
+    // 建 HWND → OnCreate → Show → 消息循环 → 退出码；创建失败返回非 0，
     // 原因经 LastError() 查询（12-Windowing / App 契约）。
     int Run(Window& window);
+
+    // ---- 多窗口（M5.77）----
+    // 注册窗口：建 HWND + 独立 Device + 宿主，并立即 OnCreate / Show。
+    // 成功后由随后的 Run() 统一驱动；失败返回 false（原因见 LastError）。
+    // 注意：一个进程应当只有一个 Application 实例（Dispatcher::Ui() 是进程级）。
+    bool AddWindow(Window& window);
+    // 统一消息循环：驱动所有已注册窗口；最后一个窗口销毁时退出。
+    int  Run();
+    // 已注册且尚未销毁的窗口数
+    size_t WindowCount() const noexcept;
+
+    // ---- 退出策略（M5.78）----
+    // 最后一个窗口销毁时是否自动结束消息循环。默认 true（原行为）。
+    //   true  → 最后一个窗口关闭 → 自动退出，Run() 返回。
+    //   false → 最后一个窗口关闭后 Run() 仍继续（窗口数为 0），进程存活：
+    //           用于系统托盘常驻 / 无窗口后台阶段；业务随后调 Quit() 退出。
+    // 注意：即使为 false，业务仍需在某个时刻调 Quit()，否则 Run() 永不返回。
+    void SetQuitOnLastWindowClosed(bool on) noexcept { quitOnLastWindowClosed_ = on; }
+    bool QuitOnLastWindowClosed() const noexcept { return quitOnLastWindowClosed_; }
+
+    // 请求结束消息循环，exitCode 成为 Run() 的返回值（默认 0）。
+    // 可从任意线程调用（线程安全地投递 WM_QUIT）；无窗口阶段同样有效。
+    void Quit(int exitCode = 0) noexcept;
+
+    // ---- 应用级定时器（M5.78，窗口无关）----
+    // 与窗口无关：全部窗口销毁后仍周期触发。回调在 UI 线程消息循环里执行。
+    // ms 为周期（夹紧到 >=1），返回 id（>0）传给 KillTimer 取消；
+    // 同 id 重复设置会先取消旧的。fn 不要做重活（与 OnTimer 同属 UI 线程节拍）。
+    unsigned SetTimer(unsigned ms, std::function<void()> fn);
+    void     KillTimer(unsigned id) noexcept;
 
     const String& LastError() const noexcept { return lastError_; }
 
 private:
-    friend class WindowHostAdapter;      // App.cpp：拖拽尺寸变化的就地渲染（OnResized）
+    friend class WindowHostAdapter;      // App.cpp：宿主回调多窗口生命周期
+
+    struct WindowRecord;                 // 定义在 App.cpp（含 Device / host，不进公共头）
 
     // 帧路径（App/Frame.cpp）：尺寸同步 → 失效检查 → 重排 → 收集 → 光栅 → Present。
     // static：不依赖实例状态，供 Run 主循环与 OnResized 就地渲染共用
     static void RenderFrame(Window& window, const NativeWindow& native, graphics::Device& device);
 
+    // WM_DESTROY：标记记录待清理，返回 true 表示"最后一个窗口且策略允许 → 退出"
+    bool OnWindowDestroyed(WindowHostAdapter* host);
+
+    // 应用定时器：由 ::SetTimer(nullptr, id, ms, ...) 投递的 WM_TIMER 触发，
+    // 在 UI 线程主循环里按 id 找到回调执行（见 App.cpp）。
+    void DispatchAppTimer(unsigned id);
+
+    std::vector<std::unique_ptr<WindowRecord>> windows_;
     Dispatcher dispatcher_;   // UI 任务队列（07-Threading：[调度] 步排空）
     String lastError_;
+
+    bool quitOnLastWindowClosed_ = true;
+    // key = ::SetTimer(nullptr,...) 返回的系统 timer id（WM_TIMER 的 wParam）。
+    std::unordered_map<unsigned, std::function<void()>> timers_;
 };
 
 }  // namespace dui

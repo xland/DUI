@@ -1113,6 +1113,16 @@ ID3D11ShaderResourceView* Device::FindGlyphSrv(uint32_t id) {
     return nullptr;
 }
 
+bool Device::HasGlyphPage(uint32_t id) const noexcept {
+    for (const GlyphPageTex& t : pages_) if (t.id == id) return true;
+    return false;
+}
+
+bool Device::HasImage(uint32_t id) const noexcept {
+    for (const ImageTex& t : images_) if (t.id == id) return true;
+    return false;
+}
+
 void Device::UploadGlyphPage(uint32_t id, uint32_t w, uint32_t h, const uint8_t* bits) {
     GlyphPageTex* pt = nullptr;
     for (GlyphPageTex& t : pages_) {
@@ -1257,7 +1267,9 @@ void TextureStore::Sync(Device& dev) {
             it = textures_.erase(it);
             continue;
         }
-        if ((*it)->dirty) {
+        // 与字形页同理：dirty 是进程级共享标志，新 Device（新窗口）首次渲染时
+        // 纹理已非 dirty，但本设备尚无这份纹理 → 必须补传。
+        if ((*it)->dirty || !dev.HasImage((*it)->id)) {
             dev.UploadImage((*it)->id, (*it)->width, (*it)->height, (*it)->pixels.data());
             (*it)->dirty = false;
         }

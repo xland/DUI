@@ -24,6 +24,9 @@ public:
     virtual void OnNativeCreated(HWND hwnd, float initialScale) = 0;
     // 返回 false 阻止关闭
     virtual bool OnCloseRequest() = 0;
+    // 窗口已销毁（WM_DESTROY）：返回 true → 平台层 PostQuitMessage 退出应用。
+    // 单窗口宿主返回 true（原行为）；多窗口宿主在还有窗口存活时返回 false。
+    virtual bool OnWindowDestroyed() { return true; }
     // 12-Windowing §4：newScale = HIWORD(wParam)/96；suggestedDip 为系统建议
     // 矩形（整窗物理坐标）按 newScale 换算的 DIP 值；clientDipChanged =
     // 客户区 DIP 尺寸是否变化（§4-5 分级失效：不变只重绘，不重排）
@@ -112,6 +115,10 @@ public:
     Vec2 ClientSizeDip() const;     // 客户区 DIP（12-Windowing §3）
     // 已最小化（IsIconic）：客户区尺寸为 0 → 不能进帧（App 层据此停表/阻塞）
     bool IsMinimized() const noexcept;
+
+    // 应用退出时先摘掉宿主再析构：否则 DestroyWindow 同步发出的 WM_DESTROY
+    // 会回调已析构的宿主（多窗口 Application 的记录清理路径）
+    void DetachHost() noexcept { host_ = nullptr; }
 
 private:
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);

@@ -226,6 +226,8 @@ float alpha = 1.0f - smoothstep(-w, w, d);
 
 设备丢失（`DXGI_ERROR_DEVICE_REMOVED`）：全量重建设备与常驻资源，然后整窗全量失效重绘 —— 保留模式 + "按需全量光栅"让这条恢复路径天然简单。
 
+**进程级缓存 × 每窗口 Device 的同步契约（M5.79）**：字形图集与图像纹理仓库是进程级单例，但 GPU 纹理挂在**每个窗口各自的 `Device`** 上。缓存的 `dirty` 标志是全局的（首个上传者就清掉），不能代表"某个 Device 是否已上传"——新窗口 / 重建窗口的 Device 首次渲染时，字形/图像命中缓存不再光栅、页非 dirty，若只看 dirty 就永远拿不到纹理，表现为**第二个窗口或重建窗口"有背景无文字/无图"**（`Render` 里 `FindGlyphSrv` 返回 null 直接 `continue`）。故上传条件是 `dirty || !device.HasGlyphPage(id)`（图像同理 `HasImage`）：新 Device 首帧把已缓存资源全量补传。`FreedPages` 的 `ReleaseGlyphPage` 只在当前渲染帧的 device 上执行，其它 device 残留旧页仅占显存（页 id 不复用），不影响正确性。
+
 ---
 
 ## 8. 分期

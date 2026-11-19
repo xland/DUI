@@ -37,6 +37,54 @@ public:
 
 圆形窗口叠在 WIN-1 上面：圆**外**根本不属于这个窗口（点击穿过去），圆**内**半透明，能看见下面的文字。
 
+### 1.3 多窗口
+
+一个进程跑多个窗口：一个 `Application` 注册多个 `Window`，统一驱动，**关掉一个不影响其它窗口，最后一个关闭才退出**。
+
+```cpp
+int WINAPI wWinMain(...) {
+    dui::Application app;
+    MainWindow  mainWnd;
+    SettingsWnd settingsWnd;
+
+    if (!app.AddWindow(mainWnd))    return 1;   // 失败原因查 app.LastError()
+    if (!app.AddWindow(settingsWnd)) return 2;  // 各自 OnCreate / 独立输入框 / 独立 DPI
+    return app.Run();                            // 一起跑；关掉 mainWnd，settingsWnd 仍在
+}
+```
+
+要点：
+
+- **只建一个 `Application`**（焦点 / 任务队列是进程级全局的）；窗口对象要活到 `Run()` 返回（声明在 `wWinMain` 里即可）。
+- 每个窗口独立 `OnCreate` 搭界面、独立事件与焦点切换、可各在不同 DPI 显示器。
+- 单窗口场景仍可用老写法 `app.Run(window)`（等价于 `AddWindow` + `Run`）。
+- 失活切到本进程另一个窗口时，焦点会正确转到新窗口，不会被旧窗口的失活处理清掉。
+
+### 1.4 关窗后是否退出
+
+系统托盘图标（`Tray`）的完整用法见 [Tray.md](Tray.md)。
+
+默认：最后一个窗口关闭 → 应用退出（点关闭 = 退出）。这个行为**可以改**：
+
+```cpp
+dui::Application app;
+app.SetQuitOnLastWindowClosed(false);   // 关掉所有窗口后进程继续
+app.AddWindow(mainWnd);
+return app.Run();                        // 不再随窗口关闭而返回
+```
+
+设成 `false` 后，业务要自己调 `app.Quit(code)` 结束（否则 `Run()` 不返回）；`code` 成为 `Run()` 的返回值，任意线程都能调。
+
+三种常见做法：
+
+| 想要的效果 | 怎么做 |
+| --- | --- |
+| 关窗口前弹确认 | 重写窗口的 `OnClosing()`：需要拦截就返回 `false`。`Confirm(L"确定退出？")` 可直接弹框；判断是不是最后一个窗口用 `App()->WindowCount() == 1`。窗口本身该关就返回 `true`。 |
+| 托盘常驻（关窗藏进托盘、点图标唤回） | `SetQuitOnLastWindowClosed(false)` + `Tray`。完整写法见 [Tray.md](Tray.md)。 |
+| 无窗口后台阶段（窗口全毁、继续跑任务、稍后退出） | `SetQuitOnLastWindowClosed(false)` + `app.SetTimer(ms, fn)` / 后台任务 + `app.Quit()`。 |
+
+`app.SetTimer(ms, fn)` 是**窗口无关**的定时器（所有窗口关掉也照样触发，回调在 UI 线程），用 `app.KillTimer(id)` 取消；它与窗口内动画/光标闪烁的节拍互不相干。托盘图标的完整示例（含图标设置、回调、右键菜单、重开窗口）见 [Tray.md](Tray.md)。
+
 ---
 
 ## 2. 无边框窗口：框架自动做的事

@@ -280,7 +280,18 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
-            PostQuitMessage(0);
+            // 窗口已进入销毁：立刻把 self 的句柄副本置空。否则 ~NativeWindow 会拿
+            // 这个悬空值二次 DestroyWindow；而 HWND 值会被随后新建的窗口复用，
+            // 二次销毁会误伤新窗口（关窗后重开时新窗口 device 被连带析构 → 渲染
+            // 访问悬空 dev_ 崩溃）。宿主回调不读本窗口 hwnd_，先置空安全。
+            self->hwnd_ = nullptr;
+            // 多窗口：最后一个窗口销毁才退出（由宿主决定）。
+            // host_ 为空 = 应用正在退出、宿主已摘除 → 不回调也不投递退出消息
+            if (self->host_ != nullptr && self->host_->OnWindowDestroyed()) PostQuitMessage(0);
+            return 0;
+        case WM_NCDESTROY:
+            // 最后一条消息：清掉 USERDATA，之后任何残留/复用都不会命中已析构 self
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             return 0;
         case WM_PAINT:
             ValidateRect(hwnd, nullptr);   // 绘制由渲染循环按需全量完成（10-Rendering D2）

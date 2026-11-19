@@ -65,13 +65,22 @@ void Dispatcher::SetWakeTarget(HWND target, UINT wakeMessage) {
     wakeMsg = wakeMessage;
 }
 
+void Dispatcher::SetWakeThread(DWORD threadId) noexcept {
+    wakeThread = threadId;
+}
+
 void Dispatcher::Post(std::function<void()> fn) {
     {
         const std::lock_guard<std::mutex> lock(mtx);
         queue.push_back(std::move(fn));
     }
-    // 唤醒消息泵（消息合并由泵天然完成；窗口已毁时 Post 失败，任务留待下轮）
-    if (hwnd != nullptr) PostMessageW(hwnd, wakeMsg, 0, 0);
+    // 唤醒消息泵（消息合并由泵天然完成）：有窗口投窗口，无窗口（全部销毁、
+    // 退出策略为不退出）投线程。两条都失败时任务仍留在队列，下轮 Drain 取走。
+    if (hwnd != nullptr) {
+        PostMessageW(hwnd, wakeMsg, 0, 0);
+    } else if (wakeThread != 0) {
+        PostThreadMessageW(wakeThread, wakeMsg, 0, 0);
+    }
 }
 
 void Dispatcher::Drain() {

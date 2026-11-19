@@ -250,6 +250,119 @@ protected:
 
 ---
 
+### 6.3 多窗口（M5.77）
+
+一个进程只有**一个** `Application`，它管理**多个** `Window`：每个窗口有独立的
+`Device` / `NativeWindow` / 宿主 / 帧标记，可各在不同 DPI 显示器（各自 `Scale()`）。
+
+```cpp
+namespace dui {
+class Application {
+public:
+    int  Run(Window& window);            // 兼容单窗口：AddWindow(window) + Run()
+    bool AddWindow(Window& window);      // 注册 + 建 HWND/Device + OnCreate + Show
+    int  Run();                          // 统一消息循环，最后一个窗口销毁才退出
+    size_t WindowCount() const noexcept;
+    const String& LastError() const noexcept;
+};
+}
+```
+
+一个 `Application` 管多窗口，共享一个进程级 `Dispatcher`（`g_focus` / `g_capture`
+也是进程级全局唯一）：
+
+```cpp
+dui::Application app;
+MainWindow mainWnd;
+ToolWindow toolWnd;
+if (!app.AddWindow(mainWnd)) return 1;   // 失败查 app.LastError()
+if (!app.AddWindow(toolWnd)) return 2;
+return app.Run();                         // 两个窗口一起驱动
+```
+
+实现要点与约束（改动集中在 `App/App.cpp` 的 `WindowRecord` 与 `Run()`）：
+
+1. **统一消息循环**：`PeekMessageW(nullptr)` 收所有窗口消息，按 HWND 的
+   `GWLP_USERDATA` 路由到各自宿主 —— 天然多实例隔离，不需要按窗口分派消息。
+   每轮先清上一轮标记销毁的记录 → `Drain()` → 逐窗口失活处理 / 节拍 / 按需渲染；
+   全部无帧时 `WaitMessage()`（多窗口任一有消息即被唤醒）。
+2. **最后一个窗口才退出**：`WM_DESTROY` 交给宿主 `OnWindowDestroyed()` 判断 ——
+   还有存活窗口时返回 false（不 `PostQuitMessage`）；销毁只标记 `closed`，在宿主
+   回调栈里直接析构宿主会 use-after-free，故留到下一轮循环开头统一 erase。
+   `WindowRecord` 析构体先 `DetachHost()`，避免 `DestroyWindow` 同步派发的
+   `WM_DESTROY` 回调已析构的宿主。
+3. **焦点 / 捕获按归属清理**（易错）：切到本进程另一窗口时，旧窗口失活与新窗口
+   点击设焦点在同一批消息里；若失活处理无差别 `SetFocus(nullptr)`，会把新窗口刚设
+   的焦点一并清掉。故失活时只清**仍属于该失活窗口**的焦点 / 捕获（沿 `Parent`
+   链走到窗口根判归属），切到别的应用（焦点已不在任何本进程窗口）的行为不变。
+4. **唤醒目标随窗口漂移**：`Dispatcher` 的 wake target 是单个 HWND，主窗口关闭后
+   自动切到下一个存活窗口，后台 `PostUi` 仍能把泵唤醒。
+5. **窗口对象生命周期**：`AddWindow` 只存 `Window*`，窗口对象须活到 `Run()` 结束
+   （通常声明在 `wWinMain` 栈上，与 `app` 同作用域）。
+
+限制：一个进程只有一个 `Application`（`Dispatcher::Ui()` 进程级），不要创建多个。
+
+---
+
+### 6.4 退出策略与托盘常驻（M5.78）
+
+**面向使用者的托盘指南见 [Tray.md](../Tray.md)**（图标设置 / 回调 / 右键菜单 / 重开窗口）；本节记实现契约。
+
+"最后一个窗口关闭 → 退出"是**可配置**的，默认行为不变：
+
+```cpp
+class Application {
+public:
+    void SetQuitOnLastWindowClosed(bool on) noexcept;   // 默认 true
+    bool QuitOnLastWindowClosed() const noexcept;
+    void Quit(int exitCode = 0) noexcept;               // 任意线程可调，exitCode = Run() 返回值
+
+    unsigned SetTimer(unsigned ms, std::function<void()> fn);  // 窗口无关定时器
+    void     KillTimer(unsigned id) noexcept;
+};
+class Window { public: Application* App() noexcept; };  // OnClosing 里查 WindowCount()
+```
+
+三个典型场景：
+
+1. **关前确认/拦截**（用已有 `OnClosing`，零框架改动）：`OnClosing()` 返回 false 阻止该窗口关闭；
+   在窗口子类里弹 `Confirm()`，需要区分"是不是最后一个窗口"时用 `App()->WindowCount()`。
+   注意 `OnClosing` 是**窗口级**语义（管这个窗口关不关），与本节的**应用级**退出策略是两个层面。
+2. **系统托盘常驻**：`SetQuitOnLastWindowClosed(false)` + `Tray`。关掉所有窗口后
+   `Run()` 继续、`WindowCount() == 0`；点托盘图标时在回调里 `AddWindow()` 重新唤出主窗口。
+3. **无窗口后台阶段**：同样设 false；用 `SetTimer()` / 后台任务（`PostUi`）继续工作，
+   完成后调 `Quit(code)` 结束。**设 false 后必须自行调 `Quit()`，否则 `Run()` 永不返回。**
+
+```cpp
+dui::Application app;
+app.SetQuitOnLastWindowClosed(false);
+app.AddWindow(mainWnd);
+dui::Tray tray;
+tray.Show(nullptr, L"我的应用");               // nullptr = 系统默认图标
+tray.OnClick([&]{ if (!app.WindowCount()) app.AddWindow(mainWnd); });
+tray.OnContextMenu([&](dui::Vec2 p){
+    dui::Menu m;
+    m.Add(L"退出", [&]{ app.Quit(); });
+    dui::ShowPopupMenu(m, tray.Owner(), p);
+});
+int code = app.Run();
+```
+
+实现要点：
+
+- **唤醒不依赖窗口**：`Dispatcher::Post()` 有窗口时 `PostMessage(hwnd)`，无窗口时降级
+  `PostThreadMessageW(wakeThread, ...)`。否则窗口全毁后后台 `PostUi` 叫不醒 `WaitMessage()`。
+  最后窗口按"不退出"策略销毁时自动把 wake target 切到 UI 线程。
+- **应用级定时器**：`SetTimer` 用 `::SetTimer(nullptr, ...)`，`WM_TIMER`（hwnd=NULL）进
+  线程消息队列、不经过任何窗口过程，由 `Run()` 主循环按 id 分发；`Quit`/退出时统一清理。
+  与 `Window` 的动画/闪烁节拍定时器（`SetTimer(hwnd)`）互不影响。
+- **托盘自包含**：`Tray` 自建 message-only 窗口（`HWND_MESSAGE`）接收 `Shell_NotifyIconW`
+  回调，不进 `windows_`、不参与退出计数；析构即撤图标、关窗口，回调不再到达。
+  `OnDoubleClick` 未绑定时退化为 `OnClick`；同时绑单击与双击会各触发一次
+  （Windows 先发单击抬起再发双击），通常只绑其一。
+
+---
+
 ## 7. 限制与坑（显式声明）
 
 ### 7.1 高保真的硬要求（不可用"省事优化"换取）
@@ -281,6 +394,21 @@ protected:
    → 内容画不进去、交换链也被缩到 199×34，窗口一片空白。注意此时 `WM_SIZE` 的 lParam 与
    `GetClientRect()` 都会报 199×34，且之后**不会再有**新的 `WM_SIZE` —— 所以必须从源头修正
    客户区计算，靠"还原后强制再画一帧"补不回来。
+11. **HWND 值在销毁后可被系统立即复用，句柄副本必须在 `WM_DESTROY` 清空**（M5.80）。
+   `WM_CLOSE` 里 `DestroyWindow(hwnd)` 同步派发 `WM_DESTROY`，此后 `NativeWindow::hwnd_`
+   必须置空——否则 `~NativeWindow` 拿这个悬空值二次 `DestroyWindow`，而重开窗口时系统
+   很可能把同一 HWND 值分配给新窗口，二次销毁就**误伤新窗口**（连带析构它的 device，
+   渲染时访问悬空 `dev_` → 0xC0000005）。同时 `WM_NCDESTROY`（最后一条消息）清零
+   `GWLP_USERDATA`，避免残留/复用消息命中已析构的 `NativeWindow*`。教训：任何"销毁后仍
+   持有 HWND"的字段，生命周期都必须短于窗口本身。
+12. **建窗期 `WM_SIZE` 的就地渲染必须在 Device 就绪之后**（M5.81）。`AddWindow` 里
+   `native->Create()` 的 `SetWindowPos` 会**同步**派发 `WM_SIZE` → `OnResized` 就地
+   `RenderFrame`；但 `device->Init()` 在其**之后**才执行，那次渲染的 `dev_` 还是空指针。
+   首次开窗因进程级图集为空侥幸不崩，重开时图集已缓存字形、补传路径第一次真正调用
+   `UploadGlyphPage` 就撞上 `dev_==nullptr`。故 `WindowHostAdapter` 用 `deviceReady_` 闸门：
+   `Init` 成功后才置位，`OnResized` 仅在置位后就地渲染；建窗期那次只置布局脏，靠
+   `framePending=true` 的随后正常帧补上（`SetFramePending` 只挂指针不改初值）。
+   `OnDpiChanged` 走 `RequestFrame` 异步路径，无同类问题。
 
 ---
 

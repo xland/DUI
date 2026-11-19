@@ -108,6 +108,7 @@
     <ClInclude Include="App\Dialog.h" />
     <ClInclude Include="App\Menu.h" />
     <ClInclude Include="App\Tray.h" />
+    <ClInclude Include="App\DropTarget.h" />
     <ClInclude Include="Graphics\Graphics.h" />
     <ClInclude Include="Graphics\ImageCodec.h" />
     <ClInclude Include="Graphics\Device.h" />
@@ -144,6 +145,7 @@
     <ClCompile Include="App\Window.cpp" />
     <ClCompile Include="App\Menu.cpp" />
     <ClCompile Include="App\Tray.cpp" />
+    <ClCompile Include="App\DropTarget.cpp" />
     <ClCompile Include="Graphics\Graphics.cpp" />
     <ClCompile Include="Graphics\ImageCodec.cpp" />
     <ClCompile Include="Graphics\SvgRaster.cpp" />

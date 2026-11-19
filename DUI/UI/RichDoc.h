@@ -86,7 +86,7 @@ struct Block {
     float  width = 0.f;
     float  height = 0.f;
     bool   heightAuto = false;
-    Align  imageAlign = Align::Center;
+    Align  imageAlign = Align::Start;
 
     // Quote
     String attribution;

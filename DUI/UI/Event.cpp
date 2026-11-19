@@ -360,6 +360,35 @@ bool DispatchWheel(Element* hit, const Vec2& pt, float delta, bool horizontal) {
                           &Element::Handlers::wheel, &Element::HandleWheel);
 }
 
+// 拖放文件（M5.84）：命中元素起双阶段路由，控件钩子 / 绑定 handled 可终止。
+bool DispatchDropFiles(Element* hit, const Vec2& pt, const std::vector<String>& paths) {
+    if (paths.empty()) return false;
+    DropFilesEvent ev;
+    ev.pos = pt;
+    ev.paths = paths;
+    return PhasedDispatch(hit, ev, &Element::Handlers::tunnelDropFiles,
+                          &Element::Handlers::dropFiles, &Element::HandleDropFiles);
+}
+
+// 拖拽悬停（M5.85）：命中元素起双阶段路由；enter = 刚进入。
+bool DispatchDragOverFiles(Element* hit, const Vec2& pt,
+                           const std::vector<String>& paths, bool enter) {
+    if (paths.empty()) return false;
+    DragOverFilesEvent ev;
+    ev.pos = pt;
+    ev.paths = paths;
+    ev.enter = enter;
+    return PhasedDispatch(hit, ev, &Element::Handlers::tunnelDragOverFiles,
+                          &Element::Handlers::dragOverFiles, &Element::HandleDragOverFiles);
+}
+
+// 拖拽离开/释放：递归清掉整棵树的悬停预览态（无坐标，无法只清命中链）。
+void DispatchDragLeaveFiles(Element* root) {
+    if (root == nullptr) return;
+    root->ClearDropPreview();
+    for (Element* child : root->Children()) DispatchDragLeaveFiles(child);
+}
+
 // ---------------------------------------------------------------------------
 // 键盘事件（M5.9）：从焦点元素出发，隧道（根 → 焦点）+ 冒泡（焦点 → 根）
 // ---------------------------------------------------------------------------

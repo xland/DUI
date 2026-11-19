@@ -62,6 +62,13 @@ void DispatchPointerMove(Element* hit, const Vec2& pt);
 void DispatchPointerDown(Element* hit, const Vec2& pt, PointerButton button);
 void DispatchPointerUp(Element* hit, const Vec2& pt, PointerButton button);
 bool DispatchWheel(Element* hit, const Vec2& pt, float delta, bool horizontal);
+// 拖放文件：命中元素起双阶段路由，返回 true 表示被消费
+bool DispatchDropFiles(Element* hit, const Vec2& pt, const std::vector<String>& paths);
+// 拖拽悬停：命中元素起双阶段路由；enter = 刚进入。返回 true 表示接受
+bool DispatchDragOverFiles(Element* hit, const Vec2& pt,
+                           const std::vector<String>& paths, bool enter);
+// 拖拽离开/释放：递归清除整棵树的悬停预览态
+void DispatchDragLeaveFiles(Element* root);
 
 // 键盘事件派发（UI/Event.cpp）：从焦点元素出发，双阶段路由（隧道 + 冒泡）。
 // 返回 true 表示已被处理（handled）——调用方据此决定默认行为（如 Tab 移焦）。

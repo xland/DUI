@@ -64,6 +64,27 @@ struct KeyEvent {
     bool     handled = false;      // 置 true 终止冒泡
 };
 
+// 拖放文件事件（M5.84）：把文件从资源管理器拖到窗口上释放时产生。
+// pos = 客户区绝对 DIP（释放点）；paths = 文件完整路径列表；handled 终止冒泡。
+struct DropFilesEvent {
+    Element* source = nullptr;
+    Vec2     pos{};
+    std::vector<String> paths;
+    bool     handled = false;
+};
+
+// 拖拽悬停事件（M5.85）：OLE DragOver 阶段产生，鼠标未释放、在窗口上移动时
+// 持续派发。控件据此显示"文件将插入何处"的预览（如 RichEditor 插入光标）。
+// pos = 命中元素局部 DIP；paths = 拖拽的文件路径；enter = 是否刚进入；
+// handled 终止冒泡（置 true 会让外层知道已被消费，用于返回 DROPEFFECT_COPY）。
+struct DragOverFilesEvent {
+    Element* source = nullptr;
+    Vec2     pos{};
+    std::vector<String> paths;
+    bool     enter = false;
+    bool     handled = false;
+};
+
 // ---------------------------------------------------------------------------
 // 焦点服务（UI/Focus.h；焦点唯一，挂在元素上 —— 06-Events §6）
 // ---------------------------------------------------------------------------
@@ -262,6 +283,28 @@ public:
         (phase == Phase::Tunnel ? h.tunnelWheel : h.wheel) = std::move(fn);
     }
 
+    // 拖放文件（M5.84）：从命中元素冒泡；handled 终止。与 OnWheel 同构。
+    template <class Ctx>
+    void OnDropFiles(Ctx* ctx, void (Ctx::*fn)(DropFilesEvent&), Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        BindMember(phase == Phase::Tunnel ? h.tunnelDropFiles : h.dropFiles, ctx, fn);
+    }
+    void OnDropFiles(std::function<void(DropFilesEvent&)> fn, Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        (phase == Phase::Tunnel ? h.tunnelDropFiles : h.dropFiles) = std::move(fn);
+    }
+
+    // 拖拽悬停（M5.85）：从命中元素冒泡；handled 表示接受（光标变 COPY）。
+    template <class Ctx>
+    void OnDragOverFiles(Ctx* ctx, void (Ctx::*fn)(DragOverFilesEvent&), Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        BindMember(phase == Phase::Tunnel ? h.tunnelDragOverFiles : h.dragOverFiles, ctx, fn);
+    }
+    void OnDragOverFiles(std::function<void(DragOverFilesEvent&)> fn, Phase phase = Phase::Bubble) {
+        Handlers& h = MutableHandlers();
+        (phase == Phase::Tunnel ? h.tunnelDragOverFiles : h.dragOverFiles) = std::move(fn);
+    }
+
     // ------------------------------------------------------------------
     // 键盘事件绑定（与 OnClick 同构：成员函数 + 上下文 / std::function）
     //   路由：从焦点元素出发，双阶段（隧道 根 → 焦点，冒泡 焦点 → 根）。
@@ -306,9 +349,13 @@ public:
         std::function<void(PointerEvent&)> enter, leave, move, down, up, click;
         std::function<void(WheelEvent&)>   wheel;
         std::function<void(KeyEvent&)>     keyDown, keyUp, ch;
+        std::function<void(DropFilesEvent&)> dropFiles;
+        std::function<void(DragOverFilesEvent&)> dragOverFiles;
         std::function<void(PointerEvent&)> tunnelMove, tunnelDown, tunnelUp, tunnelClick;
         std::function<void(WheelEvent&)>   tunnelWheel;
         std::function<void(KeyEvent&)>     tunnelKeyDown, tunnelKeyUp, tunnelChar;
+        std::function<void(DropFilesEvent&)> tunnelDropFiles;
+        std::function<void(DragOverFilesEvent&)> tunnelDragOverFiles;
     };
     // 事件派发只读访问（Event.cpp）
     const Handlers* HandlersPtr() const noexcept { return handlers_.get(); }
@@ -409,6 +456,12 @@ public:
     // 滚轮钩子（子类重写）：控件自身要消费滚轮时返回 true（如 TextArea 滚自己的
     // 内容）。置 ev.handled 同样会阻止滚动容器消费 —— 与绑定共用同一语义。
     virtual bool HandleWheel(WheelEvent&) { return false; }
+    // 拖放文件钩子：控件自身要消费时返回 true（如 RichEditor 插图）。
+    virtual bool HandleDropFiles(DropFilesEvent&) { return false; }
+    // 拖拽悬停钩子：控件返回 true 表示接受（如 RichEditor 显示插入光标预览）。
+    virtual bool HandleDragOverFiles(DragOverFilesEvent&) { return false; }
+    // 拖拽离开/释放后清除预览态（默认空；递归下发到整棵树）。
+    virtual void ClearDropPreview() {}
     // Overlay 绘制钩子（M5.75）：画在**元素内容之上、裁剪之外**（父级上下文）——
     // 典型用途是贴元素边缘的滚动条（要盖住 padding 区、又不被内容裁剪切掉）。
     // 与 OnPaint 的区别：OnPaint 在内容裁剪内、且在子元素之下；本钩子在

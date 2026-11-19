@@ -11,12 +11,15 @@
 
 #include <windows.h>
 
+#include <vector>
+
 #include "Core/Core.h"
+#include "App/DropTarget.h"
 
 namespace dui {
 
 // 平台窗口 → 上层的事件接口（App 层实现；protected 虚函数由宿主回调）
-class NativeWindowHost {
+class NativeWindowHost : public IDropTargetHost {
 public:
     virtual ~NativeWindowHost() = default;
 
@@ -55,6 +58,19 @@ public:
     // 命中区（hit 取 HTCAPTION / HTLEFT 等），系统据此接管"拖标题栏移动 /
     // 拖边框缩放"。仅 Borderless 模式有意义。
     virtual bool OnNcHitTest(Vec2 ptDip, int& hit) { (void)ptDip; (void)hit; return false; }
+    // 拖放（M5.85，IDropTarget）：paths = 文件完整路径；ptDip = 悬停/释放点客户区 DIP。
+    // 覆盖 IDropTargetHost 的纯虚，给默认实现以免其它 NativeWindowHost 实现被迫改动。
+    // Enter/Over 返回 true 表示接受（光标变 COPY，否则 NONE）。
+    bool OnDragEnterFiles(const std::vector<String>& paths, Vec2 ptDip) override {
+        (void)paths; (void)ptDip; return false;
+    }
+    bool OnDragOverFiles(const std::vector<String>& paths, Vec2 ptDip) override {
+        (void)paths; (void)ptDip; return false;
+    }
+    void OnDragLeaveFiles() override {}
+    void OnDropFiles(const std::vector<String>& paths, Vec2 ptDip) override {
+        (void)paths; (void)ptDip;
+    }
     // 定时器节拍（WM_TIMER；id 由上层分配并自行管理）
     virtual void OnTimer(uintptr_t id) { (void)id; }
     // 窗口获得/失去激活（WM_ACTIVATE）：上层据此让编辑控件失焦（光标停止闪烁）
@@ -130,6 +146,8 @@ private:
     bool   borderless_ = false;   // 无边框（业务自绘标题栏与边框）
     bool   dblClickMaximize_ = true;   // 无边框窗口双击拖动区是否最大化（原生行为）
     NativeWindowHost* host_ = nullptr;
+    DropTarget* dropTarget_ = nullptr;   // 独立 COM 对象（M5.85；另持一引用）
+    static float ScaleOf(void* ctx) noexcept;   // DropTarget 的 scale 提供者
     HBITMAP caretBmp_ = nullptr;   // 隐形系统 caret 的位图（1×N 全透明）
     int caretHeight_ = 0;         // 当前 caret 位图高度（变化时重建）
 };

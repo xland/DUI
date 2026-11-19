@@ -233,6 +233,18 @@ public:
         RequestFrame();
     }
 
+    // 拖放（M5.85）：转给 Window 的虚钩子（默认实现走元素级路由）
+    bool OnDragEnterFiles(const std::vector<String>& paths, Vec2 ptDip) override {
+        return window_.OnDragEnterFiles(paths, ptDip);
+    }
+    bool OnDragOverFiles(const std::vector<String>& paths, Vec2 ptDip) override {
+        return window_.OnDragOverFiles(paths, ptDip);
+    }
+    void OnDragLeaveFiles() override { window_.OnDragLeaveFiles(); }
+    void OnDropFiles(const std::vector<String>& paths, Vec2 ptDip) override {
+        window_.OnDropFiles(paths, ptDip);
+    }
+
     void OnPointerLeave() override {
         UpdateHoverChain(hover_, nullptr);
         DispatchHoverTransitions(hover_, nullptr, lastPt_);   // 全部移出
@@ -417,6 +429,29 @@ Window::~Window() = default;
 HWND Window::NativeHandle() const noexcept {
     if (native_ == nullptr) return nullptr;
     return static_cast<NativeWindow*>(native_)->Handle();
+}
+
+bool Window::OnDragEnterFiles(const std::vector<String>& paths, Vec2 ptDip) {
+    Vec2 local{};
+    Element* hit = HitTest(root_.get(), ptDip, &local);
+    return DispatchDragOverFiles(hit, local, paths, true);
+}
+
+bool Window::OnDragOverFiles(const std::vector<String>& paths, Vec2 ptDip) {
+    Vec2 local{};
+    Element* hit = HitTest(root_.get(), ptDip, &local);
+    return DispatchDragOverFiles(hit, local, paths, false);
+}
+
+void Window::OnDragLeaveFiles() {
+    DispatchDragLeaveFiles(root_.get());
+}
+
+void Window::OnDropFiles(const std::vector<String>& paths, Vec2 ptDip) {
+    DispatchDragLeaveFiles(root_.get());   // 清掉悬停预览态
+    Vec2 local{};
+    Element* hit = HitTest(root_.get(), ptDip, &local);
+    DispatchDropFiles(hit, local, paths);
 }
 
 // 窗口操作（无边框窗口的自绘标题栏按钮）

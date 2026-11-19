@@ -36,9 +36,15 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 
 - **事件是只读描述 + 一个可写标志**：分发时在栈上构造事件对象（无堆分配），处理器读取细节、设置 `handled`。
 - **处理器存在元素上**：随元素创建/销毁，天然满足 R7 的一半（销毁即摘除）。
-- **一层 API + 阶段参数**：具名语义糖（`OnClick` / `OnPointerDown` / `OnKeyDown`…）
-  直接承载全部可路由事件，末尾可选 `Phase` 参数声明阶段（默认 `Phase::Bubble`，
-  `Phase::Tunnel` 为隧道）。不引入事件 ID 表，事件按具体类型分发（R1/R3，见 §5.1）。
+- **一层 API + 阶段参数**：具名语义糖（`OnClick` / `OnPointerDown` / `OnKeyDown` /
+  `OnDropFiles`…）直接承载全部可路由事件，末尾可选 `Phase` 参数声明阶段（默认
+  `Phase::Bubble`，`Phase::Tunnel` 为隧道）。不引入事件 ID 表，事件按具体类型分发（R1/R3，见 §5.1）。
+- **拖放文件（M5.84/85）**：建窗时框架 `RegisterDragDrop`（独立 COM 对象 `App/DropTarget`，
+  自计数、STA）。`DragEnter/DragOver` 取 `CF_HDROP` 路径 + 屏幕坐标转客户区 DIP，经
+  `OnDragEnterFiles/OnDragOverFiles` → `HitTest` → `DragOverFilesEvent`（双阶段），控件
+  置 `handled` 接受（DROPEFFECT_COPY）；`RichEditor` 借此显示插入光标预览（`PaintOverlay`，
+  独立 dropCursor 态，绕开 HasFocus）。`DragLeave`/`Drop` 递归清预览；`Drop` 走 `OnDropFiles`
+  → `DropFilesEvent`，`RichEditor` 把图插到预览落点（所见即所得）。非图像扩展名不消费。
 
 ### 2.1 与 CSS/WPF/浏览器的对照
 

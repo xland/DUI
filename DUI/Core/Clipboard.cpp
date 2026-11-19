@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include <windows.h>
+#include <shellapi.h>   // DragQueryFileW / CF_HDROP
 
 namespace dui {
 
@@ -141,6 +142,31 @@ bool Clipboard::WriteImage(const Image& img) {
     // SetClipboardData 成功后系统接管 mem；失败需自行释放
     const bool ok = SetClipboardData(CF_DIB, mem) != nullptr;
     if (!ok) GlobalFree(mem);
+    CloseClipboard();
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
+// 文件列表（CF_HDROP）
+// ---------------------------------------------------------------------------
+
+bool Clipboard::ReadFiles(std::vector<String>& out) {
+    out.clear();
+    if (!OpenClipboard(nullptr)) return false;
+    bool ok = false;
+    // CF_HDROP 句柄归系统所有：只读不 GlobalFree / GlobalUnlock。
+    if (HANDLE h = GetClipboardData(CF_HDROP)) {
+        const HDROP drop = static_cast<HDROP>(h);
+        const UINT count = ::DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+        out.reserve(count);
+        for (UINT i = 0; i < count; ++i) {
+            const UINT n = ::DragQueryFileW(drop, i, nullptr, 0);
+            std::vector<wchar_t> buf(static_cast<size_t>(n) + 1);
+            ::DragQueryFileW(drop, i, buf.data(), static_cast<UINT>(buf.size()));
+            out.emplace_back(buf.data());
+        }
+        ok = count > 0;
+    }
     CloseClipboard();
     return ok;
 }

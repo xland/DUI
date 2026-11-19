@@ -40,6 +40,11 @@ public:
     static bool ReadImage(Image& out);
     static bool WriteImage(const Image& img);
 
+    // ---- 文件列表（CF_HDROP；资源管理器复制的文件）----
+    // 读：取 CF_HDROP 的文件完整路径列表（系统持有句柄，本函数不释放）。
+    // 典型来源：在资源管理器里选中文件 Ctrl+C。空列表返回 false。
+    static bool ReadFiles(std::vector<String>& out);
+
     // ---- 文本（CF_UNICODETEXT；高频快捷路径）----
     static bool ReadText(String& out);
     static bool WriteText(const String& text);

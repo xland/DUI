@@ -9,6 +9,7 @@
 
 #include <cstring>
 #include <dwmapi.h>
+#include <shellapi.h>   // DragAcceptFiles / DragQueryFile / DragQueryPoint / DragFinish
 
 // DWM 是系统库（不在 MSVC 默认链接列表里）→ 随本编译单元携带链接指令，
 // 不必改根目录 DUI.props 的公共编译基线。
@@ -75,7 +76,17 @@ Rect ToDip(const RECT& px, float scale) {
 
 NativeWindow::~NativeWindow() {
     RemoveImeCaret();
+    // dropTarget_ 由 OLE 持一引用，本类另持一引用；WM_DESTROY 时已 RevokeDragDrop
+    // （OLE 引用归还），这里归还本类引用。若窗口未创建成功 dropTarget_ 为空。
+    if (dropTarget_ != nullptr) {
+        dropTarget_->Release();
+        dropTarget_ = nullptr;
+    }
     if (hwnd_) DestroyWindow(hwnd_);
+}
+
+float NativeWindow::ScaleOf(void* ctx) noexcept {
+    return static_cast<NativeWindow*>(ctx)->scale_;
 }
 
 bool NativeWindow::EnsureClassRegistered(String& error) {
@@ -123,6 +134,14 @@ bool NativeWindow::Create(const wchar_t* title, float widthDip, float heightDip,
     if (!hwnd_) {
         error = L"CreateWindowExW failed (code " + std::to_wstring(GetLastError()) + L")";
         return false;
+    }
+
+    // OLE 拖放目标（M5.85）：RegisterDragDrop 提供 Enter/Over/Leave 悬停阶段，
+    // 用于 RichEditor 显示插入光标预览。宿主线程已在 EnsureUiCom 建立 STA。
+    dropTarget_ = new DropTarget(hwnd_, host_, &NativeWindow::ScaleOf, this);
+    if (FAILED(::RegisterDragDrop(hwnd_, dropTarget_))) {
+        dropTarget_->Release();   // 注册失败：归还本类引用（OLE 未持有）
+        dropTarget_ = nullptr;
     }
 
     // PMv2 下即窗口所在显示器的 DPI（窗口级，12-Windowing §6）
@@ -280,6 +299,12 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
+            // 先撤销 OLE 拖放注册（OLE 归还它持有的引用）；必须在 hwnd 仍有效时。
+            if (self->dropTarget_ != nullptr) {
+                ::RevokeDragDrop(hwnd);
+                self->dropTarget_->Release();   // 归还 OLE 那一引用（本类引用留到析构）
+                self->dropTarget_ = nullptr;
+            }
             // 窗口已进入销毁：立刻把 self 的句柄副本置空。否则 ~NativeWindow 会拿
             // 这个悬空值二次 DestroyWindow；而 HWND 值会被随后新建的窗口复用，
             // 二次销毁会误伤新窗口（关窗后重开时新窗口 device 被连带析构 → 渲染

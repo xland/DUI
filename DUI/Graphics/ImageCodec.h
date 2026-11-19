@@ -31,6 +31,10 @@ bool DecodeImageFile(const wchar_t* path, DecodedImage& out, String* err = nullp
 // 从内存解码（格式由内容嗅探）；失败返回 false
 bool DecodeImageMemory(const void* data, uint32_t size, DecodedImage& out, String* err = nullptr);
 
+// 编码为 PNG 字节（BGRA8 → PNG 容器，便于后续 base64 转 data URI）；失败返回 false。
+// 注意 stride 按 width*4 传入（WIC 要求 4 字节对齐，BGRA8 天然满足）。
+bool EncodePng(const DecodedImage& img, std::vector<uint8_t>& out, String* err = nullptr);
+
 // ---- SVG（Direct2D 内置解析，Win10 1703+；实现在 Graphics/SvgRaster.cpp）----
 // 读文件字节（Win32 文件读取放 Graphics 层，UI 层不直接依赖 Windows API）
 bool ReadSvgFile(const wchar_t* path, std::vector<uint8_t>& out, String* err = nullptr);

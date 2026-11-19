@@ -128,6 +128,30 @@ size_t DecodeBase64(const wchar_t* s, size_t count, std::vector<uint8_t>& out) {
     return out.size();
 }
 
+// base64 编码（RFC 4648，带 '=' 填充）—— 把剪贴板 PNG 编成 data URI 用
+String EncodeBase64(const uint8_t* data, size_t size) {
+    static constexpr char kAlphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    String out;
+    out.reserve((size + 2) / 3 * 4);
+    for (size_t i = 0; i < size; i += 3) {
+        const uint32_t b0 = data[i];
+        const uint32_t b1 = (i + 1 < size) ? data[i + 1] : 0;
+        const uint32_t b2 = (i + 2 < size) ? data[i + 2] : 0;
+        const uint32_t acc = (b0 << 16) | (b1 << 8) | b2;
+        out.push_back(static_cast<wchar_t>(kAlphabet[(acc >> 18) & 63]));
+        out.push_back(static_cast<wchar_t>(kAlphabet[(acc >> 12) & 63]));
+        out.push_back(i + 1 < size ? static_cast<wchar_t>(kAlphabet[(acc >> 6) & 63]) : L'=');
+        out.push_back(i + 2 < size ? static_cast<wchar_t>(kAlphabet[acc & 63]) : L'=');
+    }
+    return out;
+}
+
+// 图像字节 → data URI（data URI 的 base64 是 ASCII，逐字符转宽字符）
+String PngToDataUri(const std::vector<uint8_t>& png) {
+    return L"data:image/png;base64," + EncodeBase64(png.data(), png.size());
+}
+
 // 文本块（可编辑）：段落 / 标题 / 引用 / 列表项；代码块单独处理（内容在 block.code）
 bool IsEditableKind(BlockKind kind) noexcept {
     return kind == BlockKind::Paragraph || kind == BlockKind::Heading ||
@@ -141,6 +165,23 @@ bool IsEditableKind(BlockKind kind) noexcept {
 // Backspace / Delete 删除图片本身
 bool IsCaretKind(BlockKind kind) noexcept {
     return IsEditableKind(kind) || kind == BlockKind::Code || kind == BlockKind::Image;
+}
+
+// 拖放文件是否为可插图格式（WIC 支持）；大小写不敏感。M5.84 / M5.85 共用。
+bool IsImageFilePath(const String& path) {
+    static constexpr const wchar_t* kExts[] = {
+        L".png", L".jpg", L".jpeg", L".bmp", L".gif", L".tif", L".tiff", L".ico"
+    };
+    const size_t dot = path.find_last_of(L'.');
+    if (dot == String::npos) return false;
+    String ext;
+    for (size_t k = dot; k < path.size() && ext.size() < 8; ++k) {
+        wchar_t c = path[k];
+        if (c >= L'A' && c <= L'Z') c = c - L'A' + L'a';
+        ext.push_back(c);
+    }
+    for (const wchar_t* e : kExts) if (ext == e) return true;
+    return false;
 }
 
 bool IsHighSurrogate(wchar_t c) noexcept { return c >= 0xD800 && c <= 0xDBFF; }
@@ -267,6 +308,10 @@ struct RichEditor::Impl {
     bool   dragging = false;
     bool   caretVisible = true;
     float  goalX = -1.f;   // 上下移动的目标列（-1 = 未记录）
+
+    // 拖拽悬停插入预览（M5.85）：独立于真实 caret，避免闪烁/焦点/选区干扰。
+    bool   dropPreview = false;
+    Cursor dropCursor{};
 
     std::vector<Snapshot> undo;
     std::vector<Snapshot> redo;
@@ -398,6 +443,10 @@ struct RichEditor::Impl {
     bool DeleteBackward();
     bool DeleteForward();
     bool InsertNewline();
+    bool InsertImage(const String& path);
+    // 批量插图（M5.87）：列表项内按光标切分成两个独立列表、所有图插在中间；
+    // 非列表项逐张走 InsertImage。一次调用只拆一次列表。
+    bool InsertImages(const std::vector<String>& paths);
     bool DeleteSelectionNoUndo();
     String SelectedText() const;
     void CopySelection() const;
@@ -1994,7 +2043,26 @@ bool RichEditor::Impl::CutSelection() {
 
 bool RichEditor::Impl::PasteClipboard() {
     String raw;
-    if (!Clipboard::ReadText(raw) || raw.empty()) return false;
+    if (!Clipboard::ReadText(raw) || raw.empty()) {
+        // 剪贴板无文本：① 位图（截图工具 / 浏览器复制的图片）→ PNG → data URI
+        Clipboard::Image img;
+        if (Clipboard::ReadImage(img) && img.width != 0 && img.height != 0) {
+            graphics::DecodedImage di;
+            di.width = img.width;
+            di.height = img.height;
+            di.pixels = std::move(img.pixels);
+            std::vector<uint8_t> png;
+            String err;
+            if (!graphics::EncodePng(di, png, &err) || png.empty()) return false;
+            return InsertImages(std::vector<String>{PngToDataUri(png)});
+        }
+        // ② 文件列表（资源管理器里 Ctrl+C 复制的图像文件 → CF_HDROP）
+        std::vector<String> files;
+        if (!Clipboard::ReadFiles(files)) return false;
+        std::vector<String> imageFiles;
+        for (const String& path : files) if (IsImageFilePath(path)) imageFiles.push_back(path);
+        return InsertImages(imageFiles);
+    }
 
     // 换行归一：\r\n / \r → \n（块内不留 \n，换行即块边界）
     String text;
@@ -2082,6 +2150,148 @@ bool RichEditor::Impl::PasteClipboard() {
     return true;
 }
 
+bool RichEditor::Impl::InsertImage(const String& path) {
+    if (path.empty()) return false;
+
+    PushUndo(false);
+    if (HasSelection()) DeleteSelectionNoUndo();
+
+    if (editables.empty()) {
+        Block paragraph;
+        paragraph.kind = BlockKind::Paragraph;
+        doc.blocks.push_back(std::move(paragraph));
+        ++version;
+        Rebuild();
+        caret = anchor = Cursor{0, 0};
+    }
+    if (!LeaveImageToText()) return false;
+
+    const Cursor c = ClampToDoc(caret);
+    Block* block = editables[c.block].block;
+    Spot spot{};
+    if (!FindSpot(block, spot)) return false;
+
+    // 图片作为独立块插在当前块之后。列表项内插图时，插进 list 所在的容器
+    // （与 InsertNewline 同一理由：ListItem.children 只登记 List / 段落等，
+    // 塞错容器会 IndexOf 失败、光标跳回文档开头）。
+    std::vector<Block>* container = spot.container;
+    size_t at = spot.index + 1;
+    if (spot.parentList != nullptr) {
+        Spot listSpot{};
+        if (!FindSpot(spot.parentList, listSpot)) return false;
+        container = listSpot.container;
+        at = listSpot.index + 1;
+    }
+
+    Block image;
+    image.kind = BlockKind::Image;
+    image.src = path;                 // 按值拷贝；W/H 留 0 → 排版按纹理自然尺寸
+    auto insertedIt = container->insert(container->begin() + static_cast<ptrdiff_t>(at),
+                                        std::move(image));
+    Block* inserted = &(*insertedIt);   // insert 的返回值才指向新元素（且避开重分配）
+
+    ++version;
+    Rebuild();
+    const size_t index = IndexOf(inserted);
+    // offset 1 = 图后（图片块 TextLenOf=1）。找不到时退回当前文本块末尾。
+    caret = anchor = (index == kNoEditable ? ClampToDoc(caret) : Cursor{index, 1});
+    caretVisible = true;
+    lastEditTyping = false;
+    return true;
+}
+
+bool RichEditor::Impl::InsertImages(const std::vector<String>& paths) {
+    if (paths.empty()) return false;
+
+    // 非列表项 / 无光标项：逐张走单图路径（现有语义不变）。
+    const Cursor c0 = ClampToDoc(caret);
+    if (editables.empty() || editables[c0.block].block->kind != BlockKind::ListItem) {
+        bool any = false;
+        for (const String& p : paths) if (InsertImage(p)) any = true;
+        return any;
+    }
+
+    Block* item = editables[c0.block].block;
+    Spot itemSpot{};
+    if (!FindSpot(item, itemSpot)) return false;
+
+    // 占位项（父 ListItem.children 里的降级项，无所属 List）：不拆，按单图插在
+    // 当前容器紧后面（与 InsertNewline 的占位项分支同一理由）。
+    if (itemSpot.parentList == nullptr) {
+        bool any = false;
+        for (const String& p : paths) if (InsertImage(p)) any = true;
+        return any;
+    }
+
+    PushUndo(false);
+    if (HasSelection()) DeleteSelectionNoUndo();
+
+    // 删选区可能改动文档，重新定位项与光标 offset。
+    const Cursor c = ClampToDoc(caret);
+    item = editables[c.block].block;
+    Spot spot{};
+    if (!FindSpot(item, spot) || spot.parentList == nullptr) return false;
+    Block* list = spot.parentList;
+
+    const uint32_t off = richtext::SnapBoundary(richtext::BlockText(*item), c.offset);
+
+    // 在光标处把当前项切成前后两段（SplitBlock：原块留 [0,off)，返回 [off,end)，
+    // 样式随 run 继承；嵌套子列表按既有语义留在前项）。
+    Block tailItem = richtext::SplitBlock(*item, off);
+    const size_t k = spot.index;   // 当前项在 list.children 里的下标
+
+    // 复制 list 的块级属性，构造 head / tail 两个独立列表（模板同 InsertNewline）。
+    Block head, tail;
+    head.kind = tail.kind = BlockKind::List;
+    head.style = tail.style = list->style;
+    head.level = tail.level = list->level;
+    head.listType = tail.listType = list->listType;
+    std::vector<Block> kids = std::move(list->children);
+    for (size_t i = 0; i < kids.size(); ++i) {
+        if (i < k) head.children.push_back(std::move(kids[i]));
+        else if (i > k) tail.children.push_back(std::move(kids[i]));
+    }
+    head.children.push_back(std::move(kids[k]));             // 前段项 + 原有嵌套子列表（SplitBlock 已就地改过 kids[k]）
+    if (!tailItem.runs.empty() || !tailItem.children.empty()) {
+        tail.children.insert(tail.children.begin(), std::move(tailItem));  // 后段项
+    }
+
+    // 在 list 所在容器用 [head, images..., tail] 替换原 list。
+    Spot listSpot{};
+    if (!FindSpot(list, listSpot)) return false;
+    std::vector<Block>* container = listSpot.container;
+    const size_t at = listSpot.index;
+    container->erase(container->begin() + static_cast<ptrdiff_t>(at));
+
+    size_t at2 = at;
+    if (!head.children.empty()) {
+        container->insert(container->begin() + static_cast<ptrdiff_t>(at2), std::move(head));
+        ++at2;
+    }
+    Block* lastImage = nullptr;
+    for (const String& path : paths) {
+        if (path.empty()) continue;
+        Block image;
+        image.kind = BlockKind::Image;
+        image.src = path;
+        auto it = container->insert(container->begin() + static_cast<ptrdiff_t>(at2),
+                                    std::move(image));
+        lastImage = &(*it);
+        ++at2;
+    }
+    if (!tail.children.empty()) {
+        container->insert(container->begin() + static_cast<ptrdiff_t>(at2), std::move(tail));
+    }
+
+    ++version;
+    Rebuild();
+    const size_t index = lastImage != nullptr ? IndexOf(lastImage) : kNoEditable;
+    caret = anchor = (index == kNoEditable ? ClampToDoc(caret) : Cursor{index, 1});
+    caretVisible = true;
+    lastEditTyping = false;
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // 文档树定位
 // ---------------------------------------------------------------------------
@@ -2166,6 +2376,16 @@ void RichEditor::SetDoc(const richtext::RichDoc& doc) {
     MarkDirty(kFlagLayout | kFlagPaint);
 }
 
+bool RichEditor::InsertImage(const String& imagePath) {
+    if (!editable_ || imagePath.empty()) return false;
+    const bool ok = impl_->InsertImages(std::vector<String>{imagePath});
+    if (ok) {
+        MarkDirty(kFlagLayout | kFlagPaint);
+        RevealCaret();
+    }
+    return ok;
+}
+
 const richtext::RichDoc& RichEditor::Doc() const noexcept {
     return impl_->doc;
 }
@@ -2218,6 +2438,18 @@ void RichEditor::OnPaint(graphics::Painter& p, const StyleContext& ctx, float sc
     const bool showCaret = editable_ && HasFocus() && impl_->caretVisible;
     impl_->Paint(p, ctx, scale, Vec2{content.x, content.y}, showCaret, caretColor,
                  selectionColor);
+}
+
+void RichEditor::PaintOverlay(graphics::Painter& p, float scale) {
+    if (!impl_->dropPreview) return;
+    // PaintOverlay 无 ctx：复用上次排版的上下文/宽度（DragOver 阶段排版已就绪）。
+    if (impl_->layoutWidth > 0.f) impl_->EnsureLayout(impl_->lastCtx, impl_->layoutWidth);
+    Rect r;
+    if (!impl_->CaretRectOf(impl_->dropCursor, r)) return;
+    const Rect content = ContentRectOf(this);
+    // 拖拽插入光标：固定主题蓝、2 DIP 宽，绕开 HasFocus 门（未聚焦也可见）。
+    p.FillRoundedRect(Rect{content.x + r.x - 0.5f, content.y + r.y, 2.f, r.h},
+                      0.f, 0xFF0078D4, 1.f, scale);
 }
 
 bool RichEditor::ContentClipRect(Rect& out) const {
@@ -2317,6 +2549,63 @@ bool RichEditor::HandleChar(KeyEvent& ev) {
 
     ev.handled = true;
     return true;
+}
+
+bool RichEditor::HandleDropFiles(DropFilesEvent& ev) {
+    if (!editable_ || ev.paths.empty()) return false;
+
+    // 所见即所得：Drop 点就是预览时算出的落点。若本窗口在 DragOver 阶段做过
+    // 预览（dropPreview），直接把真实 caret 设为预览位置；否则用释放点现算。
+    if (impl_->dropPreview) {
+        impl_->SetCaret(impl_->dropCursor, false);
+    } else {
+        const Vec2 origin = ContentOrigin();
+        impl_->SetCaret(impl_->HitTestDoc(Vec2{ev.pos.x - origin.x, ev.pos.y - origin.y}), false);
+    }
+    impl_->dropPreview = false;
+
+    // 只吃图像文件（WIC 支持的格式）；其余路径不消费，留给上层。
+    // 批量一次插入：列表项内只拆一次列表，所有图夹在切分点。
+    std::vector<String> imageFiles;
+    for (const String& path : ev.paths) if (IsImageFilePath(path)) imageFiles.push_back(path);
+    const bool inserted = impl_->InsertImages(imageFiles);
+    if (inserted) {
+        // 从资源管理器拖入不会点击编辑器 → 无焦点 → OnPaint 的 showCaret 门
+        // (editable && HasFocus && caretVisible) 挡住光标。显式取得焦点，让
+        // 输入光标显示在刚插入的图后（caret 已由 InsertImage 设为 Cursor{index,1}）。
+        Focus();
+        MarkDirty(kFlagLayout | kFlagPaint);
+        RevealCaret();
+        ev.handled = true;
+    }
+    return inserted;
+}
+
+bool RichEditor::HandleDragOverFiles(DragOverFilesEvent& ev) {
+    if (!editable_ || ev.paths.empty()) return false;
+    bool hasImage = false;
+    for (const String& path : ev.paths) {
+        if (IsImageFilePath(path)) { hasImage = true; break; }
+    }
+    if (!hasImage) return false;   // 非图像：不消费 → DROPEFFECT_NONE
+
+    // ev.pos 是命中元素局部 DIP；HitTestDoc 要的是内容盒局部 DIP。
+    const Vec2 origin = ContentOrigin();
+    const auto c = impl_->HitTestDoc(Vec2{ev.pos.x - origin.x, ev.pos.y - origin.y});
+    if (!impl_->dropPreview || impl_->BlockLess(c, impl_->dropCursor) ||
+        impl_->BlockLess(impl_->dropCursor, c)) {
+        impl_->dropCursor = c;
+        impl_->dropPreview = true;
+        MarkDirty(kFlagPaint);   // 只重绘，不排版（DragOver 高频）
+    }
+    ev.handled = true;   // 接受 → DROPEFFECT_COPY
+    return true;
+}
+
+void RichEditor::ClearDropPreview() {
+    if (!impl_->dropPreview) return;
+    impl_->dropPreview = false;
+    MarkDirty(kFlagPaint);
 }
 
 void RichEditor::RevealCaret() {

@@ -37,6 +37,12 @@ public:
     void SetDoc(const richtext::RichDoc& doc);   // 值语义持有；清空撤销栈
     const richtext::RichDoc& Doc() const noexcept;
 
+    // 在当前光标处插入图片块（保留撤销栈与光标，不走 SetDoc）。imagePath 是
+    // 图像文件路径（或 data:image/...;base64,），尺寸由框架按图像自然尺寸决定
+    // （W×H 留 0 → 排版时按纹理比例自动定盒）。插入后光标落在图后。
+    // 返回 false：路径为空 / 文档无可用文本块。撤销可用 Ctrl+Z。
+    bool InsertImage(const String& imagePath);
+
     // 排版后的文档总高（DIP，不含 padding）
     float ContentHeight() const noexcept;
 
@@ -48,6 +54,7 @@ public:
 protected:
     Vec2 MeasureContent(const StyleContext& ctx, const Vec2& contentAvail) const override;
     void OnPaint(graphics::Painter& p, const StyleContext& ctx, float scale) override;
+    void PaintOverlay(graphics::Painter& p, float scale) override;
     bool ContentClipRect(Rect& out) const override;
 
     // ---- 编辑相关钩子（Element 契约）----
@@ -62,6 +69,9 @@ protected:
     bool HandlePointerUp(PointerEvent& ev) override;
     bool HandleKeyDown(KeyEvent& ev) override;
     bool HandleChar(KeyEvent& ev) override;
+    bool HandleDropFiles(DropFilesEvent& ev) override;
+    bool HandleDragOverFiles(DragOverFilesEvent& ev) override;
+    void ClearDropPreview() override;
 
 private:
     struct Impl;

@@ -285,6 +285,88 @@ bool DecodeImageMemory(const void* data, uint32_t size, DecodedImage& out, Strin
     return ok;
 }
 
+bool EncodePng(const DecodedImage& img, std::vector<uint8_t>& out, String* err) {
+    if (img.width == 0 || img.height == 0 || img.pixels.empty()) {
+        SetErr(err, L"empty image");
+        return false;
+    }
+    IWICImagingFactory* factory = WicFactory();
+    if (factory == nullptr) {
+        SetErr(err, L"WIC factory unavailable");
+        return false;
+    }
+
+    IWICBitmapEncoder* encoder = nullptr;
+    HRESULT hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder);
+    if (FAILED(hr) || encoder == nullptr) {
+        SetErr(err, L"CreateEncoder failed");
+        return false;
+    }
+    IStream* stream = nullptr;
+    if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) || stream == nullptr) {
+        encoder->Release();
+        SetErr(err, L"CreateStreamOnHGlobal failed");
+        return false;
+    }
+    if (FAILED(hr = encoder->Initialize(stream, WICBitmapEncoderNoCache))) {
+        encoder->Release();
+        stream->Release();
+        SetErr(err, L"encoder Initialize failed");
+        return false;
+    }
+
+    IWICBitmapFrameEncode* frame = nullptr;
+    IPropertyBag2* props = nullptr;
+    bool ok = false;
+    WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppBGRA;  // 提前声明，避免 goto 跨越初始化
+    if (FAILED(hr = encoder->CreateNewFrame(&frame, &props))) {
+        SetErr(err, L"CreateNewFrame failed");
+        goto Done;
+    }
+    // PNG 无损，无需设置编码属性；props 保留供 frame->Initialize（可为 nullptr）。
+    if (FAILED(hr = frame->Initialize(props)) ||
+        FAILED(hr = frame->SetSize(img.width, img.height)) ||
+        FAILED(hr = frame->SetPixelFormat(&fmt))) {
+        SetErr(err, L"frame setup failed");
+        goto Done;
+    }
+    if (FAILED(hr = frame->WritePixels(img.height, img.width * 4,
+                                       static_cast<UINT>(img.pixels.size()),
+                                       const_cast<uint8_t*>(img.pixels.data())))) {
+        SetErr(err, L"WritePixels failed");
+        goto Done;
+    }
+    if (FAILED(hr = frame->Commit()) || FAILED(hr = encoder->Commit())) {
+        SetErr(err, L"Commit failed");
+        goto Done;
+    }
+
+    {
+        HGLOBAL mem = nullptr;
+        if (FAILED(hr = GetHGlobalFromStream(stream, &mem)) || mem == nullptr) {
+            SetErr(err, L"GetHGlobalFromStream failed");
+            goto Done;
+        }
+        const SIZE_T size = GlobalSize(mem);
+        void* src = GlobalLock(mem);
+        if (src == nullptr) {
+            SetErr(err, L"GlobalLock failed");
+            goto Done;
+        }
+        out.assign(static_cast<const uint8_t*>(src),
+                   static_cast<const uint8_t*>(src) + size);
+        GlobalUnlock(mem);
+    }
+    ok = true;
+
+Done:
+    if (frame != nullptr) frame->Release();
+    if (props != nullptr) props->Release();
+    encoder->Release();
+    stream->Release();
+    return ok;
+}
+
 bool DecodeAnimatedImageFile(const wchar_t* path, DecodedAnimation& out, String* err) {
     if (path == nullptr || *path == L'\0') {
         SetErr(err, L"empty path");

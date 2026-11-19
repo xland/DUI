@@ -284,7 +284,8 @@ if (!doc.Diagnostics().Clean()) {
 | 回车                                   | 分裂块；列表项 → 新增同级项；空列表项回车 → **退出列表**；代码块内 → 只换行不拆块 |
 | 退格                                   | 段内按码点删；块首退格 → 与**上一块合并**（代码块不合并）                         |
 | Delete                                 | 段内后删；块尾 Delete → 与**后一块合并**（代码块不合并）                          |
-| `Ctrl+A` / `C` / `X` / `V` / `Z` / `Y` | 全选 / 复制 / 剪切 / 粘贴 / 撤销 / 重做                                           |
+| `Ctrl+A` / `C` / `X` / `V` / `Z` / `Y` | 全选 / 复制 / 剪切 / 粘贴 / 撤销 / 重做（粘贴：有文本贴文本，无文本则贴剪贴板图像）|
+| 拖入图像文件                           | 在光标处插图（PNG/JPG/BMP/GIF/TIFF/ICO；走元素级 `DropFilesEvent`，见 §5.7）      |
 | `Tab`                                  | 不消费 → 框架切焦点                                                               |
 
 - **撤销粒度 = 整文档快照**（上限 100 步），但**连续输入会合并成一步**。
@@ -311,6 +312,25 @@ float h = view->ContentHeight();        // 排版后的文档总高（DIP，不�
 
 > `SetDoc()` 是**值语义拷贝**，并且会**清空撤销栈**、复位光标。
 
+### 5.7 插入图片
+
+```cpp
+view->InsertImage(L"D:\\pics\\photo.png");   // 图像文件路径
+view->InsertImage(L"data:image/png;base64,iVBORw0KGgo...");  // 或 data URI
+```
+
+在当前光标处插一个图片块，**保留撤销栈与光标位置**（不走 `SetDoc`）：新块插在光标所在块之后，光标落在**图后**，可继续打字；`Ctrl+Z` 能撤回。只读（`SetEditable(false)`）时返回 `false`。
+
+尺寸由框架按图像自然尺寸决定，调用方**不用传 size**：图片块的 `width`/`height` 留 0，排版时按解码纹理的像素宽高比自动定盒（像素 ÷ DPI 缩放 = DIP）。路径为空、或文档中已无可用文本块时返回 `false`。图片格式为 WIC 支持的 PNG/JPEG/BMP/GIF/TIFF/ICO；解码失败显示占位框 + `altText`。
+
+**三种自动插图方式**（都走 `InsertImage` 内部通路，保留撤销栈、光标落图后）：
+
+- **`Ctrl+V` 图像位图**：剪贴板有文本时照常贴文本；无文本但有位图（截图工具、浏览器复制的图）时，框架把 CF_DIB 位图编码成 PNG → `data:image/png;base64,...` 内联插入。
+- **`Ctrl+V` 图像文件**：在资源管理器里选中图像文件（PNG/JPG 等）`Ctrl+C`，剪贴板是文件路径列表（`CF_HDROP`），框架按文件路径逐个插入。多个文件只插图、忽略非图像。
+- **拖入图像文件**：从资源管理器拖 PNG/JPG/BMP/GIF/TIFF/ICO 到编辑器，**鼠标未释放的悬停阶段就显示一条蓝色插入光标**（网页式体验，指示将插到何处）；释放即插到该落点（所见即所得）。走 OLE `IDropTarget`（`DragOverFilesEvent` 预览 → `DropFilesEvent` 插入，见 [Window.md](Window.md) §6.2）；非图像文件不消费、光标显示禁止符号。
+
+> 暂未设单图大小限制：内联 data URI 会让文档 JSON 膨胀约 33%，撤销是整文档快照，大图会让撤销栈涨得快。
+
 ---
 
 ## 6. 已知限制与坑
@@ -334,7 +354,7 @@ float h = view->ContentHeight();        // 排版后的文档总高（DIP，不�
 13. **没有 JSON 导出 API**。
 14. **没有变更事件**（无 `OnTextChanged` / `OnChange`），宿主只能轮询 `Doc()` 对比。
 15. 代码块正文在 `block.code` 而非 `runs`；JSON 的 `language` 字段被丢弃。
-16. 分割线不可编辑；图片只有"图前 / 图后"两个光标位，不能改尺寸。
+16. 分割线不可编辑；图片只有"图前 / 图后"两个光标位，不能改尺寸（但可用 `InsertImage` 插入，见 §5.7）。
 17. 引用块的 `attribution` 字段只在模型里，**渲染层暂不绘制**。
 18. `Doc()` 返回内部副本的引用，不能用于回写宿主模型；`SetDoc()` 会清空撤销栈。
 19. IME 同样没有内联 preedit。

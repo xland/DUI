@@ -167,6 +167,10 @@ struct ImageRef {
 
 **已定（2026-11）：保存用 base64 内联**（`data:image/png;base64,...`）。编辑期仍走内存 `Resource`，序列化时统一编码成 data URI —— 文档自包含、可单文件迁移，与 `settings` 一起就是一份完整文档。
 
+**落地现状（2026-11-19）**：上面 `ImageSourceKind` / `DocumentResources` / `ImageResolver` 是设计稿，**未实现**；实际模型是 `Block::src` 字符串（文件路径或 data URI）+ `Impl::ImageOf` 内联解码并按 src 做纹理缓存。`bool RichEditor::InsertImage(const String& path)` 已提供运行时插图：不传尺寸（`width/height` 留 0，排版层按纹理自然宽高比定盒），保留撤销栈与光标、落位于图后；不设单图大小上限（设计稿的 2 MB 建议暂未强制）。
+
+自动插图入口：`Ctrl+V` 无文本时读 `Clipboard::ReadImage`（CF_DIB→BGRA8）→ `graphics::EncodePng`（WIC PNG 编码，Graphics 层）→ base64 → `data:image/png;base64,...`；拖入图像文件走元素级 `DropFilesEvent` → `HandleDropFiles` 筛扩展名后按路径插图。两者都复用 `InsertImage` 通路。剪贴板 PNG 原格式（`HasFormat("image/png")`）未做直通，统一走 DIB→PNG 重编码。
+
 已知代价（接受）：JSON 体积膨胀约 33%；每次加载要 base64 + WIC 两次解码；大图内存峰值高。因此约定**单图上限**（建议 2 MB 原始字节，超出则拒绝插入并计数），并且保留切换到「缓存文件 + 相对路径」的余地 —— `ImageSourceKind` 已把两者分开，换存储方式不动模型。
 
 第一版**不做异步解码**，但 `ImageResolver` 按可异步设计（返回句柄，允许先给占位再替换），避免以后改签名。

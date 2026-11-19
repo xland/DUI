@@ -344,6 +344,7 @@ root->SetStyle(dui::Style()
 | 拖边框缩放 | 框架生成的热区被系统接管，拖动过程中内容跟手（不等松手才更新）                                          |
 | 最大化后   | `IsMaximized()` 为真 → 框架自动停用缩放热区                                                             |
 | 失活       | `WM_ACTIVATE` → 编辑控件失焦（光标停闪）                                                                |
+| 拖入文件   | 框架启用 `DragAcceptFiles`，走 `WM_DROPFILES` → `OnDropFiles()` → 元素级 `OnDropFiles` 事件（见 §6.2）  |
 
 ### 6.1 窗口操作与业务重写点
 
@@ -357,6 +358,23 @@ root->SetStyle(dui::Style()
 | `void OnStateChanged()`                          | 尺寸改变 / 最大化还原（换最大化按钮图标、重建 rgn）  |
 | `void OnDpiChanged(const DpiChanged&)`           | DPI 变化（重建 rgn、换资源）                         |
 | `bool OnClosing()`                               | 返回 `false` 阻止关闭                                |
+| `bool OnDragEnterFiles(paths, ptDip)` / `bool OnDragOverFiles(paths, ptDip)` | 拖拽进入 / 悬停，返回 true 表示接受（光标 COPY） |
+| `void OnDragLeaveFiles()` | 拖拽离开窗口 |
+| `void OnDropFiles(const std::vector<String>& paths, Vec2 ptDip)` | 释放拖放；默认走元素级路由，可重写自处理 |
+
+### 6.2 拖放文件（IDropTarget）
+
+框架在每个窗口建好后自动 `RegisterDragDrop`（独立 COM 对象 `App/DropTarget`，无需业务注册，也不需要 OLE 初始化——`Application` 已建 STA）。拖拽分三个阶段：
+
+- **悬停预览（M5.85）**：鼠标尚未释放、在窗口上移动时，持续派发 `DragOverFilesEvent` —— 隧道 + 冒泡；控件置 `handled=true` 表示接受（系统光标变 COPY，否则 NONE）。任意元素可绑 `OnDragOverFiles` 或覆写 `HandleDragOverFiles`。`DragEnter` 同理（`ev.enter=true`）：
+  ```cpp
+  editor->OnDragOverFiles([](dui::DragOverFilesEvent& ev) {
+      // ev.paths / ev.pos（命中元素局部 DIP）；ev.handled = true 接受
+  });
+  ```
+  离开窗口或释放后，框架递归清掉所有元素的预览态（`ClearDropPreview`）。
+- **释放插入**：`Window::OnDropFiles(paths, ptDip)` → `HitTest` 找释放点下元素 → `DropFilesEvent` 双阶段。任意元素可绑 `OnDropFiles` / 覆写 `HandleDropFiles`。
+- **RichEditor 内置**：`HandleDragOverFiles` 用落点算插入位置并显示一条蓝色插入光标（未聚焦也可见，网页式体验）；`HandleDropFiles` 释放时把图插到**预览位置**（所见即所得）。只吃 PNG/JPG/BMP/GIF/TIFF/ICO，其它文件不消费、光标 NONE（见 [Input.md](Input.md) §5.7）。
 
 ---
 

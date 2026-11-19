@@ -160,6 +160,15 @@ protected:
     // 窗口状态变化（尺寸改变 / 最大化还原）：业务可刷新自绘按钮的图标等
     virtual void OnStateChanged() {}
 
+    // 文件拖放（M5.85）：paths = 完整路径，ptDip = 悬停/释放点客户区 DIP。
+    // Enter/Over 返回 true 表示有元素接受（光标 COPY，否则 NONE）；默认走元素级
+    // 路由（命中元素隧道+冒泡，控件可绑 OnDragOverFiles / 覆写
+    // HandleDragOverFiles 显示插入预览）。重写可自己处理或拦下不派发。
+    virtual bool OnDragEnterFiles(const std::vector<String>& paths, Vec2 ptDip);
+    virtual bool OnDragOverFiles(const std::vector<String>& paths, Vec2 ptDip);
+    virtual void OnDragLeaveFiles();
+    virtual void OnDropFiles(const std::vector<String>& paths, Vec2 ptDip);
+
     Panel* Root() noexcept { return root_.get(); }
 
 private:

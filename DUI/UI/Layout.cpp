@@ -376,11 +376,13 @@ void ArrangeElement(Element* e, const Rect& slot, const StyleContext& parentCtx,
     const bool row = ResolveProperty(e, Prop::FlexDirection, ctx).u ==
                      static_cast<uint32_t>(FlexDirection::Row);
     if (e->GetKind() == Kind::Scroller) {
-        // 滚动容器：主轴按内容自然尺寸（可溢出 → 可滚动；子项不参与收缩），
-        // 交叉轴保持视口尺寸（子项比视口宽时溢出 → 横向也可滚）
+        // 滚动容器：主轴取"视口尺寸"与"内容自然尺寸"的较大值。
+        // 内容不足视口时主轴 = 视口 → freeSpace>0 → FlexGrow 子项铺满整片视口；
+        // 内容超出视口时主轴 = 自然尺寸 → 子项按内容排布、extent 超出 → 可滚动。
+        // 交叉轴保持视口尺寸（子项比视口宽时溢出 → 横向也可滚）。
         const Vec2 nat = static_cast<Scroller*>(e)->NaturalSize();
-        if (row) content.w = nat.x;
-        else     content.h = nat.y;
+        if (row) content.w = std::max(content.w, nat.x);
+        else     content.h = std::max(content.h, nat.y);
     }
     // 间距：gap 是通用值；rowGap / columnGap 未设则各自回落 gap（15-Properties §4.4）
     const float gapAll = ResolveProperty(e, Prop::Gap, ctx).f;

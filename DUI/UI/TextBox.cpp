@@ -601,17 +601,12 @@ Vec2 TextBox::TextOrigin() const {
             // 多行：文本顶对齐（文档语义）；仅掩码字符需要垂直补偿
             dy = maskDy_;
         } else {
-            // 单行：文本在内容盒内**垂直居中**
-            //   ① 行盒居中：内容盒比行高多出的空间上下平分（框比字高就对称裁剪，
-            //      而不是只裁底部 —— 旧实现从内容盒顶部起画，文字明显偏下）。
-            //   ② 视觉居中补偿：行盒居中 ≠ 视觉居中 —— DWrite 的 PROPORTIONAL 行距把
-            //      baseline 压在 ascent×factor 处（雅黑 1.27 em），而汉字墨迹只到
-            //      0.83 em → 行盒居中时墨迹仍偏下 1~2 DIP。按墨迹中心补偿，
-            //      与 Text 元素同一口径（UI/Layout.cpp 的"视觉居中"）。
+            // 单行：文本**行盒**在内容盒内垂直居中（输入框语义）。
+            // 刻意不按墨迹中心补偿（那是静态 Text 标签的口径）：选区高亮画的是整行矩形，
+            // 若按墨迹居中（雅黑墨迹在行盒内偏下 1~2 DIP），高亮块会相对输入框偏上，
+            // 选中态看起来就像文字没垂直居中。行盒居中则高亮与框上下留白均等。
             const float lineH = para->size.y;
-            dy = (c.h - lineH) * 0.5f;
-            dy += para->inkValid ? (lineH * 0.5f - (para->baseline - para->inkCenter))
-                                 : maskDy_;   // 墨迹数据不可用 → 退回掩码补偿
+            dy = (c.h - lineH) * 0.5f + maskDy_;  // maskDy_ 仅密码模式非零（对齐掩码圆点到行盒中心）
         }
     }
     // 水平对齐（TextAlign）：与 Text::TextOriginWith 同一口径 —— 段落按自然宽左排，

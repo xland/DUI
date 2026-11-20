@@ -614,7 +614,17 @@ Vec2 TextBox::TextOrigin() const {
                                  : maskDy_;   // 墨迹数据不可用 → 退回掩码补偿
         }
     }
-    return Vec2{c.x - scrollX_, c.y - scrollY_ + dy};
+    // 水平对齐（TextAlign）：与 Text::TextOriginWith 同一口径 —— 段落按自然宽左排，
+    // 绘制期在内容盒剩余宽度内整体平移。绘制/命中/光标/IME 共用一个原点，故一起偏移。
+    // 文本比内容盒宽时剩余为 0（退化为左对齐），横向滚动行为不受影响。
+    float dx = 0.f;
+    if (!multiline_ && para != nullptr) {
+        const uint32_t align = ResolveProperty(this, Prop::TextAlign).u;
+        const float extra = std::max(0.f, c.w - para->size.x);
+        if (align == static_cast<uint32_t>(TextAlign::Center)) dx = extra * 0.5f;
+        else if (align == static_cast<uint32_t>(TextAlign::End)) dx = extra;
+    }
+    return Vec2{c.x + dx - scrollX_, c.y - scrollY_ + dy};
 }
 
 uint32_t TextBox::HitTestIndex(const Vec2& ptAbs) const {

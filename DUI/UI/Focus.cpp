@@ -46,17 +46,31 @@ Element* FocusedElement() noexcept { return g_focus; }
 
 bool IsFocused(const Element* e) noexcept { return e != nullptr && e == g_focus; }
 
+// 焦点事件绑定：虚钩子（控件自身行为）先执行，再派发外部 OnFocus/OnBlur 绑定。
+// 与文档 06-Events「钩子先于绑定」一致；绑定内可查 IsFocused 得到新焦点态。
+void DispatchFocusBindings(Element* e, bool focused) {
+    const Element::Handlers* h = e->HandlersPtr();
+    if (h == nullptr) return;
+    if (focused) {
+        if (h->focus) h->focus();
+    } else {
+        if (h->blur) h->blur();
+    }
+}
+
 void SetFocus(Element* e) {
     if (e == g_focus) return;
     Element* old = g_focus;
-    g_focus = e;                       // 先更新全局态，钩子里查到的即新焦点
+    g_focus = e;                       // 先更新全局态，钩子和绑定里查到的即新焦点
     if (old != nullptr) {
         old->SetState(State::Focused, false);
         old->OnFocusChanged(false);
+        DispatchFocusBindings(old, false);
     }
     if (e != nullptr) {
         e->SetState(State::Focused, true);
         e->OnFocusChanged(true);
+        DispatchFocusBindings(e, true);
     }
     WakeUiPump();   // 焦点可能由程序代码设置（无输入消息）→ 唤醒泵重绘
 }

@@ -254,6 +254,19 @@ public:
         (phase == Phase::Tunnel ? h.tunnelClick : h.click) = std::move(fn);
     }
 
+    // 焦点事件（06-Events §6）：取得焦点 / 失去焦点，由 SetFocus 同步派发。
+    // 无事件对象、无阶段；与 OnFocusChanged 虚钩子并存（钩子先于本绑定执行）。
+    template <class Ctx>
+    void OnFocus(Ctx* ctx, void (Ctx::*fn)()) {
+        MutableHandlers().focus = [ctx, fn] { (ctx->*fn)(); };
+    }
+    void OnFocus(std::function<void()> fn) { MutableHandlers().focus = std::move(fn); }
+    template <class Ctx>
+    void OnBlur(Ctx* ctx, void (Ctx::*fn)()) {
+        MutableHandlers().blur = [ctx, fn] { (ctx->*fn)(); };
+    }
+    void OnBlur(std::function<void()> fn) { MutableHandlers().blur = std::move(fn); }
+
     // ------------------------------------------------------------------
     // 指针事件绑定（与 OnClick 同构：成员函数 + 上下文 / std::function）
     //   OnPointerEnter / OnPointerLeave —— 直达事件：命中链差分驱动，无阶段。
@@ -405,6 +418,7 @@ public:
         std::function<void(KeyEvent&)>     tunnelKeyDown, tunnelKeyUp, tunnelChar;
         std::function<void(DropFilesEvent&)> tunnelDropFiles;
         std::function<void(DragOverFilesEvent&)> tunnelDragOverFiles;
+        std::function<void()> focus, blur;   // 焦点事件（无事件对象，直达本元素）
     };
     // 事件派发只读访问（Event.cpp）
     const Handlers* HandlersPtr() const noexcept { return handlers_.get(); }

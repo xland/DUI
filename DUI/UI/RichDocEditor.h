@@ -22,6 +22,14 @@
 namespace dui {
 namespace richtext {
 
+// 行内样式种类（工具栏切换用）；粗体映射 RunStyle::weight = 700。
+enum class InlineStyle { Bold, Italic, Underline, Strike };
+
+// 把段内 [start, end) 的某个行内样式统一设为 on：相交 run 按区间切成
+// head / 命中 / tail 三段，只改命中段的样式字段，最后合并相邻同样式 run。
+// 代码块（内容在 block.code，无行内样式）直接忽略。
+void SetRangeStyle(Block& block, uint32_t start, uint32_t end, InlineStyle style, bool on);
+
 // runs 拼接出的段内文本（编辑定位 / 复制 / 命中用）
 String BlockText(const Block& block);
 

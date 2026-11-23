@@ -43,6 +43,14 @@ public:
     // 返回 false：路径为空 / 文档无可用文本块。撤销可用 Ctrl+Z。
     bool InsertImage(const String& imagePath);
 
+    // 对当前选区切换行内样式（保留撤销栈与光标，不走 SetDoc）。
+    // 选区样式全部已开启 → 关闭；否则 → 开启。无选区 / 不可编辑时返回 false。
+    // 支持 Ctrl+B / Ctrl+I / Ctrl+U 快捷键。
+    bool ToggleBold();
+    bool ToggleItalic();
+    bool ToggleUnderline();
+    bool ToggleStrike();
+
     // 排版后的文档总高（DIP，不含 padding）
     float ContentHeight() const noexcept;
 

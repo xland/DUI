@@ -564,17 +564,22 @@ void Painter::StrokeEllipse(Vec2 center, float rxDip, float ryDip, Color color,
 // 圆角矩形描边
 void Painter::StrokeRoundRect(const Rect& dipRect, const CornerRadii& radii, float widthDip,
                               Color color, float scale) {
-    const float ox = (dipRect.x + originDipX_) * scale;
-    const float oy = (dipRect.y + originDipY_) * scale;
-    const float w = dipRect.w * scale;
-    const float h = dipRect.h * scale;
+    // 盒边界对齐到整数物理像素：SDF 描边的 d=0 等值线若落在小数相位，1px 描边
+    // 一侧会分散到两个像素各覆盖约 0.5（显得宽而淡），另一侧集中到单个像素近乎
+    // 满覆盖（显得细而实）→ 左右/上下粗细不一。与 ShadowRoundRect 同一处理。
+    const float x0 = std::round((dipRect.x + originDipX_) * scale);
+    const float y0 = std::round((dipRect.y + originDipY_) * scale);
+    const float x1 = std::round((dipRect.x + originDipX_ + dipRect.w) * scale);
+    const float y1 = std::round((dipRect.y + originDipY_ + dipRect.h) * scale);
+    const float w = x1 - x0;
+    const float h = y1 - y0;
     if (w <= 0.f || h <= 0.f) return;
     const float half = std::max(widthDip * scale, 1.f) * 0.5f;
     float r[4] = {radii.tl * scale, radii.tr * scale, radii.br * scale, radii.bl * scale};
     for (int i = 0; i < 4; ++i) if (r[i] < 1.f) r[i] = 0.f;
     ClampRadii(r, w, h);
-    const float cx = ox + w * 0.5f;
-    const float cy = oy + h * 0.5f;
+    const float cx = (x0 + x1) * 0.5f;
+    const float cy = (y0 + y1) * 0.5f;
     const float hw = w * 0.5f;
     const float hh = h * 0.5f;
     PushShapeQuad(cx, cy, hw + half, hh + half, hw, hh, 0.f, 0.f, 0.f, half, color, 2,

@@ -453,6 +453,7 @@ struct RichEditor::Impl {
     bool CutSelection();
     bool PasteClipboard();
     void PushUndo(bool typing);
+    bool ToggleStyle(richtext::InlineStyle style);
     bool Undo();
     bool Redo();
     void Restore(const Snapshot& s);
@@ -1516,6 +1517,69 @@ void RichEditor::Impl::PushUndo(bool typing) {
     lastEditTyping = typing;
 }
 
+bool RichEditor::Impl::ToggleStyle(richtext::InlineStyle style) {
+    if (!HasSelection() || editables.empty()) return false;
+
+    Cursor a = ClampToDoc(caret);
+    Cursor b = ClampToDoc(anchor);
+    if (BlockLess(b, a)) std::swap(a, b);
+
+    // 判定 toggle 方向：选区内可见文本全部已开启 → 关闭；否则 → 开启。
+    // 图片块只有定位点、代码块无行内样式，均不参与判定与应用。
+    auto isOn = [style](const richtext::RunStyle& s) {
+        switch (style) {
+        case richtext::InlineStyle::Bold:      return s.weight >= 600u;
+        case richtext::InlineStyle::Italic:    return s.italic;
+        case richtext::InlineStyle::Underline: return s.underline;
+        case richtext::InlineStyle::Strike:    return s.strike;
+        }
+        return false;
+    };
+    bool allOn = true;
+    bool hasText = false;
+    for (size_t i = a.block; i <= b.block && i < editables.size(); ++i) {
+        richtext::Block* block = editables[i].block;
+        if (block->kind == richtext::BlockKind::Image ||
+            block->kind == richtext::BlockKind::Code) continue;
+        const uint32_t start = (i == a.block) ? a.offset : 0u;
+        const uint32_t end = (i == b.block) ? b.offset
+            : static_cast<uint32_t>(richtext::BlockText(*block).size());
+        if (end <= start) continue;
+        // 逐 run 检查与 [start,end) 相交的部分
+        uint32_t pos = 0;
+        for (const richtext::Run& run : block->runs) {
+            const uint32_t len = static_cast<uint32_t>(run.text.size());
+            const uint32_t runEnd = pos + len;
+            if (runEnd > start && pos < end && len > 0) {
+                hasText = true;
+                if (!isOn(run.style)) { allOn = false; break; }
+            }
+            pos = runEnd;
+        }
+        if (!allOn) break;
+    }
+    if (!hasText) return false;
+
+    const bool on = !allOn;
+    PushUndo(false);
+    for (size_t i = a.block; i <= b.block && i < editables.size(); ++i) {
+        richtext::Block* block = editables[i].block;
+        if (block->kind == richtext::BlockKind::Image ||
+            block->kind == richtext::BlockKind::Code) continue;
+        const uint32_t start = (i == a.block) ? a.offset : 0u;
+        const uint32_t end = (i == b.block) ? b.offset
+            : static_cast<uint32_t>(richtext::BlockText(*block).size());
+        richtext::SetRangeStyle(*block, start, end, style, on);
+    }
+    ++version;
+    Rebuild();
+    caret = anchor = ClampToDoc(Cursor{a.block, a.offset});
+    caretVisible = true;
+    linesDirty = true;
+    lastEditTyping = false;
+    return true;
+}
+
 bool RichEditor::Impl::Undo() {
     if (undo.empty()) return false;
     Snapshot current;
@@ -2347,6 +2411,9 @@ RichEditor::Impl::KeyResult RichEditor::Impl::HandleKey(int key, bool shift, boo
     case 'V': return PasteClipboard() ? KeyResult::Content : KeyResult::None;
     case 'Z': return Undo() ? KeyResult::Content : KeyResult::None;
     case 'Y': return Redo() ? KeyResult::Content : KeyResult::None;
+    case 'B': return ToggleStyle(richtext::InlineStyle::Bold) ? KeyResult::Content : KeyResult::None;
+    case 'I': return ToggleStyle(richtext::InlineStyle::Italic) ? KeyResult::Content : KeyResult::None;
+    case 'U': return ToggleStyle(richtext::InlineStyle::Underline) ? KeyResult::Content : KeyResult::None;
     default: return KeyResult::None;
     }
 }
@@ -2383,6 +2450,34 @@ bool RichEditor::InsertImage(const String& imagePath) {
         MarkDirty(kFlagLayout | kFlagPaint);
         RevealCaret();
     }
+    return ok;
+}
+
+bool RichEditor::ToggleBold() {
+    if (!editable_) return false;
+    const bool ok = impl_->ToggleStyle(richtext::InlineStyle::Bold);
+    if (ok) MarkDirty(kFlagLayout | kFlagPaint);
+    return ok;
+}
+
+bool RichEditor::ToggleItalic() {
+    if (!editable_) return false;
+    const bool ok = impl_->ToggleStyle(richtext::InlineStyle::Italic);
+    if (ok) MarkDirty(kFlagLayout | kFlagPaint);
+    return ok;
+}
+
+bool RichEditor::ToggleUnderline() {
+    if (!editable_) return false;
+    const bool ok = impl_->ToggleStyle(richtext::InlineStyle::Underline);
+    if (ok) MarkDirty(kFlagLayout | kFlagPaint);
+    return ok;
+}
+
+bool RichEditor::ToggleStrike() {
+    if (!editable_) return false;
+    const bool ok = impl_->ToggleStyle(richtext::InlineStyle::Strike);
+    if (ok) MarkDirty(kFlagLayout | kFlagPaint);
     return ok;
 }
 

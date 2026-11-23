@@ -4,6 +4,7 @@
 
 #include "UI/RichDocEditor.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace dui::richtext {
@@ -126,6 +127,68 @@ void InsertText(Block& block, uint32_t offset, const String& text, const RunStyl
         for (size_t i = index + 1; i < block.runs.size(); ++i) out.push_back(std::move(block.runs[i]));
     } else {
         out.push_back(std::move(inserted));
+    }
+
+    block.runs = std::move(out);
+    MergeRuns(block);
+}
+
+void SetRangeStyle(Block& block, uint32_t start, uint32_t end, InlineStyle style, bool on) {
+    if (start >= end) return;
+
+    // 代码块：内容在 block.code，无行内 run 样式，跳过
+    if (block.kind == BlockKind::Code) return;
+
+    auto apply = [style, on](RunStyle& s) {
+        switch (style) {
+        case InlineStyle::Bold:      s.weight = on ? 700u : 400u; break;
+        case InlineStyle::Italic:    s.italic = on; break;
+        case InlineStyle::Underline: s.underline = on; break;
+        case InlineStyle::Strike:    s.strike = on; break;
+        }
+    };
+
+    std::vector<Run> out;
+    out.reserve(block.runs.size());
+    uint32_t pos = 0;
+    for (Run& run : block.runs) {
+        const uint32_t length = static_cast<uint32_t>(run.text.size());
+        const uint32_t runEnd = pos + length;
+
+        if (runEnd <= start || pos >= end) {   // 完全在区间外：原样保留
+            out.push_back(std::move(run));
+            pos = runEnd;
+            continue;
+        }
+
+        // 相交 run 拆成最多三段：head 保留原样式、命中段改样式、tail 保留原样式
+        const uint32_t headLen = (start > pos) ? (start - pos) : 0;
+        const uint32_t hitFrom = headLen;
+        const uint32_t hitLen = (std::min(end, runEnd) > pos + hitFrom)
+            ? (std::min(end, runEnd) - pos - hitFrom) : 0;
+        const uint32_t tailFrom = hitFrom + hitLen;
+
+        if (headLen > 0) {
+            Run head;
+            head.style = run.style;
+            head.text.append(run.text, 0, headLen);
+            out.push_back(std::move(head));
+        }
+        if (hitLen > 0) {
+            Run hit;
+            hit.style = run.style;
+            apply(hit.style);
+            hit.text.append(run.text, hitFrom, hitLen);
+            out.push_back(std::move(hit));
+        }
+        if (tailFrom < length) {
+            Run tail;
+            tail.style = run.style;
+            tail.text.append(run.text, tailFrom, length - tailFrom);
+            out.push_back(std::move(tail));
+        }
+
+        pos = runEnd;
     }
 
     block.runs = std::move(out);

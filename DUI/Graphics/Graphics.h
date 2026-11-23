@@ -42,7 +42,7 @@ struct GlyphVertex {
 // ---- 有序绘制指令（10-Rendering §6.1）--------------------------------------
 // 收集期只记录指令 + 状态槽，顶点在 Device::Render 里按指令顺序流式发射。
 // 相邻同批/同资源的指令合并成段提交 → 单元内严格 painter's algorithm。
-enum class PaintOp : uint8_t { Rect = 0, Glyph = 1, Shape = 2, Image = 3 };
+enum class PaintOp : uint8_t { Rect = 0, Glyph = 1, Shape = 2, Image = 3, Gradient = 4 };
 
 struct PaintState {
     Transform2D xform{};                 // DIP 空间组合变换（发射期 .Scaled(scale)）
@@ -55,6 +55,9 @@ struct PaintState {
 //   Shape : cx/cy/hw/hh, p0x/p0y, p1x/p1y, extra, halfStroke, kind,
 //           r0/r1/r2/r3（四角圆角半径，物理像素）
 //   Image : dipRect.x/y/w/h
+//   Gradient: dipRect.x/y/w/h, r0/r1/r2/r3, dx/dy(渐变方向单位向量),
+//             t0/t1(渐变轴在盒上的投影范围, DIP)。resource 高 8 位 = spread，
+//             低 24 位 = LUT 纹理 id。
 struct PaintCommand {
     uint32_t op = 0;
     uint32_t state = 0;
@@ -93,6 +96,20 @@ struct ShapeVertex {
     uint32_t color;       // R8G8B8A8 内存序（straight alpha；预乘在 PS 完成）
 };
 
+// 渐变顶点（渐变批：LUT 采样 + 圆角矩形 SDF 裁形）。
+// u = LUT 采样坐标：CPU 按 CSS 角度把角点投影到渐变轴、再按周期归一；可 <0 或 >1，
+//     由 sampler 地址模式（CLAMP/WRAP/MIRROR = Pad/Repeat/Reflect）处理 spread；
+// local/ext/radii 供 PS 求 SDF 覆盖率，与 Rect 批同规则；
+// color 只承载累计不透明度（R=G=B=A=opacity，PS 里乘进 LUT alpha）。
+struct GradientVertex {
+    float    x, y;        // 物理像素
+    float    u;           // LUT 采样 u（可 <0/>1，由 sampler 地址模式处理 spread）
+    float    lx, ly;      // 相对矩形中心的偏移（物理像素）
+    float    hw, hh;      // 半宽 / 半高（物理像素）
+    float    r0, r1, r2, r3;  // 四角圆角半径（物理像素）
+    uint32_t color;       // 累计不透明度（alpha 有效）
+};  // 48B
+
 // CPU 端有序指令收集：不生成顶点，坐标换算与状态应用推迟到 Device::Render。
 // 顶点格式（Vertex / GlyphVertex / ShapeVertex）仍是 GPU 侧契约，由发射器生成。
 // 跨帧复用 vector（容量稳定后零分配）。
@@ -118,6 +135,13 @@ public:
                       float u0, float v0, float u1, float v1, Color color);
     // 图像四边形：把纹理铺满 dipRect（DIP 坐标 + scale，与 FillRoundedRect 同语义）
     void AddImageQuad(uint32_t texture, const Rect& dipRect, Color color, float scale);
+    // 渐变四边形：LUT 纹理（1D 色带）铺满 dipRect 并按圆角裁形。
+    // dir = 渐变方向单位向量（DIP 坐标，已按 CSS 角度换算）；spread = 0 Pad / 1 Repeat /
+    // 2 Reflect，编码进 resource 高 8 位，发射期选 sampler 地址模式。
+    // period = LUT 一个周期占整条渐变线的比例（Pad 恒为 1；Repeat/Reflect 为色标跨度），
+    // 发射期据此把盒内 u 缩放到跨若干周期。opacity 走累计态。
+    void AddGradientQuad(uint32_t lutTexture, const Rect& dipRect, const CornerRadii& radii,
+                         Vec2 dirDip, uint8_t spread, float period, float scale);
 
     // 形状指令（DIP 坐标 + scale，与 FillRoundedRect 同语义；2D 绘图控件用）
     void StrokeLine(Vec2 p0, Vec2 p1, Color color, float widthDip, float scale);
@@ -161,6 +185,11 @@ private:
     float opacity_ = 1.f;   // 累计不透明度（祖先链乘积）
     uint32_t curState_ = 0;
 };
+
+// 虚线折线：沿折线按 Dash 图案在 CPU 端切段，逐段 StrokeLine（零 GPU 改动）。
+// dash.on <= 0 时退化为逐段实线。供 Canvas 自绘与元素边框虚线共用。
+void StrokeDashedPolyline(Painter& p, const Vec2* points, size_t count,
+                          Color color, float widthDip, const Dash& dash, float scale);
 
 // 一个绘制单元 = 一个 Painter + 裁剪矩形（物理像素）。
 // 滚动容器的内容单独成单元，用 scissor 裁到视口内；单元顺序即绘制顺序。

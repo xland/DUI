@@ -20,7 +20,7 @@ A–J 按建议定案；K / L / I 为本次反馈的修订。
 | D | 结果三态 | 新增 `DialogResult<T>`（`Ok / Cancelled / Error`）；现有 `Result<T>` 无法区分「取消」与「出错」，不复用。消息框返回 `MessageResult` 枚举 |
 | E | 一期范围 | 文件：标题/初始路径/过滤器/默认项/多选；保存：标题/初始路径/过滤器/默认扩展名；路径：标题/初始路径、单选；消息：4 图标 × 7 按钮组 + 默认按钮 + 2 个便捷糖 |
 | F | 消息框实现 | **`MessageBoxW`**（user32，零额外清单依赖）；`TaskDialogIndirect` 需 comctl32 v6 清单，留二期 |
-| G | COM apartment | **UI 线程固定 STA**（`Application::Run` 起始 `OleInitialize`，见 ADR-027 / §9）。原方案复用 WIC 的 MTA 实测让 `IFileDialog::Show` 死锁，已改正；`Core/Dialog.cpp` 另做单元校验，非 STA 直接返回 `Error`，不再静默挂死 |
+| G | COM apartment | **UI 线程固定 STA**（`App::Run` 起始 `OleInitialize`，见 ADR-027 / §9）。原方案复用 WIC 的 MTA 实测让 `IFileDialog::Show` 死锁，已改正；`Core/Dialog.cpp` 另做单元校验，非 STA 直接返回 `Error`，不再静默挂死 |
 | H | 示例 | 新建 `Samples/Dialog`（四个能力按钮 + 便捷糖 + 结果文本），挂 `DUI.slnx` |
 | I | 保存文件对话框 | **做**（本次确认）：`IFileSaveDialog`，返回单个路径，规格见 §4 / §5.2 |
 | J | 文档编号 | `Doc/Arch/17-Dialogs.md` + `Doc/Dialogs.md` |
@@ -79,7 +79,7 @@ IFileOpenDialog / IFileSaveDialog + IShellItem(IShellItemArray)   /   MessageBox
 3. **Window 成员方法是薄封装**：`App/Dialog.cpp` 只做 owner 取值 + `dialogDepth_` 失活抑制（§6.2），业务也可直接调自由函数（`PickFiles` 等）。
 4. **无异常 / 无 RTTI**（ADR-007，`/EHs-c- /GR-`）：错误走 `DialogResult`，不抛；`std::vector` / `std::span` 均为头文件模板，分配失败按项目既有惯例（进程 terminate），不额外造异常路径。
 5. **链接库**：`ole32.lib` / `shell32.lib`（以及按需 `uuid.lib`）用 `#pragma comment(lib, ...)` 写在 `App/Dialog.cpp` 内，**不改根目录 `DUI.props`**（照 `windowscodecs.lib` 惯例，16-Image §2.1）。
-6. **UI 单线程**（ADR-012 / 07-Threading §3.1）：只允许在 UI 线程、且 `Application::Run` 建好 HWND 之后调用；禁止在后台线程直接调用（不提供内部跨线程转发）。
+6. **UI 单线程**（ADR-012 / 07-Threading §3.1）：只允许在 UI 线程、且 `App::Run` 建好 HWND 之后调用；禁止在后台线程直接调用（不提供内部跨线程转发）。
 
 工程落点：`DUI/App/Dialog.h/.cpp`（原 `DUI/Platform/Dialog.*` → Core 内部头 → 2026-11-11 二次整合为公共类型 + 实现合并到 `App/Dialog.cpp`）；`DUI/DUI.h` `#include "App/Dialog.h"`；`DUI/DUI.vcxproj` 与 `.filters` 登记。
 
@@ -188,7 +188,7 @@ bool          Confirm(const wchar_t* text, const wchar_t* title = nullptr); // Q
 ### 4.3 参数生命周期与调用时机
 
 - `title` / `initialPath` / `defaultExtension` / `filters[].name|pattern`：仅在**调用期间**需有效（Core 对话框实现在 `Show()` 返回前用完；不持有指针）。字面量或调用点同生命周期的局部数组均可，勿传临时 `String::c_str()` 后立刻销毁。
-- 必须在 `Application::Run` 之后（HWND 已建）调用；`OnCreate()` 里 HWND 已建但窗口未显示，此时弹窗会阻断 `Show()`，**允许但不推荐**。
+- 必须在 `App::Run` 之后（HWND 已建）调用；`OnCreate()` 里 HWND 已建但窗口未显示，此时弹窗会阻断 `Show()`，**允许但不推荐**。
 - 调用是**同步阻塞**的：从函数返回时对话框已关闭，结果可立即使用，无需回调 / `Then()`。
 
 ### 4.4 `MessageBox` 与 Win32 同名宏（必须处理）
@@ -238,7 +238,7 @@ NativeMessageResult ShowMessageBox(void* owner, const wchar_t* text, const wchar
 
 ### 5.1 文件 / 文件夹对话框通用流程
 
-1. **COM 单元（ADR-027）**：`Application::Run` 起始调用 `OleInitialize(nullptr)` 把 UI 线程建成 STA（进程级持有、不配对 Uninitialize），必须早于 WIC 的 MTA 尝试。本函数内再请求 `CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)`（已 STA 时返回 `S_FALSE`）；若返回 `RPC_E_CHANGED_MODE`（线程被别人建成 MTA）或 `CoGetApartmentType` 既不是 `APTTYPE_STA` 也不是 `APTTYPE_MAINSTA`，直接填 `error` 返回 —— MTA 下 `Show()` 会死锁，不能继续（`Pitfalls §4.11`）。
+1. **COM 单元（ADR-027）**：`App::Run` 起始调用 `OleInitialize(nullptr)` 把 UI 线程建成 STA（进程级持有、不配对 Uninitialize），必须早于 WIC 的 MTA 尝试。本函数内再请求 `CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)`（已 STA 时返回 `S_FALSE`）；若返回 `RPC_E_CHANGED_MODE`（线程被别人建成 MTA）或 `CoGetApartmentType` 既不是 `APTTYPE_STA` 也不是 `APTTYPE_MAINSTA`，直接填 `error` 返回 —— MTA 下 `Show()` 会死锁，不能继续（`Pitfalls §4.11`）。
 2. `CoCreateInstance(__uuidof(FileOpenDialog) / __uuidof(FileSaveDialog), ..., IID_PPV_ARGS(&dlg))`（coclass 带 `DECLSPEC_UUID`，免 `uuid.lib`，见 `Pitfalls §4.10`）；失败 → `error`。打开与保存共用一个内部 helper（按 CLSID 分流），避免复制粘贴。
 3. `GetOptions()` → 按位加 `FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_FILEMUSTEXIST`（文件夹模式加 `FOS_PICKFOLDERS`，去掉 `FOS_FILEMUSTEXIST`），多选加 `FOS_ALLOWMULTISELECT`，再 `SetOptions()`。
 4. `title` → `SetTitle()`；`SetFileTypes(count, COMDLG_FILTERSPEC[])`（数组保持存活至 `Show()` 返回）+ `SetFileTypeIndex(filterIndex + 1)`（0-based → 1-based，越界钳到 0）。
@@ -273,7 +273,7 @@ NativeMessageResult ShowMessageBox(void* owner, const wchar_t* text, const wchar
 
 ### 6.1 系统模态泵 vs 框架主循环
 
-`IFileDialog::Show` / `MessageBoxW` 内部跑自己的消息泵，`Application::Run`（`App.cpp:426-454`）的 `for(;;)` 挂起：
+`IFileDialog::Show` / `MessageBoxW` 内部跑自己的消息泵，`App::Run`（`App.cpp:426-454`）的 `for(;;)` 挂起：
 
 - `Dispatcher::Drain()` 不执行 → 后台任务的 `PostUi` 回投**不会丢**（`PostMessageW(WM_APP)` 排队），只是延后到对话框关闭后的第一次 `[调度]`；文档须明说「对话框打开期间界面不刷新、动画/GIF/光标闪烁停摆」。
 - `WM_APP` 唤醒消息会被系统模态泵派发到窗口过程，而窗口过程对它无副作用（`App.cpp:411`）；`WM_TIMER` 仍会标脏但不渲染，关闭后由主循环补一帧 —— 列入验收项实测。
@@ -329,7 +329,7 @@ NativeMessageResult ShowMessageBox(void* owner, const wchar_t* text, const wchar
 
 | 风险 | 影响 | 处理 |
 | --- | --- | --- |
-| **已修复（M7.1）**：初版沿用 WIC 的 MTA，实测点击文件类按钮后 `IFileDialog::Show` 死锁（进程无响应、无对话框窗口） | 三个文件类对话框全部不可用 | `Application::Run` 起始 `OleInitialize` 建 **STA**（ADR-027），`Platform/Dialog.cpp` 用 `CoGetApartmentType` 校验并放行 `APTTYPE_STA` / `APTTYPE_MAINSTA`；非 STA 返回 `Error` 而非挂界面。自动化点击复测四类弹窗均正常，15 个示例启动无回归（`Pitfalls §4.11`） |
+| **已修复（M7.1）**：初版沿用 WIC 的 MTA，实测点击文件类按钮后 `IFileDialog::Show` 死锁（进程无响应、无对话框窗口） | 三个文件类对话框全部不可用 | `App::Run` 起始 `OleInitialize` 建 **STA**（ADR-027），`Platform/Dialog.cpp` 用 `CoGetApartmentType` 校验并放行 `APTTYPE_STA` / `APTTYPE_MAINSTA`；非 STA 返回 `Error` 而非挂界面。自动化点击复测四类弹窗均正常，15 个示例启动无回归（`Pitfalls §4.11`） |
 | `OleInitialize` 建的是 main STA | 只判断 `APTTYPE_STA` 会误判 → 弹窗静默不出现 | 单元校验同时放行 `APTTYPE_MAINSTA`（§5.1） |
 | `winuser.h` 的 `MessageBox` 宏 | 跨 TU 符号不一致 | §4.4 的 `#undef` + 兼容别名；列入 D1 验收 |
 | 当前清单无 `longPathAware` | 超长路径（> MAX_PATH）可能拿不到 `SIGDN_FILESYSPATH` | 列已知限制；确需支持再单独加清单项（属全局 DPI 之外的改动） |

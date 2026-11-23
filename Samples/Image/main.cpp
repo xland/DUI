@@ -177,7 +177,7 @@ int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int) {
     if (argv != nullptr) LocalFree(argv);
     if (path.empty()) path = AssetPathInExeDir(L"image.png");
 
-    dui::Application app;
+    dui::App app;
     ImageWindow window(path);
     return app.Run(window);
 }

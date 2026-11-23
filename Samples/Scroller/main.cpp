@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 //  Samples/Scroller/main.cpp — 滚动容器控件（dui::Scroller）示例
 //
 //  演示三种用法：
@@ -130,7 +130,7 @@ private:
 }  // namespace
 
 int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int) {
-    dui::Application app;
+    dui::App app;
     ScrollerWindow window;
     return app.Run(window);
 }

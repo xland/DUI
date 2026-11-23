@@ -202,10 +202,10 @@ DirectWrite 仅支持 ttf/otf/ttc；woff/woff2 需先转 ttf。`Shape` 里族名
 - `COMDLG_FILTERSPEC` 定义在 `shtypes.h`，`SIGDN_FILESYSPATH` 在 `ShObjIdl_core.h`；过滤器数组必须活到 `Show()` 返回。
 - `GetDisplayName(SIGDN_FILESYSPATH)` 返回的 `LPWSTR` 必须 `CoTaskMemFree`；COM 接口用 RAII `ComReleaser` 兜底，提前 return 不漏 `Release`。
 - 取消是 `HRESULT_FROM_WIN32(ERROR_CANCELLED)`（`0x800704C7`），须单独映射成「用户取消」，别当成错误。
-- UI 线程 COM **必须 STA**（`Application::Run` 用 `OleInitialize` 建立，见 ADR-027）；MTA 下 `Show()` 死锁，详见 §4.11。
+- UI 线程 COM **必须 STA**（`App::Run` 用 `OleInitialize` 建立，见 ADR-027）；MTA 下 `Show()` 死锁，详见 §4.11。
 
 ### 5.11 Common Item Dialog 在 MTA 下死锁（M7.1，实测）
-现象：`Samples/Dialog` 点击「打开文件…/保存文件…/选择文件夹…」后进程 Not Responding，且枚举不到任何对话框窗口（卡在 `IFileDialog::Show` 内部）；`MessageBoxW` 完全正常。根因：UI 线程被 `CoInitializeEx(COINIT_MULTITHREADED)` 建成 MTA，Common Item Dialog / Shell 扩展按 STA 假设工作。修法：`Application::Run` 起始 `OleInitialize(nullptr)`（必须早于 WIC 的 MTA 初始化），`App/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验。
+现象：`Samples/Dialog` 点击「打开文件…/保存文件…/选择文件夹…」后进程 Not Responding，且枚举不到任何对话框窗口（卡在 `IFileDialog::Show` 内部）；`MessageBoxW` 完全正常。根因：UI 线程被 `CoInitializeEx(COINIT_MULTITHREADED)` 建成 MTA，Common Item Dialog / Shell 扩展按 STA 假设工作。修法：`App::Run` 起始 `OleInitialize(nullptr)`（必须早于 WIC 的 MTA 初始化），`App/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验。
 **二次踩坑**：`OleInitialize` 得到的是 **main STA（`APTTYPE_MAINSTA`）**，只判断 `APTTYPE_STA` 会把合法单元误判成错误 → 弹窗静默不出现、但进程响应正常（比死锁更难发现）。必须同时放行 `APTTYPE_STA` / `APTTYPE_MAINSTA`。
 诊断手法：自动 `PostMessage` 注入点击 → `EnumWindows` 按 PID 找 `#32770` + `Get-Process.Responding`；能区分「弹窗没开」「卡在 Show」「关闭后没回主循环」三种情况。
 

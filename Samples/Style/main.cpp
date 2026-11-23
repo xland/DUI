@@ -5,7 +5,8 @@
 //  继承属性沿树下传、状态变体 When(State::Hover, …)、
 //  级联优先级（Style → 本地 Set → 状态变体）、
 //  视觉属性集（Background / Color / CornerRadius / Opacity / 字号字重 /
-//  LineHeight / Padding / Cursor）、四角独立圆角（CornerRadii）、
+//  LineHeight / Padding / Cursor）、线性渐变背景（LinearGradient：CSS 角度 /
+//  多色标 / 硬边 / Pad·Reflect·Repeat）、四角独立圆角（CornerRadii）、
 //  边框（BorderWidth / BorderColor，实线内描边）、分边边框与虚线（BorderWidth(Thickness)
 //  / BorderStyle）、BoxSizing: BorderBox（边框占盒内空间）、Margin（外边距盒，不塌陷）、
 //  TextAlign（内容盒内对齐 + 继承）、运行时 Set 覆盖（Thickness / 字体族指针）、
@@ -162,6 +163,53 @@ protected:
             .FontSize(18.f)
             .FontWeight(dui::FontWeight::Bold)
             .LineHeight(1.6f));
+
+        // ---- 线性渐变背景（CSS linear-gradient 语义） ---------------------------
+        // 快捷构造：渐变块 + 居中白字标签。渐变随 CornerRadius 裁形、随 Opacity 叠加。
+        auto gradCell = [](dui::Panel* row, float w, const wchar_t* label,
+                           const dui::LinearGradient& g) {
+            dui::Panel* cell = row->AddChild<dui::Panel>(dui::Style()
+                .Width(w).Height(64.f).CornerRadius(8.f)
+                .Color(0xFFFFFFFF).FontSize(12.f).Background(g)
+                .JustifyContent(dui::Justify::Center).AlignItems(dui::Align::Center));
+            cell->AddChild<dui::Text>(label);
+        };
+
+        NewCaption(root, L"线性渐变 Background(LinearGradient)：CSS 角度 0°上 / 90°右 / 180°下 / 270°左");
+        dui::Panel* gradAngleRow = root->AddChild<dui::Panel>(dui::Style()
+            .FlexDirection(dui::FlexDirection::Row).Gap(10.f));
+        gradCell(gradAngleRow, 200.f, L"0° 向上", dui::LinearGradient(0.f, {
+            dui::Stop(0.f, 0xFF1E3A8A), dui::Stop(1.f, 0xFF6D28D9)}));
+        gradCell(gradAngleRow, 200.f, L"90° 向右", dui::LinearGradient(90.f, {
+            dui::Stop(0.f, 0xFF1E3A8A), dui::Stop(1.f, 0xFF6D28D9)}));
+        gradCell(gradAngleRow, 200.f, L"180° 向下（默认）", dui::LinearGradient(180.f, {
+            dui::Stop(0.f, 0xFF1E3A8A), dui::Stop(1.f, 0xFF6D28D9)}));
+        gradCell(gradAngleRow, 200.f, L"270° 向左", dui::LinearGradient(270.f, {
+            dui::Stop(0.f, 0xFF1E3A8A), dui::Stop(1.f, 0xFF6D28D9)}));
+
+        NewCaption(root, L"多色标平滑插值 + 同 offset 双色硬边（CSS 锐利分界）");
+        dui::Panel* gradStopRow = root->AddChild<dui::Panel>(dui::Style()
+            .FlexDirection(dui::FlexDirection::Row).Gap(10.f));
+        gradCell(gradStopRow, 410.f, L"三色平滑：蓝 → 品红 → 红", dui::LinearGradient(90.f, {
+            dui::Stop(0.f, 0xFF1E3A8A), dui::Stop(0.5f, 0xFFDB2777), dui::Stop(1.f, 0xFF991B1B)}));
+        gradCell(gradStopRow, 410.f, L"硬边：0.5 处蓝/橙锐利分界", dui::LinearGradient(90.f, {
+            dui::Stop(0.f, 0xFF1D4ED8), dui::Stop(0.5f, 0xFF1D4ED8),
+            dui::Stop(0.5f, 0xFFEA580C), dui::Stop(1.f, 0xFFEA580C)}));
+
+        NewCaption(root, L"spread：Pad 端点延伸 / Reflect 镜像（色带到头折回）/ Repeat 同向重复（CSS repeating）");
+        dui::Panel* gradSpreadRow = root->AddChild<dui::Panel>(dui::Style()
+            .FlexDirection(dui::FlexDirection::Row).Gap(10.f));
+        gradCell(gradSpreadRow, 270.f, L"Pad（默认）", dui::LinearGradient(0.f, {
+            dui::Stop(0.f, 0xFF1E3A8A), dui::Stop(1.f, 0xFF0E7490)}));
+        // 色标 offset 只占 [0,0.5] → 一个周期 = 0.5，盒内走两个周期；MIRROR 折回成"蓝→青→蓝"
+        gradCell(gradSpreadRow, 270.f, L"Reflect：蓝→青→蓝对称", dui::LinearGradient(0.f, {
+            dui::Stop(0.f, 0xFF1E3A8A), dui::Stop(0.5f, 0xFF0E7490)},
+            dui::GradientSpread::Reflect));
+        // 硬边色标定义在 [0,0.25] → 周期 0.25，盒内重复 4 道斜条纹
+        gradCell(gradSpreadRow, 270.f, L"Repeat：45° 斜条纹", dui::LinearGradient(45.f, {
+            dui::Stop(0.f, 0xFF1D4ED8), dui::Stop(0.125f, 0xFF1D4ED8),
+            dui::Stop(0.125f, 0xFF93C5FD), dui::Stop(0.25f, 0xFF93C5FD)},
+            dui::GradientSpread::Repeat));
 
         // ---- Overflow：默认溢出可见（与 CSS 一致），Hidden 显式截断 -------------
         NewCaption(root, L"Overflow：默认溢出可见（同 CSS）；Hidden 显式把内容裁到元素盒");
@@ -371,7 +419,7 @@ protected:
 }  // namespace
 
 int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int) {
-    dui::Application app;
+    dui::App app;
     StyleWindow window;
     return app.Run(window);
 }

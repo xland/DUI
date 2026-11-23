@@ -17,9 +17,9 @@
 
 namespace {
 
-dui::Application* g_app = nullptr;
+dui::App* g_app = nullptr;
 
-// 窗口对象由本容器持有（Application 只存 Window*，不负责释放）。
+// 窗口对象由本容器持有（App 只存 Window*，不负责释放）。
 // 每次重新开窗都新建一个对象 —— 复用旧对象会让 OnCreate 重复往 root_ 加控件。
 std::vector<std::unique_ptr<dui::Window>> g_windows;
 
@@ -82,7 +82,7 @@ void OpenWindow() {
 }  // namespace
 
 int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int) {
-    dui::Application app;
+    dui::App app;
     g_app = &app;
     app.SetQuitOnLastWindowClosed(false);   // 关掉所有窗口也不退出
 

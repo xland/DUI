@@ -180,8 +180,8 @@ Failed / Ok / Cancel / Yes / No / Retry / Abort / Ignore / TryAgain / Continue
 ## 5. 使用约束
 
 - **只在 UI 线程调用**（`OnCreate()`、`OnClick` 等事件回调里）。协程中须先 `co_await dui::Foreground()`。
-- **必须在 `Application::Run` 建好 HWND 之后**：只构造了 `Window` 还没 `Run` 时调用 → 文件类对话框返回 `Error`，`MessageBox` 返回 `Failed`。
-- **UI 线程必须是 STA**：`Application::Run` 内部已 `OleInitialize`；自建宿主必须自己 `OleInitialize`，否则文件类对话框返回明确错误（框架会提前检测，不会死锁）。
+- **必须在 `App::Run` 建好 HWND 之后**：只构造了 `Window` 还没 `Run` 时调用 → 文件类对话框返回 `Error`，`MessageBox` 返回 `Failed`。
+- **UI 线程必须是 STA**：`App::Run` 内部已 `OleInitialize`；自建宿主必须自己 `OleInitialize`，否则文件类对话框返回明确错误（框架会提前检测，不会死锁）。
 - **同步阻塞**：函数返回 = 对话框已关闭。期间框架主消息循环挂起（界面不刷新、动画停摆），后台任务的 `PostUi` 回投**延后**到关闭后执行（不会丢）。
 - **字符串一律 UTF-16**（`dui::String` / `const wchar_t*` / `L"..."`），中文路径直接可用；返回的是**绝对路径**。
 - `title` / `initialPath` / `defaultExtension` / `filters[].name|pattern` 只需在**调用期间**有效。`filters` 是 `std::span` 视图 —— 底层数组必须活到调用返回，别把即将销毁的 `String::c_str()` 传进去。
@@ -237,7 +237,7 @@ Failed / Ok / Cancel / Yes / No / Retry / Abort / Ignore / TryAgain / Continue
 
 1. **只返回文件系统路径**：选中「此电脑」里的库、虚拟 Shell 项等拿不到路径，会被跳过；一个都没取到时按失败报 `未取得文件路径`。
 2. **不读写文件**：保存对话框返回后文件并不存在 —— 框架只给路径。
-3. **UI 线程必须 STA**（§5）；`Application::Run` 已处理好，自建宿主要自己 `OleInitialize`。
+3. **UI 线程必须 STA**（§5）；`App::Run` 已处理好，自建宿主要自己 `OleInitialize`。
 4. **弹窗期间 UI 停摆**（§5）—— 系统模态泵接管了主循环，进度条不动、动画停是预期行为。
 5. **取消 ≠ 错误**。`Cancelled` 表示用户主动关闭，别弹错误提示。
 6. **打开模式选不到不存在的文件**（强制 `FOS_FILEMUSTEXIST`）。

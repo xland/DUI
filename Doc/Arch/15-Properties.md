@@ -90,7 +90,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 
 | 属性 | 类型 | 继承 | 失效 | 可动画 | 默认 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `backgroundColor` | Color | ✗ | Paint | ✓ | 透明 | Brush（渐变/图片）列为 P2 |
+| `backgroundColor` | Color / LinearGradient | ✗ | Paint | 渐变✗ / 纯色✓ | 透明 | **已落地（M5.89）**：`Background(LinearGradient)` 为变长声明（CSS linear-gradient 语义：CSS 角度 + 色标 + Pad/Reflect/Repeat），按色标内容缓存 LUT，走独立渐变管线（LUT 采样 + 圆角 SDF）；与纯色互斥。图片背景仍列 P2 |
 | `opacity` | Float | ✗ | Paint | ✓ | 1.0 | **已落地（M5.67）**：作用于**整棵子树**（CSS `opacity` 语义）—— 父元素淡出时文字与子元素一起淡出。绘制层由 `Painter` 承载"累计不透明度"（祖先链乘积），所有带色指令统一预乘；`Collector` 沿树累乘传递 |
 | `cornerRadius` | CornerRadii | ✗ | Paint | ✓ | 0 | **已落地**：四角独立圆角（CSS `border-radius` 顺序：左上/右上/右下/左下）。`Style::CornerRadius(float)` = 四角同值；`Style::CornerRadius(CornerRadii)` = 四角独立。绘制走 Graphics 的逐角 SDF；相邻两角半径之和超出该边长时按 CSS 规则同比例缩小全部半径；每角半径夹到 `min(w,h)/2`（超出则圆弧中心跑到盒外，SDF 不再是真实距离） |
 | `borderWidth` | Thickness（四边） | ✗ | Paint | ✓ | 0 | **已落地（M5.57）**：实线 / 虚线 / 点线、`borderStyle` 可选；**分边宽度**（`Style::BorderWidth(float)` = 四边同值，`Style::BorderWidth(Thickness)` = 左/上/右/下独立，顺序同 `Thickness`）。**内描边**（画在盒内缘）。等宽时走单个圆角矩形描边（圆角精确）；分边时四条边各自成带、角部按直角对接（不做 CSS 斜接），**分边时圆角不生效**。要边框占盒（挤压内容）需配 `boxSizing: border-box` |
@@ -167,7 +167,7 @@ using  StringId  = uint32_t;                    // 驻留字符串（字体族�
 
 ### 4.8 暂不做
 
-渐变/图片背景（需 Brush 与资源引用）、非等比缩放 / `TransformOrigin` / 矩阵形态 transform、多 Style 引用（class 列表，见 03-Style D3）、`will-change` 类提示、RTL `direction`（依赖文字排版层）。
+图片背景（需完整 Brush 与资源引用；线性渐变已于 M5.89 落地，见 §4.3）、非等比缩放 / `TransformOrigin` / 矩阵形态 transform、多 Style 引用（class 列表，见 03-Style D3）、`will-change` 类提示、RTL `direction`（依赖文字排版层）。
 
 > **已在本轮补齐**（M5.55–M5.58）：`wordSpacing`（§4.1）、`textOverflow: ellipsis`（§4.1，单行）、`borderWidth` 分边宽度 / `borderStyle` 虚线点线（§4.3）、`boxSizing`（§4.2）。
 > 仍未做：**外描边**（CSS `outline`，本轮按约定不做）、分边宽度 + 圆角（分边时圆角不生效）、多行省略号（`-webkit-line-clamp`）。

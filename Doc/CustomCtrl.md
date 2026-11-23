@@ -383,14 +383,14 @@ private:
 
 | 方法                                                                              | 说明                               |
 | --------------------------------------------------------------------------------- | ---------------------------------- |
-| `AddLine(p0, p1, color, width)`                                                   | 直线                               |
-| `AddPolyline(points, count, color, width)`                                        | 折线（**不闭合**）                 |
-| `AddPolygon(points, count, color, width)`                                         | 多边形（闭合**描边**；不支持填充） |
-| `AddRect(r, color)` / `AddRectOutline(r, color, width)`                           | 矩形填充 / 描边                    |
-| `AddRoundRect(r, radius, color)` / `AddRoundRectOutline(r, radius, color, width)` | 圆角矩形填充 / 描边                |
-| `AddEllipse(center, rx, ry, color)` / `AddEllipseOutline(...)`                    | 椭圆填充 / 描边                    |
-| `AddCircle(center, r, color)` / `AddCircleOutline(center, r, color, width)`       | 圆填充 / 描边                      |
-| `AddArc(center, r, startDeg, endDeg, color, width)`                               | 圆弧                               |
+| `AddLine(p0, p1, color, width, dash = {})`                                        | 直线                               |
+| `AddPolyline(points, count, color, width, dash = {})`                             | 折线（**不闭合**）                 |
+| `AddPolygon(points, count, color, width, dash = {})`                              | 多边形（闭合**描边**；不支持填充） |
+| `AddRect(r, color)` / `AddRectOutline(r, color, width, dash = {})`                | 矩形填充 / 描边                    |
+| `AddRoundRect(r, radius, color)` / `AddRoundRectOutline(r, radius, color, width, dash = {})` | 圆角矩形填充 / 描边      |
+| `AddEllipse(center, rx, ry, color)` / `AddEllipseOutline(..., dash = {})`          | 椭圆填充 / 描边                    |
+| `AddCircle(center, r, color)` / `AddCircleOutline(center, r, color, width, dash = {})` | 圆填充 / 描边                   |
+| `AddArc(center, r, startDeg, endDeg, color, width, dash = {})`                    | 圆弧                               |
 | `Clear()`                                                                         | 清空图元                           |
 | `Items()`                                                                         | 只读图元列表                       |
 
@@ -398,6 +398,16 @@ private:
 - Canvas 既可纯作绘图表面，也可当**容器**放子元素（`Canvas : public Panel`）。
 - 改图元后要 `Clear()` + 重新 `AddXxx()`。
 - **取舍**：`Canvas` 适合一次画好的矢量图；需要每帧按状态重画、或需要交互命中 → 派生 `Element` + `OnPaint`。
+
+**虚线描边**：所有描边方法末尾有可选 `Dash`（默认 `{}` = 实线，现有调用不变）。`Dash::Dashed(w)` = 实 3w/空 3w，`Dash::Dotted(w)` = 实 1 DIP/空 2w，`Dash::Custom(on, off)` 自定义长度（单位 DIP）。虚线在收集期把轮廓离散成折线、按图案 CPU 切段，零 GPU 改动；圆角矩形/椭圆的虚线是折线近似（每角 8 段 / 每 6°），实线仍走精确 SDF。
+
+```cpp
+canvas->AddLine({10, 20}, {200, 20}, 0xFF2D7FF9, 2.f, dui::Dash::Dashed(2.f));
+canvas->AddPolyline(pts, 4, 0xFF333333, 2.f, dui::Dash::Custom(8.f, 4.f));
+canvas->AddRectOutline({10, 40, 180, 60}, 0xFFED7D31, 2.f, dui::Dash::Dotted(2.f));
+```
+
+元素边框虚线（`Style::BorderStyle::Dashed/Dotted`）与 Canvas 虚线共用同一套切段逻辑（`graphics::StrokeDashedPolyline`），但元素边框的图案固定为 Dashed/Dotted 两档，Canvas 可自定义 on/off。
 
 ---
 

@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 //  CustomFont/main.cpp — 自定义字体文件（图标字体）演示
 //
 //  加载工程内未安装的 iconfont.ttf（图标字体，iconfont.cn 导出），
@@ -116,7 +116,7 @@ protected:
 }  // namespace
 
 int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int) {
-    dui::Application app;
+    dui::App app;
     CustomFontWindow window;
     return app.Run(window);
 }

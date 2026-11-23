@@ -34,6 +34,7 @@ struct CanvasItem {
     Type   type = Type::Line;
     Color  color = 0xFF000000;
     float  width = 1.f;        // 描边宽度（DIP）；填充图元忽略
+    Dash   dash;               // 虚线图案（on<=0 = 实线）；填充图元忽略
     Rect   rect;               // Rect / RoundRect：外框
     float  radius = 0.f;       // RoundRect：圆角半径（DIP）
     Vec2   center;             // Ellipse：中心
@@ -45,19 +46,21 @@ struct CanvasItem {
 class Canvas : public Panel {
 public:
     // ---- 图元追加（局部 DIP 坐标）----
+    // 描边图元末尾的 dash 参数（可选，默认实线）：Dash::Dashed(w)/Dotted(w)/Custom(on,off)。
+    // 虚线在收集期 CPU 切段，零 GPU 改动；填充图元不接受 dash。
     void Clear() noexcept;
-    void AddLine(Vec2 p0, Vec2 p1, Color color, float width = 1.f);
-    void AddPolyline(const Vec2* points, uint32_t count, Color color, float width = 1.f);
-    void AddPolygon(const Vec2* points, uint32_t count, Color color, float width = 1.f);
+    void AddLine(Vec2 p0, Vec2 p1, Color color, float width = 1.f, Dash dash = {});
+    void AddPolyline(const Vec2* points, uint32_t count, Color color, float width = 1.f, Dash dash = {});
+    void AddPolygon(const Vec2* points, uint32_t count, Color color, float width = 1.f, Dash dash = {});
     void AddRect(const Rect& r, Color color);
-    void AddRectOutline(const Rect& r, Color color, float width = 1.f);
+    void AddRectOutline(const Rect& r, Color color, float width = 1.f, Dash dash = {});
     void AddRoundRect(const Rect& r, float radius, Color color);
-    void AddRoundRectOutline(const Rect& r, float radius, Color color, float width = 1.f);
+    void AddRoundRectOutline(const Rect& r, float radius, Color color, float width = 1.f, Dash dash = {});
     void AddEllipse(Vec2 center, float rx, float ry, Color color);
-    void AddEllipseOutline(Vec2 center, float rx, float ry, Color color, float width = 1.f);
+    void AddEllipseOutline(Vec2 center, float rx, float ry, Color color, float width = 1.f, Dash dash = {});
     void AddCircle(Vec2 center, float r, Color color);
-    void AddCircleOutline(Vec2 center, float r, Color color, float width = 1.f);
-    void AddArc(Vec2 center, float r, float startDeg, float endDeg, Color color, float width = 1.f);
+    void AddCircleOutline(Vec2 center, float r, Color color, float width = 1.f, Dash dash = {});
+    void AddArc(Vec2 center, float r, float startDeg, float endDeg, Color color, float width = 1.f, Dash dash = {});
 
     const std::vector<CanvasItem>& Items() const noexcept { return items_; }
 

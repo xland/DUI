@@ -76,7 +76,7 @@ protected:
 };
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-    dui::Application app;
+    dui::App app;
     QuickStartWindow win;
     return app.Run(win);
 }
@@ -514,7 +514,7 @@ normal->AddChild<dui::Text>(L"④ 正常显示的一格", dui::Style().FontSize(
 
 | 属性                 | 取值                              | 默认            | 继承 |
 | -------------------- | --------------------------------- | --------------- | ---- |
-| `Background`         | `0xAARRGGBB`                      | 透明            | 否   |
+| `Background`         | `0xAARRGGBB` / `LinearGradient`   | 透明            | 否   |
 | `Color`              | `0xAARRGGBB`                      | 黑 `0xFF000000` | 是   |
 | `Opacity`            | `0..1`                            | 1               | 否   |
 | `CornerRadius`       | `float` / `CornerRadii`           | 0               | 否   |
@@ -526,6 +526,40 @@ normal->AddChild<dui::Text>(L"④ 正常显示的一格", dui::Style().FontSize(
 | `Padding` / `Margin` | `float` / `Thickness`             | 0               | 否   |
 | `Overflow`           | `Visible` / `Hidden` / `Scroll`   | `Visible`       | 否   |
 | `Visible`            | `bool`（false = 占位不画）              | `true`           | 是   |
+
+#### 10.1.1 渐变背景 `LinearGradient`
+
+`Background` 除纯色外还接受 `dui::LinearGradient`（CSS `linear-gradient` 语义），与纯色互斥、后设者胜。渐变沿元素盒铺开并自动按 `CornerRadius` 裁形，与 `Opacity` 叠加。
+
+```cpp
+root->AddChild<dui::Panel>(dui::Style()
+    .Width(240.f).Height(60.f).CornerRadius(12.f)
+    .Background(dui::LinearGradient(180.f, {
+        dui::Stop(0.f,   0xFF1E3A8A),   // offset ∈ [0,1]，颜色 0xAARRGGBB
+        dui::Stop(0.5f, 0xFF60A5FA),
+        dui::Stop(1.f,   0xFF3B82F6),
+    })));
+```
+
+- **角度**：CSS 约定——`0°` 向上、`90°` 向右、`180°`（默认）向下、`270°` 向左，顺时针递增。
+- **色标**：按 offset 线性插值；**同一 offset 放两个不同颜色 = 硬边**（CSS 标准技巧，可据此做锐利分界 / 条纹）。
+- **spread**（第三参数）：`GradientSpread::Pad`（默认，端点色延伸）/ `Reflect`（镜像，色带到头折回）/ `Repeat`（同向重复，CSS `repeating-linear-gradient`）。
+- **周期 = 色标的 offset 跨度**（`last.offset − first.offset`）：Pad 时色标铺满 [0,1]、盒内走一遍；`Reflect` / `Repeat` 时**色标要定义在小于 [0,1] 的范围**（如 [0,0.5]）——跨度即一个周期，盒内按渐变线长度重复若干次。若 Reflect/Repeat 的色标也铺满 [0,1]，盒内只有一遍，看不出镜像 / 重复效果。
+
+```cpp
+// 镜像渐变：色标占 [0,0.5]（周期 0.5），盒内走两遍，MIRROR 折回成"暗→亮→暗"对称
+dui::Style().Background(dui::LinearGradient(180.f, {
+    dui::Stop(0.f, 0xFF1F2937), dui::Stop(0.5f, 0xFF9CA3AF),
+}, dui::GradientSpread::Reflect));
+
+// 斜条纹：硬边色标定义在 [0,0.25]（周期 0.25）→ 盒内重复 4 道
+dui::Style().Background(dui::LinearGradient(45.f, {
+    dui::Stop(0.f, 0xFF374151), dui::Stop(0.125f, 0xFF374151),
+    dui::Stop(0.125f, 0xFFFFFFFF), dui::Stop(0.25f, 0xFFFFFFFF),
+}, dui::GradientSpread::Repeat));
+```
+
+支持状态变体（如鼠标悬停换渐变）：`When(State::Hover, Style().Background(gradient))`。渐变是静态声明，不参与属性动画，也无运行时 `Set(Prop::BackgroundGradient, ...)` 入口（变长数据）。实现按色标内容缓存 LUT 纹理，静态渐变只烘焙一次。
 
 ### 10.2 文本与字体
 

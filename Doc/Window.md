@@ -1,4 +1,4 @@
-﻿# DUI 自定义窗口边框与异形窗口指南（Window 开发者文档）
+# DUI 自定义窗口边框与异形窗口指南（Window 开发者文档）
 
 ## 1. 快速开始
 
@@ -39,11 +39,11 @@ public:
 
 ### 1.3 多窗口
 
-一个进程跑多个窗口：一个 `Application` 注册多个 `Window`，统一驱动，**关掉一个不影响其它窗口，最后一个关闭才退出**。
+一个进程跑多个窗口：一个 `App` 注册多个 `Window`，统一驱动，**关掉一个不影响其它窗口，最后一个关闭才退出**。
 
 ```cpp
 int WINAPI wWinMain(...) {
-    dui::Application app;
+    dui::App app;
     MainWindow  mainWnd;
     SettingsWnd settingsWnd;
 
@@ -55,7 +55,7 @@ int WINAPI wWinMain(...) {
 
 要点：
 
-- **只建一个 `Application`**（焦点 / 任务队列是进程级全局的）；窗口对象要活到 `Run()` 返回（声明在 `wWinMain` 里即可）。
+- **只建一个 `App`**（焦点 / 任务队列是进程级全局的）；窗口对象要活到 `Run()` 返回（声明在 `wWinMain` 里即可）。
 - 每个窗口独立 `OnCreate` 搭界面、独立事件与焦点切换、可各在不同 DPI 显示器。
 - 单窗口场景仍可用老写法 `app.Run(window)`（等价于 `AddWindow` + `Run`）。
 - 失活切到本进程另一个窗口时，焦点会正确转到新窗口，不会被旧窗口的失活处理清掉。
@@ -67,7 +67,7 @@ int WINAPI wWinMain(...) {
 默认：最后一个窗口关闭 → 应用退出（点关闭 = 退出）。这个行为**可以改**：
 
 ```cpp
-dui::Application app;
+dui::App app;
 app.SetQuitOnLastWindowClosed(false);   // 关掉所有窗口后进程继续
 app.AddWindow(mainWnd);
 return app.Run();                        // 不再随窗口关闭而返回
@@ -364,7 +364,7 @@ root->SetStyle(dui::Style()
 
 ### 6.2 拖放文件（IDropTarget）
 
-框架在每个窗口建好后自动 `RegisterDragDrop`（独立 COM 对象 `App/DropTarget`，无需业务注册，也不需要 OLE 初始化——`Application` 已建 STA）。拖拽分三个阶段：
+框架在每个窗口建好后自动 `RegisterDragDrop`（独立 COM 对象 `App/DropTarget`，无需业务注册，也不需要 OLE 初始化——`App` 已建 STA）。拖拽分三个阶段：
 
 - **悬停预览（M5.85）**：鼠标尚未释放、在窗口上移动时，持续派发 `DragOverFilesEvent` —— 隧道 + 冒泡；控件置 `handled=true` 表示接受（系统光标变 COPY，否则 NONE）。任意元素可绑 `OnDragOverFiles` 或覆写 `HandleDragOverFiles`。`DragEnter` 同理（`ev.enter=true`）：
   ```cpp

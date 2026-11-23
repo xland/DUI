@@ -144,7 +144,7 @@ DUI_PROPERTY(FontSize,        Length,  Inherit | Layout | Text)
 
 | 方案 | 说明 |
 | --- | --- |
-| **编译期常量 + 运行时替换接口**（建议 MVP） | 默认主题是 `constexpr` 表；`Application::SetTheme(Theme*)` 整体换指针；不做文件解析 |
+| **编译期常量 + 运行时替换接口**（建议 MVP） | 默认主题是 `constexpr` 表；`App::SetTheme(Theme*)` 整体换指针；不做文件解析 |
 | 运行时资源文件（自定义二进制/JSON） | 需要解析器和资源加载，与"体积小"冲突；列为远期 |
 
 **建议：MVP 走前者**，把"是否需要文件形态"留在 ADR-018 的待定项里继续挂起。
@@ -356,7 +356,7 @@ Color c = Style::Resolve(element, Prop::Color);   // 非继承属性 O(1–3)
 1. **D1 / D2 / D3 / D4** 是否按建议拍板。
 2. MVP 属性清单（§3.2）是否增减；~~`shadow`~~ 已落地（box-shadow 子集，见 15-Properties §4.3）、~~`textDecoration`~~ 已落地（Underline / LineThrough 子集，见 15-Properties §4.1）。
 3. ~~已定~~：状态全集、多状态合并优先级、`SetState` 写入契约、`selected` 归属见 §6.2。
-4. `background` 是否提前升级为 `Brush`（纯色 / 线性渐变 / 图片）—— 影响是否需要资源引用与资源管理。
+4. ~~`background` 是否升级为 `Brush`~~：**线性渐变已落地（M5.89）**，`Background(LinearGradient)` 为变长声明 + LUT 缓存，无需完整 Brush；图片背景仍待定（需资源引用与管理）。
 5. 元素本地覆盖是否允许超过 2 条（内联容量取值，决定元素基础尺寸）。
 6. `Style` 注册是进程级还是窗口级（多窗口不同主题时的行为）。
 7. 主题切换是否需要平滑变化 —— 若需要，由业务代码对受影响属性显式调用 `Animate()`，样式层不提供隐式过渡。

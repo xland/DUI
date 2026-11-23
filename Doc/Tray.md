@@ -22,9 +22,9 @@
 #include "DUI/DUI.h"
 
 namespace {
-dui::Application* g_app = nullptr;
+dui::App* g_app = nullptr;
 
-// Application 只存 Window*，不负责释放；窗口对象须活到 Run() 返回。
+// App 只存 Window*，不负责释放；窗口对象须活到 Run() 返回。
 std::vector<std::unique_ptr<dui::Window>> g_windows;
 
 class TrayWindow final : public dui::Window {
@@ -46,7 +46,7 @@ void OpenWindow() {
 }  // namespace
 
 int WINAPI wWinMain(...) {
-    dui::Application app;
+    dui::App app;
     g_app = &app;
     app.SetQuitOnLastWindowClosed(false);
 
@@ -150,9 +150,9 @@ tray.OnContextMenu([&](dui::Vec2 p) {
 
 ## 5. 实现要点与坑
 
-1. **message-only 窗口自包含**：`Show()` 时才创建（`HWND_MESSAGE`，不显示、不进任务栏），析构时销毁。它**不进** `Application::windows_`、不参与 `WindowCount()` 与退出判定。不用托盘则完全没有这个窗口。
-2. **重开窗口要 `new` 新对象**：`Application` 只存 `Window*`，关窗不会销毁 `Window` 对象；复用旧对象会让 `OnCreate()` 再次往 `root_` 追加控件、界面重复。像示例那样把每次新建的对象存进容器。
+1. **message-only 窗口自包含**：`Show()` 时才创建（`HWND_MESSAGE`，不显示、不进任务栏），析构时销毁。它**不进** `App::windows_`、不参与 `WindowCount()` 与退出判定。不用托盘则完全没有这个窗口。
+2. **重开窗口要 `new` 新对象**：`App` 只存 `Window*`，关窗不会销毁 `Window` 对象；复用旧对象会让 `OnCreate()` 再次往 `root_` 追加控件、界面重复。像示例那样把每次新建的对象存进容器。
 3. **策略 `false` 后必须自己 `Quit()`**：否则 `Run()` 永不返回。`Quit(code)` 任意线程可调，`code` 成为 `Run()` 的返回值。
-4. **一个进程一个 `Application`**：焦点与任务队列是进程级全局的。
+4. **一个进程一个 `App`**：焦点与任务队列是进程级全局的。
 5. **关窗不退出期间后台仍工作**：`app.SetTimer(ms, fn)` 是窗口无关的定时器（所有窗口关掉也触发，回调在 UI 线程），`app.KillTimer(id)` 取消。见 [Window.md](Window.md) §1.4。
 6. **关窗前确认**是另一层面的事：`Window::OnClosing()` 返回 `false` 阻止单个窗口关闭，与"关窗后是否退出应用"的应用级策略不同。见 [Window.md](Window.md) §1.4。

@@ -2,7 +2,7 @@
 //  DUI/Core/Dispatcher.h — UI 线程任务队列 + 后台线程池（07-Threading §3/§4）
 //
 //  线程规则（07-Threading §3.1 唯一铁律）：后台线程只碰纯数据；触碰 UI 的任务
-//  一律经 Post 回投 UI 线程。UI Dispatcher 由 Application::Run 安装并排空。
+//  一律经 Post 回投 UI 线程。UI Dispatcher 由 App::Run 安装并排空。
 //
 //  实现注记：PostMessage 唤醒需要 HWND（07-Threading D4），本模块因此含少量
 //  Win32。「Core 不依赖 Win32」约束已于 2026-11-11 取消（剪贴板下沉 Core 同批），
@@ -40,7 +40,7 @@ private:
     bool stop = false;
 };
 
-// UI 线程任务队列 + 泵。每轮消息循环由 Application 排空（[调度] 步）。
+// UI 线程任务队列 + 泵。每轮消息循环由 App 排空（[调度] 步）。
 class Dispatcher {
 public:
     Dispatcher() = default;
@@ -50,10 +50,10 @@ public:
     void Post(std::function<void()> fn);
     // 仅 UI 线程调用：执行当前积压任务（执行期间新 Post 的进下一轮）
     void Drain();
-    // Application::Run 安装唤醒目标窗口：有窗口时 PostMessage 唤醒（最稳）。
+    // App::Run 安装唤醒目标窗口：有窗口时 PostMessage 唤醒（最稳）。
     void SetWakeTarget(HWND hwnd, UINT wakeMessage);
     // 无窗口阶段的唤醒目标线程：hwnd 为空时改走 PostThreadMessage。
-    // 窗口全部销毁且退出策略为"不退出"时由 Application 设置。
+    // 窗口全部销毁且退出策略为"不退出"时由 App 设置。
     void SetWakeThread(DWORD threadId) noexcept;
 
     static Dispatcher* Ui();           // 进程级 UI Dispatcher（未安装返回 nullptr）

@@ -166,6 +166,64 @@ float4 PSMain(PSInI i) : SV_Target {
 }
 )";
 
+// 渐变批（LUT 采样 + 圆角矩形 SDF 裁形）：顶点携带 LUT 采样 u（可越界，由
+// sampler 地址模式处理 Pad/Repeat/Reflect）+ SDF 参数。LUT 是 N×1 的 BGRA8 色带，
+// 已按 CSS 色标插值烘焙，A 通道为 straight；采样后乘累计 opacity 并预乘、乘 cov。
+constexpr char kVSGrad[] = R"(
+struct VSIn {
+    float2 pos    : POSITION;
+    float  u      : TEXCOORD0;
+    float2 local  : TEXCOORD1;
+    float2 ext    : TEXCOORD2;
+    float4 radii  : TEXCOORD3;
+    float4 color  : COLOR;
+};
+struct VSOut {
+    float4 svpos  : SV_Position;
+    float  u      : TEXCOORD0;
+    float2 local  : TEXCOORD1;
+    float2 ext    : TEXCOORD2;
+    float4 radii  : TEXCOORD3;
+    float4 color  : COLOR;
+};
+cbuffer PerFrame : register(b0) {
+    float2 g_rtSize;
+}
+VSOut VSMain(VSIn i) {
+    VSOut o;
+    o.svpos = float4(i.pos.x / g_rtSize.x * 2.0 - 1.0,
+                     1.0 - i.pos.y / g_rtSize.y * 2.0, 0.0, 1.0);
+    o.u = i.u; o.local = i.local; o.ext = i.ext; o.radii = i.radii; o.color = i.color;
+    return o;
+}
+)";
+
+constexpr char kPSGrad[] = R"(
+Texture2D g_lut : register(t0);
+SamplerState g_sampler : register(s0);   // 地址模式：CLAMP/WRAP/MIRROR
+struct PSIn {
+    float4 svpos  : SV_Position;
+    float  u      : TEXCOORD0;
+    float2 local  : TEXCOORD1;
+    float2 ext    : TEXCOORD2;
+    float4 radii  : TEXCOORD3;
+    float4 color  : COLOR;
+};
+float sdRoundBox4(float2 p, float2 b, float4 r) {
+    r.xy = (p.x > 0.0) ? r.yz : r.xw;
+    r.x  = (p.y > 0.0) ? r.y : r.x;
+    float2 q = abs(p) - b + r.x;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r.x;
+}
+float4 PSMain(PSIn i) : SV_Target {
+    float4 t = g_lut.Sample(g_sampler, float2(i.u, 0.5));   // straight BGRA8
+    float  d = sdRoundBox4(i.local, i.ext, i.radii);
+    float  cov = 1.0 - smoothstep(-0.5, 0.5, d);
+    float  a = t.a * i.color.a;
+    return float4(t.rgb * a * cov, a * cov);               // straight → 预乘（ADR-013）
+}
+)";
+
 // 形状批（SDF 图元）：一个四边形 + 局部空间有符号距离 + 1 像素过渡带 AA。
 // kind：0 胶囊（线段）/ 1 椭圆 / 2 圆角矩形；halfStroke = 0 填充，> 0 描边。
 constexpr char kVSS[] = R"(
@@ -288,7 +346,8 @@ Rect CommandBounds(const PaintCommand& c, const PaintState& st,
                    const Transform2D& eff, float scale) {
     float x0, y0, x1, y1;
     if (c.op == static_cast<uint32_t>(PaintOp::Rect) ||
-        c.op == static_cast<uint32_t>(PaintOp::Image)) {
+        c.op == static_cast<uint32_t>(PaintOp::Image) ||
+        c.op == static_cast<uint32_t>(PaintOp::Gradient)) {
         x0 = (c.p[0] + st.originDipX) * scale;
         y0 = (c.p[1] + st.originDipY) * scale;
         x1 = x0 + c.p[2] * scale;
@@ -392,6 +451,49 @@ void Painter::AddImageQuad(uint32_t texture, const Rect& dipRect, Color color, f
     PaintCommand& c = NewCommand(PaintOp::Image, texture, PackColor(color, opacity_));
     c.p[0] = dipRect.x; c.p[1] = dipRect.y;
     c.p[2] = dipRect.w; c.p[3] = dipRect.h;
+}
+
+void Painter::AddGradientQuad(uint32_t lutTexture, const Rect& dipRect,
+                              const CornerRadii& radii, Vec2 dirDip,
+                              uint8_t spread, float period, float) {
+    if (dipRect.w <= 0.f || dipRect.h <= 0.f) return;
+    // spread 编进 resource 高 8 位，低 24 位留给 LUT 纹理 id；段合并按 resource
+    // 自然区分不同 LUT / spread。
+    const uint32_t encoded = (uint32_t(spread & 0xFF) << 24) | (lutTexture & 0x00FFFFFF);
+    PaintCommand& c = NewCommand(PaintOp::Gradient, encoded, PackColor(0xFFFFFFFFu, opacity_));
+    c.p[0] = dipRect.x; c.p[1] = dipRect.y; c.p[2] = dipRect.w; c.p[3] = dipRect.h;
+    c.p[4] = radii.tl; c.p[5] = radii.tr; c.p[6] = radii.br; c.p[7] = radii.bl;
+    c.p[8] = dirDip.x; c.p[9] = dirDip.y;
+    c.p[10] = period > 0.f ? period : 1.f;
+}
+
+void StrokeDashedPolyline(Painter& p, const Vec2* pts, size_t n, Color color,
+                          float widthDip, const Dash& dash, float scale) {
+    if (pts == nullptr || n < 2 || widthDip <= 0.f) return;
+    if (dash.on <= 0.f || dash.off <= 0.f) {
+        // 实线退化：逐段直画
+        for (size_t i = 0; i + 1 < n; ++i) p.StrokeLine(pts[i], pts[i + 1], color, widthDip, scale);
+        return;
+    }
+    const float onLen = dash.on, offLen = dash.off;
+    bool on = true;
+    float remain = onLen;
+    for (size_t i = 0; i + 1 < n; ++i) {
+        const Vec2 a = pts[i], b = pts[i + 1];
+        const float dx = b.x - a.x, dy = b.y - a.y;
+        const float segLen = std::sqrt(dx * dx + dy * dy);
+        if (segLen <= 1e-6f) continue;
+        float t = 0.f;
+        while (t < segLen) {
+            const float step = std::min(remain, segLen - t);
+            const Vec2 s{a.x + dx * (t / segLen), a.y + dy * (t / segLen)};
+            const Vec2 e{s.x + dx * (step / segLen), s.y + dy * (step / segLen)};
+            if (on) p.StrokeLine(s, e, color, widthDip, scale);
+            t += step;
+            remain -= step;
+            if (remain <= 1e-4f) { on = !on; remain = on ? onLen : offLen; }
+        }
+    }
 }
 
 // 形状图元：记录一条 Shape 指令（参数均为物理像素，调用方已完成 DIP → 像素换算）。
@@ -554,7 +656,13 @@ Device::~Device() {
                                    reinterpret_cast<ID3D11DeviceChild*>(psS_),
                                    reinterpret_cast<ID3D11DeviceChild*>(layoutS_),
                                    reinterpret_cast<ID3D11DeviceChild*>(psI_),
-                                   reinterpret_cast<ID3D11DeviceChild*>(samplerI_)}) {
+                                   reinterpret_cast<ID3D11DeviceChild*>(samplerI_),
+                                   reinterpret_cast<ID3D11DeviceChild*>(vsGrad_),
+                                   reinterpret_cast<ID3D11DeviceChild*>(psGrad_),
+                                   reinterpret_cast<ID3D11DeviceChild*>(layoutGrad_),
+                                   reinterpret_cast<ID3D11DeviceChild*>(samplerGrad_[0]),
+                                   reinterpret_cast<ID3D11DeviceChild*>(samplerGrad_[1]),
+                                   reinterpret_cast<ID3D11DeviceChild*>(samplerGrad_[2])}) {
         if (res != nullptr) res->Release();
     }
     for (GlyphPageTex& t : pages_) {
@@ -757,6 +865,60 @@ bool Device::Init(HWND hwnd, bool transparent, String& error) {
         return false;
     }
 
+    // 渐变管线（LUT 采样 + 圆角矩形 SDF）：独立顶点格式 GradientVertex
+    ID3DBlob* vsGradBlob = nullptr;
+    if (!CompileShader(kVSGrad, "VSMain", "vs_5_0", &vsGradBlob, error)) return false;
+    hr = dev_->CreateVertexShader(vsGradBlob->GetBufferPointer(), vsGradBlob->GetBufferSize(),
+                                  nullptr, &vsGrad_);
+    if (SUCCEEDED(hr)) {
+        constexpr D3D11_INPUT_ELEMENT_DESC kLayoutGrad[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,       0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT,          0,  8, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,       0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT,       0, 20, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 28, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"COLOR",    0, DXGI_FORMAT_R8G8B8A8_UNORM,     0, 44, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        };
+        hr = dev_->CreateInputLayout(kLayoutGrad, 6, vsGradBlob->GetBufferPointer(),
+                                     vsGradBlob->GetBufferSize(), &layoutGrad_);
+    }
+    vsGradBlob->Release();
+    if (FAILED(hr)) {
+        error = L"CreateVertexShader/InputLayout(gradient) failed";
+        return false;
+    }
+
+    ID3DBlob* psGradBlob = nullptr;
+    if (!CompileShader(kPSGrad, "PSMain", "ps_5_0", &psGradBlob, error)) return false;
+    hr = dev_->CreatePixelShader(psGradBlob->GetBufferPointer(), psGradBlob->GetBufferSize(),
+                                 nullptr, &psGrad_);
+    psGradBlob->Release();
+    if (FAILED(hr)) {
+        error = L"CreatePixelShader(gradient) failed";
+        return false;
+    }
+
+    // 三种地址模式：0 Pad=CLAMP（端点色延伸）/ 1 Repeat=WRAP / 2 Reflect=MIRROR。
+    // 线性过滤：LUT 是 N×1 色带，线性插值得到平滑 stop 过渡。
+    const D3D11_TEXTURE_ADDRESS_MODE kAddr[3] = {
+        D3D11_TEXTURE_ADDRESS_CLAMP,
+        D3D11_TEXTURE_ADDRESS_WRAP,
+        D3D11_TEXTURE_ADDRESS_MIRROR,
+    };
+    for (int i = 0; i < 3; ++i) {
+        D3D11_SAMPLER_DESC sg{};
+        sg.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+        sg.AddressU = kAddr[i];
+        sg.AddressV = sg.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sg.ComparisonFunc = D3D11_COMPARISON_NEVER;
+        sg.MaxLOD = D3D11_FLOAT32_MAX;
+        hr = dev_->CreateSamplerState(&sg, &samplerGrad_[i]);
+        if (FAILED(hr)) {
+            error = L"CreateSamplerState(gradient) failed";
+            return false;
+        }
+    }
+
     // 常量缓冲：仅 rtSize（正交投影在 VS 内完成）
     D3D11_BUFFER_DESC cbd{};
     cbd.ByteWidth = 16;
@@ -910,8 +1072,9 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
     if (FAILED(ctx_->Map(vb_, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) return;
     auto* dst = static_cast<uint8_t*>(m.pData);
     uint32_t written = 0;   // 已写入字节数；各段 quad 字节数均为 16 的倍数 → 写入地址对齐
-    constexpr uint32_t kQuadBytes[4] = {4 * sizeof(Vertex), 4 * sizeof(GlyphVertex),
-                                        4 * sizeof(ShapeVertex), 4 * sizeof(GlyphVertex)};
+    constexpr uint32_t kQuadBytes[5] = {4 * sizeof(Vertex), 4 * sizeof(GlyphVertex),
+                                        4 * sizeof(ShapeVertex), 4 * sizeof(GlyphVertex),
+                                        4 * sizeof(GradientVertex)};
     constexpr float kSx[4] = {-1.f, 1.f, 1.f, -1.f};
     constexpr float kSy[4] = {-1.f, -1.f, 1.f, 1.f};
 
@@ -988,6 +1151,36 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
                     v[i] = GlyphVertex{q.x, q.y, kSx[i] < 0.f ? 0.f : 1.f,
                                        kSy[i] < 0.f ? 0.f : 1.f, c.color};
                 }
+            } else if (c.op == static_cast<uint32_t>(PaintOp::Gradient)) {
+                const float x0 = std::round((c.p[0] + st.originDipX) * scale);
+                const float y0 = std::round((c.p[1] + st.originDipY) * scale);
+                const float x1 = std::round((c.p[0] + st.originDipX + c.p[2]) * scale);
+                const float y1 = std::round((c.p[1] + st.originDipY + c.p[3]) * scale);
+                const float w = x1 - x0, h = y1 - y0;
+                float rr[4] = {c.p[4] * scale, c.p[5] * scale, c.p[6] * scale, c.p[7] * scale};
+                for (int i = 0; i < 4; ++i) if (rr[i] < 1.f) rr[i] = 0.f;
+                ClampRadii(rr, w, h);
+                const float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
+                const float hw = w * 0.5f, hh = h * 0.5f;
+                const float qhw = hw + 1.f, qhh = hh + 1.f;
+                // CSS 渐变线长度：|w·dx| + |h·dy|；把角点投影映射到 [0,1] 渐变轴。
+                const float gradLen = std::fabs(w * c.p[8]) + std::fabs(h * c.p[9]);
+                const float invLen = gradLen > 0.f ? 1.f / gradLen : 0.f;
+                const float invPeriod = c.p[10] > 0.f ? 1.f / c.p[10] : 1.f;
+                GradientVertex* v = reinterpret_cast<GradientVertex*>(out);
+                for (int i = 0; i < 4; ++i) {
+                    const Vec2 q = Xf(cx + kSx[i] * qhw, cy + kSy[i] * qhh);
+                    // u 必须按外扩角（qhw/qhh）算，与顶点位置同一斜率：GPU 在顶点间
+                    // 线性插值 u，盒边缘 x=cx±hw 处才恰好得到 [0,1] 端点。若用几何角
+                    // hw 算而位置外扩，盒内渐变会被压缩 hw/qhw 倍（小盒偏差显著）。
+                    // period < 1（Repeat/Reflect）时再除以周期 → 盒内跨多个周期，
+                    // 由 sampler 的 WRAP/MIRROR 地址模式展开。
+                    const float proj = (kSx[i] * qhw * c.p[8] + kSy[i] * qhh * c.p[9]) * invLen;
+                    const float gradU = (0.5f + proj) * invPeriod;
+                    v[i] = GradientVertex{q.x, q.y, gradU,
+                                          kSx[i] * qhw, kSy[i] * qhh, hw, hh,
+                                          rr[0], rr[1], rr[2], rr[3], c.color};
+                }
             } else {   // Shape：参数已含 origin 的物理像素，局部 SDF 字段不施加变换
                 const float cx = c.p[0], cy = c.p[1], hw = c.p[2], hh = c.p[3];
                 ShapeVertex* v = reinterpret_cast<ShapeVertex*>(out);
@@ -1034,10 +1227,11 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
     // IB 是 0-based 局部 quad 索引，每段把 VB 绑到自身字节起点 →
     // StartIndexLocation = 0 / BaseVertexLocation = 0，不再需要负 base。
     ID3D11Buffer* vb = vb_;
-    constexpr UINT kStride[4] = {static_cast<UINT>(sizeof(Vertex)),
+    constexpr UINT kStride[5] = {static_cast<UINT>(sizeof(Vertex)),
                                  static_cast<UINT>(sizeof(GlyphVertex)),
                                  static_cast<UINT>(sizeof(ShapeVertex)),
-                                 static_cast<UINT>(sizeof(GlyphVertex))};
+                                 static_cast<UINT>(sizeof(GlyphVertex)),
+                                 static_cast<UINT>(sizeof(GradientVertex))};
     uint32_t lastOp = 0xFFFFFFFFu, lastRes = 0xFFFFFFFFu;
     for (uint32_t u = 0; u < unitCount; ++u) {
         const uint32_t first = unitFirstSeg_[u], last = unitFirstSeg_[u + 1];
@@ -1074,11 +1268,16 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
                     ctx_->VSSetShader(vsS_, nullptr, 0);
                     ctx_->PSSetShader(psS_, nullptr, 0);
                     break;
-                default:  // Image：顶点格式同字形批，复用 vsG_/layoutG_
+                case 3:   // Image：顶点格式同字形批，复用 vsG_/layoutG_
                     ctx_->IASetInputLayout(layoutG_);
                     ctx_->VSSetShader(vsG_, nullptr, 0);
                     ctx_->PSSetShader(psI_, nullptr, 0);
                     ctx_->PSSetSamplers(0, 1, &samplerI_);
+                    break;
+                default:  // Gradient：LUT 采样 + SDF 裁形
+                    ctx_->IASetInputLayout(layoutGrad_);
+                    ctx_->VSSetShader(vsGrad_, nullptr, 0);
+                    ctx_->PSSetShader(psGrad_, nullptr, 0);
                     break;
                 }
                 // 字形批走 dual-source 混合（逐通道覆盖率），其余照旧预乘 alpha
@@ -1088,11 +1287,20 @@ void Device::Render(const DrawUnit* units, uint32_t unitCount, float scale) {
                 lastOp = seg.op;
                 lastRes = 0xFFFFFFFFu;
             }
-            // 跨图集页 / 跨纹理才切换 SRV
-            if (seg.op == 1 || seg.op == 3) {
+            // 跨图集页 / 跨纹理 / 跨 spread 才切换 SRV 与 sampler
+            if (seg.op == 1 || seg.op == 3 || seg.op == 4) {
                 if (seg.resource != lastRes) {
-                    ID3D11ShaderResourceView* srv = seg.op == 1
-                        ? FindGlyphSrv(seg.resource) : FindImageSrv(seg.resource);
+                    ID3D11ShaderResourceView* srv;
+                    if (seg.op == 1) {
+                        srv = FindGlyphSrv(seg.resource);
+                    } else {
+                        const uint32_t texId = seg.op == 4 ? (seg.resource & 0x00FFFFFFu) : seg.resource;
+                        srv = FindImageSrv(texId);
+                        if (srv != nullptr && seg.op == 4) {
+                            const uint8_t spread = static_cast<uint8_t>(seg.resource >> 24);
+                            ctx_->PSSetSamplers(0, 1, &samplerGrad_[spread > 2 ? 0 : spread]);
+                        }
+                    }
                     if (srv == nullptr) continue;
                     ctx_->PSSetShaderResources(0, 1, &srv);
                     lastRes = seg.resource;

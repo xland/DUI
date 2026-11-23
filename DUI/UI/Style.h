@@ -92,6 +92,10 @@ enum class Prop : uint16_t {
     // 文本选择（M5.63；追加在表尾）：
     //   UserSelect u = 0/1（**非继承**；同 CSS user-select，默认 none = 不可选）
     UserSelect,
+    // 线性渐变背景（追加在表尾，不重排已有属性 ID）：
+    //   BackgroundGradient 只作名义声明 / 失效标志（Paint 类）；实体是变长 stops，
+    //   存 Style 内（见 FindGradient）。与 BackgroundColor 互斥，后设者胜。
+    BackgroundGradient,
 };
 
 // 状态位（03-Style §6.2 已定全集）；disabled/selected 等写入方见文档
@@ -119,6 +123,24 @@ inline GridTrack Fixed(float dip)        { return {GridTrackKind::Fixed, dip}; }
 inline GridTrack Flex(float shares)      { return {GridTrackKind::Flex, shares}; }
 inline GridTrack Percent(float percent)  { return {GridTrackKind::Percent, percent}; }
 inline constexpr GridTrack Auto{GridTrackKind::Auto, 0.f};
+
+// 线性渐变（CSS linear-gradient 语义；变长声明，实体存 Style）
+//   angleDeg = CSS 角度：0° 向上、90° 向右、180° 向下、270° 向左（顺时针）。
+//   stops    = 色标，offset ∈ [0,1]，按 CSS 规则线性插值；同一 offset 两色 = 硬边。
+//   spread   = Pad（端点色延伸，CSS linear-gradient 默认）/ Reflect（镜像，DUI 扩展）/
+//              Repeat（同向重复，CSS repeating-linear-gradient）。
+struct GradientStop {
+    float offset = 0.f;   // 0..1
+    Color color  = 0;     // 0xAARRGGBB
+};
+inline GradientStop Stop(float offset, Color c) noexcept { return {offset, c}; }
+enum class GradientSpread : uint8_t { Pad, Reflect, Repeat };
+struct LinearGradient {
+    float angleDeg = 180.f;                     // CSS 角度，默认 180° = 从上到下
+    std::vector<GradientStop> stops;
+    GradientSpread spread = GradientSpread::Pad;
+};
+
 enum class FlexDirection : uint8_t { Row, Column };
 enum class Position : uint8_t { Static, Relative, Absolute, Fixed };   // 04-Layout §4.3
 enum class Justify : uint8_t { Start, Center, End, SpaceBetween, SpaceAround, SpaceEvenly };  // 主轴对齐（04-Layout §4.1）
@@ -279,7 +301,11 @@ public:
     Style& ZIndex(int32_t v);
 
     // 视觉与文本
-    Style& Background(dui::Color c);
+    Style& Background(dui::Color c);   // 纯色背景（与 Background(LinearGradient) 互斥，后设者胜）
+    // 线性渐变背景（CSS linear-gradient 语义；变长声明，沿派生链由近及远查找）。
+    // 设置渐变会清掉纯色背景声明，反之亦然 —— 二者是同一背景的两种形态。
+    Style& Background(const dui::LinearGradient& g);
+    const dui::LinearGradient* FindGradient() const noexcept;
     Style& Color(dui::Color c);
     Style& FontSize(float dip);
     Style& FontWeight(dui::FontWeight v);
@@ -368,6 +394,8 @@ private:
     std::vector<StyleValue>               decls_;
     std::vector<GridTrack>                gridCols_;   // 04-Layout §4.2：变长轨道，随 Style 值拷贝
     std::vector<GridTrack>                gridRows_;
+    LinearGradient                        gradient_;   // 线性渐变背景（变长声明，随 Style 值拷贝）
+    bool                                  hasGradient_ = false;
     const Style* parent_ = nullptr;       // 派生基（生命周期由使用者保证为静态常量）
     const char*  name_ = nullptr;         // 注册表键 / 调试标识；匿名样式为 nullptr
 };
@@ -379,6 +407,11 @@ private:
 // Grid 轨道列表（04-Layout §4.2）：TrackList 是变长声明，不走 StyleValue；
 // 沿 Style 派生链找第一个非空定义（不可动画、无状态变体、无本地覆盖）。
 const std::vector<GridTrack>* GridTracksOf(const Element* e, Prop p);
+
+// 线性渐变背景（变长声明）：走与 TryResolveElement 相同的层序
+// （状态变体 → 本地覆盖 → Style 派生链），支持 When(Hover, Background(gradient))。
+// 不可动画。返回 nullptr = 无渐变（绘制用纯色 BackgroundColor）。
+const LinearGradient* ResolveGradient(const Element* e);
 
 // 遍历期继承态（15-Properties §5.1）：布局/绘制自上而下遍历时随递归下传
 struct StyleContext {

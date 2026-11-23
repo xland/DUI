@@ -63,10 +63,10 @@ App ──→ UI ──→ Graphics ──→ Core
 
 | 模块 | 职责 |
 | --- | --- |
-| Application | 进程级初始化、全局资源、退出流程；`Application::Run` 消息循环（Dispatcher 排空 / 统一节拍） |
+| App | 进程级初始化、全局资源、退出流程；`App::Run` 消息循环（Dispatcher 排空 / 统一节拍） |
 | Window | 窗口壳：`NativeWindow`（HWND 封装、消息过程、DPI 换算、IME 插入点 caret）+ `dui::Window` 公共基类（`OnCreate` / `OnDpiChanged` / `OnClosing` / `OnNcHitTest`，见 [12-Windowing.md](./12-Windowing.md) §6） |
 | Dialog / Menu | 系统对话框（IFileDialog / MessageBoxW）与原生弹出菜单（TrackPopupMenuEx）；公共类型 + 实现 + `Window` 成员方法薄封装 |
-| Frame | 渲染管线编排：`Collector`（元素树 → 绘制指令）+ `Application::RenderFrame`（排版 → 收集 → 光栅 → Present） |
+| Frame | 渲染管线编排：`Collector`（元素树 → 绘制指令）+ `App::RenderFrame`（排版 → 收集 → 光栅 → Present） |
 | Theme | 默认主题与资源（颜色、字号、图标），属性默认值兜底（见 [03-Style.md](./03-Style.md)） |
 
 ## 3. 一帧的生命周期

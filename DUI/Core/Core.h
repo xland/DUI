@@ -22,6 +22,16 @@ using String = std::wstring;
 // ---- 颜色：0xAARRGGBB，按 sRGB 直觉书写；管线全程预乘 Alpha（ADR-013）----
 using Color = uint32_t;
 
+// ---- 虚线图案：on = 实段长 / off = 空段长（DIP）；on<=0 表示实线 ----
+// Dashed = 实 3w / 空 3w；Dotted = 实 1 DIP / 空 2w（与元素边框虚线同观感）。
+struct Dash {
+    float on = 0.f;
+    float off = 0.f;
+    static Dash Dashed(float w) noexcept { return Dash{w * 3.f, w * 3.f}; }
+    static Dash Dotted(float w) noexcept { return Dash{1.f, w * 2.f}; }
+    static Dash Custom(float on, float off) noexcept { return Dash{on, off}; }
+};
+
 struct Vec2 {
     float x = 0.f;
     float y = 0.f;

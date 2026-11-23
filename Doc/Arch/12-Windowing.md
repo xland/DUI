@@ -192,7 +192,7 @@ protected:
 | 尺寸语义 | 无边框时 `width/height` 就是**整窗**尺寸（不做 `AdjustWindowRect` 边框补偿 —— 补了会大出左右各 8px，业务按 DIP 布局就错位） |
 | 最大化 | `WM_GETMINMAXINFO` 把 `ptMaxPosition` / `ptMaxSize` 约束到工作区：否则系统把窗口放到比工作区还大（边框外扩），底边/右边被屏幕切掉 |
 | 命中 | `WM_NCHITTEST`（屏幕坐标 → 客户区 DIP）→ **框架算默认值**（缩放热区 + app-region 拖动区，见 §6.2）→ 交给业务覆盖 → 返回 `HTCAPTION` / `HT*`，**移动与缩放由系统接管**，业务不必自己处理鼠标与窗口几何 |
-| 初始位置 | `WindowOptions.center`（默认 `true`）→ `Application::Run` 在 `OnCreate`/`Show` 之前调 `NativeWindow::CenterOnScreen()`：`MonitorFromWindow` + `MONITORINFO.rcWork` 取工作区（排除任务栏），按**整窗物理像素**算中心；跨屏时以窗口所在显示器为准；设 `false` 沿用系统 `CW_USEDEFAULT` 层叠摆放 |
+| 初始位置 | `WindowOptions.center`（默认 `true`）→ `App::Run` 在 `OnCreate`/`Show` 之前调 `NativeWindow::CenterOnScreen()`：`MonitorFromWindow` + `MONITORINFO.rcWork` 取工作区（排除任务栏），按**整窗物理像素**算中心；跨屏时以窗口所在显示器为准；设 `false` 沿用系统 `CW_USEDEFAULT` 层叠摆放 |
 | 系统菜单 | 无边框窗口没有系统标题栏，`DefWindowProc` 不知道该在哪弹菜单 → `WM_NCRBUTTONUP` + `wParam == HTCAPTION` 时用 `GetSystemMenu(hwnd, FALSE)` + `TrackPopupMenuEx(..., TPM_RETURNCMD)` 弹系统菜单，选中项转发成 `WM_SYSCOMMAND`（`SC_*` 由 `DefWindowProc` 执行：移动 / 缩放走系统模态循环，关闭走 `WM_CLOSE`）。菜单项的启用 / 置灰由系统在 `WM_INITMENUPOPUP` 自动维护，业务不必手动 `EnableMenuItem` |
 
 业务侧的坑：
@@ -252,12 +252,12 @@ protected:
 
 ### 6.3 多窗口（M5.77）
 
-一个进程只有**一个** `Application`，它管理**多个** `Window`：每个窗口有独立的
+一个进程只有**一个** `App`，它管理**多个** `Window`：每个窗口有独立的
 `Device` / `NativeWindow` / 宿主 / 帧标记，可各在不同 DPI 显示器（各自 `Scale()`）。
 
 ```cpp
 namespace dui {
-class Application {
+class App {
 public:
     int  Run(Window& window);            // 兼容单窗口：AddWindow(window) + Run()
     bool AddWindow(Window& window);      // 注册 + 建 HWND/Device + OnCreate + Show
@@ -268,11 +268,11 @@ public:
 }
 ```
 
-一个 `Application` 管多窗口，共享一个进程级 `Dispatcher`（`g_focus` / `g_capture`
+一个 `App` 管多窗口，共享一个进程级 `Dispatcher`（`g_focus` / `g_capture`
 也是进程级全局唯一）：
 
 ```cpp
-dui::Application app;
+dui::App app;
 MainWindow mainWnd;
 ToolWindow toolWnd;
 if (!app.AddWindow(mainWnd)) return 1;   // 失败查 app.LastError()
@@ -300,7 +300,7 @@ return app.Run();                         // 两个窗口一起驱动
 5. **窗口对象生命周期**：`AddWindow` 只存 `Window*`，窗口对象须活到 `Run()` 结束
    （通常声明在 `wWinMain` 栈上，与 `app` 同作用域）。
 
-限制：一个进程只有一个 `Application`（`Dispatcher::Ui()` 进程级），不要创建多个。
+限制：一个进程只有一个 `App`（`Dispatcher::Ui()` 进程级），不要创建多个。
 
 ---
 
@@ -311,7 +311,7 @@ return app.Run();                         // 两个窗口一起驱动
 "最后一个窗口关闭 → 退出"是**可配置**的，默认行为不变：
 
 ```cpp
-class Application {
+class App {
 public:
     void SetQuitOnLastWindowClosed(bool on) noexcept;   // 默认 true
     bool QuitOnLastWindowClosed() const noexcept;
@@ -320,7 +320,7 @@ public:
     unsigned SetTimer(unsigned ms, std::function<void()> fn);  // 窗口无关定时器
     void     KillTimer(unsigned id) noexcept;
 };
-class Window { public: Application* App() noexcept; };  // OnClosing 里查 WindowCount()
+class Window { public: App* App() noexcept; };  // OnClosing 里查 WindowCount()
 ```
 
 三个典型场景：
@@ -334,7 +334,7 @@ class Window { public: Application* App() noexcept; };  // OnClosing 里查 Wind
    完成后调 `Quit(code)` 结束。**设 false 后必须自行调 `Quit()`，否则 `Run()` 永不返回。**
 
 ```cpp
-dui::Application app;
+dui::App app;
 app.SetQuitOnLastWindowClosed(false);
 app.AddWindow(mainWnd);
 dui::Tray tray;

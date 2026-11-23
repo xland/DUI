@@ -62,7 +62,7 @@ UI 线程                                后台
 
 | 概念 | 定义 |
 | --- | --- |
-| `Dispatcher` | 每线程一个任务队列 + 泵。UI 线程的 Dispatcher 由 `Application` 持有，在消息循环中排空 |
+| `Dispatcher` | 每线程一个任务队列 + 泵。UI 线程的 Dispatcher 由 `App` 持有，在消息循环中排空 |
 | `Background` | 进程级固定线程池（并发度 = min(4, 硬件并发)，D2），任务 FIFO |
 | 任务 | 移动-only 可调用体（fn+ctx 或 SBO 闭包），队列节点从池分配，有界 |
 | `CancellationToken` | 取消令牌：排队中直接丢弃；运行中由任务自行轮询（框架不杀线程） |
@@ -82,10 +82,10 @@ UI 线程                                后台
 ### 4.1 回调风格（P0，设计草案）
 
 > 当前实现：回调风格见 §4.3（`ThreadPool::Shared().Post(fn)` 去子线程、`PostUi(life, fn)` 回 UI），
-> 协程风格见 §4.2 落地说明。`Application::Current()` / `ui.Background(fn)` / `op.Cancel()` / `Result<T>` 尚未实现。
+> 协程风格见 §4.2 落地说明。`App::Current()` / `ui.Background(fn)` / `op.Cancel()` / `Result<T>` 尚未实现。
 
 ```cpp
-Dispatcher& ui = Application::Current().Dispatcher();
+Dispatcher& ui = App::Current().Dispatcher();
 
 // 事件处理器里发起（[06-Events.md] 场景）
 btn->OnClick([this, path]{
@@ -154,7 +154,7 @@ dui::ThreadPool::Shared().Post([view, life] {
 ```
 
 `PostUi(life, fn)`（`Core/Threading.h`，inline）把 `fn` 投进 UI Dispatcher 队列，执行前检查令牌：
-元素已销毁，或 `Application::Run` 退出后 UI Dispatcher 已卸载，任务直接丢弃，不触碰悬空元素。
+元素已销毁，或 `App::Run` 退出后 UI Dispatcher 已卸载，任务直接丢弃，不触碰悬空元素。
 检查与元素析构同在 UI 线程，无需加锁。`life` 由 `Element::Lifetime()` 在 UI 线程取出，
 对应 [06-Events.md](./06-Events.md) D5 的 weak token；事件处理器发起的回投建议一律用它。
 

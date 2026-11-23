@@ -92,6 +92,12 @@ private:
     // 图像管线（彩色纹理采样批；顶点格式同字形批，复用 vsG_/layoutG_）
     ID3D11PixelShader*      psI_ = nullptr;
     ID3D11SamplerState*     samplerI_ = nullptr;   // 线性采样（图像缩放需平滑）
+    // 渐变管线（LUT 采样 + 圆角矩形 SDF 裁形）：独立顶点格式 GradientVertex。
+    // 三个 sampler 对应 spread：CLAMP=Pad / WRAP=Repeat / MIRROR=Reflect。
+    ID3D11VertexShader*     vsGrad_ = nullptr;
+    ID3D11PixelShader*      psGrad_ = nullptr;
+    ID3D11InputLayout*      layoutGrad_ = nullptr;
+    ID3D11SamplerState*     samplerGrad_[3] = {nullptr, nullptr, nullptr};
     struct GlyphPageTex {
         uint32_t id = 0;
         ID3D11Texture2D* tex = nullptr;

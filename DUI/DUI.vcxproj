@@ -105,6 +105,9 @@
     <ClInclude Include="UI\RichEditor.h" />
     <ClInclude Include="App\App.h" />
     <ClInclude Include="App\Window.h" />
+    <ClInclude Include="App\NativeWindow.h" />
+    <ClInclude Include="App\NativeWindowHost.h" />
+    <ClInclude Include="App\WindowHostAdapter.h" />
     <ClInclude Include="App\Dialog.h" />
     <ClInclude Include="App\Menu.h" />
     <ClInclude Include="App\Tray.h" />
@@ -142,7 +145,10 @@
     <ClCompile Include="App\App.cpp" />
     <ClCompile Include="App\Dialog.cpp" />
     <ClCompile Include="App\Frame.cpp" />
+    <ClCompile Include="App\NativeWindow.cpp" />
+    <ClCompile Include="App\NativeWindowHost.cpp" />
     <ClCompile Include="App\Window.cpp" />
+    <ClCompile Include="App\WindowHostAdapter.cpp" />
     <ClCompile Include="App\Menu.cpp" />
     <ClCompile Include="App\Tray.cpp" />
     <ClCompile Include="App\DropTarget.cpp" />

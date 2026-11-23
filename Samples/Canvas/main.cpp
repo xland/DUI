@@ -1,8 +1,9 @@
-﻿// ============================================================================
+// ============================================================================
 //  Samples/Canvas/main.cpp — 2D 绘图控件（dui::Canvas）示例
 //
 //  演示 Canvas 的图元 API：直线 / 折线 / 多边形 / 矩形 / 圆角矩形 /
-//  圆 / 椭圆 / 圆弧。坐标为画布局部 DIP，原点 = 画布左上角。
+//  圆 / 椭圆 / 圆弧，以及虚线描边（Dash::Dashed / Dotted / Custom）。
+//  坐标为画布局部 DIP，原点 = 画布左上角。
 // ============================================================================
 
 #include <windows.h>   // 框架公共头不含 windows.h，入口类型由本文件自带
@@ -21,9 +22,9 @@ constexpr dui::Color kGrid    = 0xFFCBD5E1;
 void DrawScene(dui::Canvas& c) {
     // 网格（大量直线：验证图元批的吞吐）
     for (int x = 0; x <= 560; x += 40) {
-        c.AddLine({static_cast<float>(x), 0.f}, {static_cast<float>(x), 320.f}, kGrid, 1.f);
+        c.AddLine({static_cast<float>(x), 0.f}, {static_cast<float>(x), 480.f}, kGrid, 1.f);
     }
-    for (int y = 0; y <= 320; y += 40) {
+    for (int y = 0; y <= 480; y += 40) {
         c.AddLine({0.f, static_cast<float>(y)}, {560.f, static_cast<float>(y)}, kGrid, 1.f);
     }
 
@@ -54,6 +55,25 @@ void DrawScene(dui::Canvas& c) {
     // 圆弧（上半 / 下半）
     c.AddArc({120.f, 260.f}, 34.f, 180.f, 360.f, kAccent, 3.f);
     c.AddArc({220.f, 260.f}, 34.f, 0.f, 180.f, kRose, 3.f);
+
+    // ---- 虚线描边：所有描边 API 末尾可选 Dash（默认实线）--------------------
+    // 三种图案直线：Dashed = 实 3w/空 3w；Dotted = 实 1/空 2w；Custom 自定义
+    c.AddLine({24.f, 350.f}, {210.f, 350.f}, kAccent, 3.f, dui::Dash::Dashed(3.f));
+    c.AddLine({24.f, 375.f}, {210.f, 375.f}, kRose, 3.f, dui::Dash::Dotted(3.f));
+    c.AddLine({24.f, 400.f}, {210.f, 400.f}, kGreen, 3.f, dui::Dash::Custom(12.f, 6.f));
+
+    // 虚线折线（跨段图案连续）+ 虚线圆弧
+    const dui::Vec2 wave[5] = {
+        {240.f, 400.f}, {280.f, 355.f}, {320.f, 400.f}, {360.f, 355.f}, {390.f, 400.f}};
+    c.AddPolyline(wave, 5, kInk, 3.f, dui::Dash::Dashed(3.f));
+    c.AddArc({300.f, 455.f}, 26.f, 180.f, 360.f, kAmber, 3.f, dui::Dash::Dotted(3.f));
+
+    // 虚线描边形状：矩形 / 圆角矩形 / 圆（轮廓离散成折线后切段）
+    c.AddRectOutline({410.f, 340.f, 60.f, 50.f}, kAccent, 2.f, dui::Dash::Dashed(2.f));
+    c.AddRoundRectOutline({480.f, 340.f, 70.f, 50.f}, 12.f, kGreen, 2.f,
+                          dui::Dash::Custom(8.f, 4.f));
+    c.AddCircleOutline({445.f, 435.f}, 26.f, kRose, 2.f, dui::Dash::Dotted(2.f));
+    c.AddEllipseOutline({515.f, 435.f}, 36.f, 26.f, kAmber, 2.f, dui::Dash::Dashed(2.f));
 }
 
 class CanvasWindow final : public dui::Window {
@@ -77,8 +97,8 @@ protected:
         root->AddChild<dui::Text>(L"DUI Canvas — 2D 绘图控件", dui::Style()
             .FontSize(20.f).Color(0xFF111827));
         root->AddChild<dui::Text>(
-            L"图元：直线 / 折线 / 多边形 / 矩形 / 圆角矩形 / 圆 / 椭圆 / 圆弧"
-            L"（坐标为画布局部 DIP，原点 = 画布左上角）",
+            L"图元：直线 / 折线 / 多边形 / 矩形 / 圆角矩形 / 圆 / 椭圆 / 圆弧 + 虚线描边"
+            L"（下半部：Dashed / Dotted / Custom；坐标为画布局部 DIP）",
             dui::Style().FontSize(13.f).Color(0xFF6B7280));
 
         dui::Canvas* canvas = root->AddChild<dui::Canvas>(dui::Style()
@@ -92,7 +112,7 @@ protected:
 }  // namespace
 
 int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int) {
-    dui::Application app;
+    dui::App app;
     CanvasWindow window;
     return app.Run(window);
 }

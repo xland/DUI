@@ -426,7 +426,7 @@ Doc/Arch/                文档
 
 | 决策项 | 结论 | 理由 |
 | --- | --- | --- |
-| 初始化 | `Application::Run` 起始调用 `OleInitialize(nullptr)`，建立 **STA（主 STA / `APTTYPE_MAINSTA`）**，进程级持有不配对 Uninitialize | STA + OLE 是 Win32 UI 线程的常规形态，覆盖 Shell 拖放 / 扩展 |
+| 初始化 | `App::Run` 起始调用 `OleInitialize(nullptr)`，建立 **STA（主 STA / `APTTYPE_MAINSTA`）**，进程级持有不配对 Uninitialize | STA + OLE 是 Win32 UI 线程的常规形态，覆盖 Shell 拖放 / 扩展 |
 | 顺序 | 必须早于任何可能初始化 COM 的组件（尤其 WIC 的 MTA 尝试） | COM 单元在本线程一旦建立不能改；WIC 随后请求 MTA 只返回 `RPC_E_CHANGED_MODE`，COM 仍可用，WIC 在 STA 下同样工作 |
 | 兜底 | `App/Dialog.cpp` 弹窗前用 `CoGetApartmentType` 校验，放行 `APTTYPE_STA` / `APTTYPE_MAINSTA`，其余返回 `Error` | 自定义宿主若先把 UI 线程建成 MTA，宁可显式报错也不挂界面 |
 | 背景线程 | 不变：不初始化 COM；WIC 若在工作线程首次使用，其自身的 MTA 初始化照旧 | 后台只碰纯数据（ADR-022 / 07-Threading §3.1） |

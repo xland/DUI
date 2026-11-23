@@ -66,6 +66,20 @@ const std::vector<GridTrack>* GridTracksOf(const Element* e, Prop p) {
     return s != nullptr ? s->FindTracks(p) : nullptr;
 }
 
+const LinearGradient* ResolveGradient(const Element* e) {
+    // 层 2：状态变体（When(Hover, Background(gradient)) 等）。逐状态按优先级，
+    // 首个定义了渐变者胜；变体自身仍可派生（FindGradient 沿 parent_ 回溯）。
+    for (State st : kStatePriority) {
+        if (!e->HasState(st)) continue;
+        const Style* variant = e->StateVariant(st);
+        if (variant == nullptr) continue;
+        if (const LinearGradient* g = variant->FindGradient()) return g;
+    }
+    // 层 4：Style 派生链。本地覆盖（层 3）是定长 StyleValue，存不下变长渐变，跳过。
+    if (const Style* s = e->StylePtr()) return s->FindGradient();
+    return nullptr;
+}
+
 // ---- 层 2/3/4：元素自身链（状态变体 → 本地覆盖 → Style 派生链）------------
 
 bool TryResolveElement(const Element* e, Prop p, StyleValue& out) {
@@ -312,6 +326,7 @@ uint32_t PropFlagsOf(Prop p) {
     // Paint：仅重绘
     case Prop::Color:
     case Prop::BackgroundColor:
+    case Prop::BackgroundGradient:
     case Prop::CornerRadius:
     case Prop::Opacity:
     case Prop::Shadow:

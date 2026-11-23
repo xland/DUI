@@ -29,6 +29,13 @@ const std::vector<GridTrack>* Style::FindTracks(Prop p) const noexcept {
     return nullptr;
 }
 
+const LinearGradient* Style::FindGradient() const noexcept {
+    for (const Style* s = this; s != nullptr; s = s->parent_) {
+        if (s->hasGradient_) return &s->gradient_;
+    }
+    return nullptr;
+}
+
 // ---------------------------------------------------------------------------
 // 链式构造
 // ---------------------------------------------------------------------------
@@ -91,7 +98,23 @@ Style& Style::Right(float dip)                     { return SetF(Prop::Right, di
 Style& Style::Bottom(float dip)                    { return SetF(Prop::Bottom, dip); }
 // zIndex（04-Layout §4.3）：仅 Absolute 生效；负值可用，u 槽按 int32 位型存取
 Style& Style::ZIndex(int32_t v)                    { return SetU(Prop::ZIndex, static_cast<uint32_t>(v)); }
-Style& Style::Background(dui::Color c)             { return SetU(Prop::BackgroundColor, c); }
+Style& Style::Background(dui::Color c) {
+    // 纯色与渐变互斥：设纯色时撤掉本层的渐变声明（派生基的渐变仍可能被 FindGradient
+    // 找到，除非本层以纯色覆盖 —— 绘制侧以 ResolveGradient 是否命中为准，见 StyleResolve）
+    hasGradient_ = false;
+    return SetU(Prop::BackgroundColor, c);
+}
+Style& Style::Background(const dui::LinearGradient& g) {
+    // 设渐变时撤掉本层纯色声明，使二者互斥、后设者胜
+    for (auto it = decls_.begin(); it != decls_.end();) {
+        if (it->prop == Prop::BackgroundColor) it = decls_.erase(it);
+        else ++it;
+    }
+    gradient_ = g;
+    hasGradient_ = true;
+    Ensure(Prop::BackgroundGradient);   // 名义声明：让级联层能识别"本层设了渐变"
+    return *this;
+}
 Style& Style::Color(dui::Color c)                  { return SetU(Prop::Color, c); }
 Style& Style::FontSize(float dip)                  { return SetF(Prop::FontSize, dip); }
 Style& Style::FontWeight(dui::FontWeight v)        { return SetU(Prop::FontWeight, static_cast<uint32_t>(v)); }

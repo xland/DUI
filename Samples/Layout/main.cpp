@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 //  Layout/main.cpp — 布局能力演示
 //
 //  覆盖能力（04-Layout）：FlexDirection Row/Column、Gap、Padding、
@@ -248,7 +248,7 @@ protected:
 }  // namespace
 
 int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int) {
-    dui::Application app;
+    dui::App app;
     LayoutWindow window;
     return app.Run(window);
 }

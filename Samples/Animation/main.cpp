@@ -352,7 +352,7 @@ protected:
 }  // namespace
 
 int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int) {
-    dui::Application app;
+    dui::App app;
     AnimationWindow window;
     return app.Run(window);
 }

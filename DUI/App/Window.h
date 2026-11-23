@@ -1,155 +1,185 @@
 // ============================================================================
-//  DUI/App/Window.h — 窗口壳服务（内部头，不进 DUI.h）
+//  DUI/App/Window.h — 应用窗口基类（公共 API；01-Layering §2 App；12-Windowing）
 //
-//  HWND 封装 + 窗口过程：事件经 NativeWindowHost 抽象上抛，由本层的
-//  WindowHostAdapter（App/App.cpp）适配到 dui::Window。
-//
-//  窗口每实例状态（含 this）存 GWLP_USERDATA（12-Windowing：单窗口单缩放）。
+//  使用者继承 dui::Window，构造期只声明窗口形态（标题/尺寸/是否无边框），
+//  不创建原生窗口；App::Run(window) 接管创建 → OnCreate → Show
+//  → 消息循环 → 退出码。
+//    · OnCreate：原生窗口已建、尚未显示；Root() 可用，构建过程不可见。
+//    · 无边框/自定义标题栏 = 构造里设 frameless + OnCreate 里加标题栏
+//      （12-Windowing §6.1）。
 // ============================================================================
 
 #pragma once
 
-#include <windows.h>
-
+#include <cstdint>
+#include <memory>
 #include <vector>
 
-#include "Core/Core.h"
-#include "App/DropTarget.h"
+#include <windows.h>      // 公共 API 直接使用 HWND 等 Win32 类型
+
+// winuser.h 在 UNICODE 下把 MessageBox 定义成 MessageBoxW；公共头引入 Win32 头后
+// 必须清掉该宏，否则 Window::MessageBox 声明会被替换成 MessageBoxW，与下面的
+// 兼容别名重复。App/Dialog.h 末尾另有一处同样的兜底（应对业务先包含 windows.h）。
+#ifdef MessageBox
+#undef MessageBox
+#endif
+
+#include "App/Dialog.h"
+#include "App/Menu.h"
+#include "UI/UI.h"
 
 namespace dui {
 
-// 平台窗口 → 上层的事件接口（App 层实现；protected 虚函数由宿主回调）
-class NativeWindowHost : public IDropTargetHost {
-public:
-    virtual ~NativeWindowHost() = default;
+class App;
 
-    // HWND 已创建（隐藏）、尺寸已按显示器 DPI 定好 —— 此时上层可搭界面
-    virtual void OnNativeCreated(HWND hwnd, float initialScale) = 0;
-    // 返回 false 阻止关闭
-    virtual bool OnCloseRequest() = 0;
-    // 窗口已销毁（WM_DESTROY）：返回 true → 平台层 PostQuitMessage 退出应用。
-    // 单窗口宿主返回 true（原行为）；多窗口宿主在还有窗口存活时返回 false。
-    virtual bool OnWindowDestroyed() { return true; }
-    // 12-Windowing §4：newScale = HIWORD(wParam)/96；suggestedDip 为系统建议
-    // 矩形（整窗物理坐标）按 newScale 换算的 DIP 值；clientDipChanged =
-    // 客户区 DIP 尺寸是否变化（§4-5 分级失效：不变只重绘，不重排）
-    virtual void OnDpiChanged(float newScale, const Rect& suggestedDip, bool clientDipChanged) = 0;
-    // DPI 变化的**前置**通知：在窗口尺寸调整（SetWindowPos）**之前**发出，
-    // 让上层先把缩放系数换过来 —— SetWindowPos 会同步发出 WM_SIZE，那时若
-    // 缩放还是旧值，WM_SIZE 会用旧缩放算出错误的客户区 DIP 尺寸，布局盒
-    // 缩小一圈（12-Windowing §7.2）。这里只换系数，不触发重排。
-    virtual void OnDpiScaleChanging(float newScale) { (void)newScale; }
-    // 指针输入（M3：物理坐标已换算为窗口客户区 DIP；完整归一化在 M4）
-    virtual void OnPointerMove(Vec2 ptDip) = 0;
-    // button = 触发的按键；down = 按下 / 弹起（左键 / 右键 / 中键都转发按下 + 抬起）
-    virtual void OnPointerButton(Vec2 ptDip, PointerButton button, bool down) = 0;
-    virtual void OnPointerLeave() = 0;
-    // 滚轮：ptDip = 指针位置（客户区 DIP）；delta = 滚轮格数（正 = 向上滚）
-    // horizontal = true 时应横向滚动（Shift + 滚轮由平台层判定）
-    virtual void OnMouseWheel(Vec2 ptDip, float delta, bool horizontal) = 0;
-    // 键盘输入（M5.9）：key = VK_* 虚拟键码；ctrl/shift/alt = 修饰键状态
-    virtual void OnKeyDown(int key, bool ctrl, bool shift, bool alt) = 0;
-    virtual void OnKeyUp(int key, bool ctrl, bool shift, bool alt) = 0;
-    // 字符输入（WM_CHAR / WM_IME_CHAR；IME 提交亦走此路）
-    virtual void OnChar(wchar_t ch) = 0;
-    // 指针形态（WM_SETCURSOR）：返回 true 表示上层已设置光标（不再走默认箭头）
-    virtual bool OnSetCursor(Vec2 ptDip) { (void)ptDip; return false; }
-    // 非客户区命中（WM_NCHITTEST）：ptDip = 客户区 DIP；返回 true 表示上层已判定
-    // 命中区（hit 取 HTCAPTION / HTLEFT 等），系统据此接管"拖标题栏移动 /
-    // 拖边框缩放"。仅 Borderless 模式有意义。
-    virtual bool OnNcHitTest(Vec2 ptDip, int& hit) { (void)ptDip; (void)hit; return false; }
-    // 拖放（M5.85，IDropTarget）：paths = 文件完整路径；ptDip = 悬停/释放点客户区 DIP。
-    // 覆盖 IDropTargetHost 的纯虚，给默认实现以免其它 NativeWindowHost 实现被迫改动。
-    // Enter/Over 返回 true 表示接受（光标变 COPY，否则 NONE）。
-    bool OnDragEnterFiles(const std::vector<String>& paths, Vec2 ptDip) override {
-        (void)paths; (void)ptDip; return false;
-    }
-    bool OnDragOverFiles(const std::vector<String>& paths, Vec2 ptDip) override {
-        (void)paths; (void)ptDip; return false;
-    }
-    void OnDragLeaveFiles() override {}
-    void OnDropFiles(const std::vector<String>& paths, Vec2 ptDip) override {
-        (void)paths; (void)ptDip;
-    }
-    // 定时器节拍（WM_TIMER；id 由上层分配并自行管理）
-    virtual void OnTimer(uintptr_t id) { (void)id; }
-    // 窗口获得/失去激活（WM_ACTIVATE）：上层据此让编辑控件失焦（光标停止闪烁）
-    virtual void OnActivated(bool active) { (void)active; }
-    virtual void OnResized() = 0;
+// 非客户区命中码（对应 Win32 的 HT*；公共头不含 windows.h，故在此自定义）
+enum class HitTestCode : int {
+    Client = 1,        // HTCLIENT：普通客户区
+    Caption = 2,       // HTCAPTION：拖动可移动窗口
+    Left = 10,         // HTLEFT：左边缘可缩放
+    Right = 11,        // HTRIGHT
+    Top = 12,          // HTTOP
+    TopLeft = 13,      // HTTOPLEFT
+    TopRight = 14,     // HTTOPRIGHT
+    Bottom = 15,       // HTBOTTOM
+    BottomLeft = 16,   // HTBOTTOMLEFT
+    BottomRight = 17,  // HTBOTTOMRIGHT
 };
 
-class NativeWindow {
+struct DpiChanged {
+    float oldScale = 1.f;
+    float newScale = 1.f;
+    Rect  suggestedDip;    // 系统建议的新窗口矩形（已换算 DIP，12-Windowing §4）
+};
+
+struct WindowOptions {
+    const wchar_t* title = L"";
+    float width = 800.f;         // DIP
+    float height = 600.f;        // DIP
+    // true → 无系统标题栏 / 边框，业务自绘标题栏（DWM 阴影 + 拖动移动 +
+    // 拖边框缩放，12-Windowing §6.1）；默认 false：系统标题栏 + 边框。
+    bool frameless = false;
+    // true → 交换链按 PREMULTIPLIED 合成、清屏全透明，窗口背景可透视桌面
+    // （DirectComposition 承载，ADR-010）。默认 false：IGNORE + 不透明清屏。
+    bool transparent = false;
+    // 初始显示时置于窗口所在显示器**工作区**正中（不含任务栏）。
+    // 默认 true；设 false 沿用系统在 CW_USEDEFAULT 处的层叠摆放。
+    bool center = true;
+    // true → 无边框窗口可拖边框缩放：框架自动生成四边 / 四角缩放热区（等价
+    // HTLEFT / HTTOP / 四角命中码，拖动由系统接管）。热区厚度取系统边框度量
+    // （SM_CXSIZEFRAME + SM_CXPADDEDBORDER，按窗口 DPI 查询），与原生窗口同厚、
+    // 随 DPI 自适应；最大化状态下自动失效。
+    // 仅 frameless 有意义 —— 有边框窗口用系统自带缩放，框架不插手。
+    // 默认 false（不生成热区）：无边框窗口的边缘像素仍归业务。
+    bool resizable = false;
+    // 无边框窗口双击拖动区（标题栏）→ 最大化 / 还原。
+    // true  → 系统原生行为（DefWindowProc 见 WS_MAXIMIZEBOX 发 SC_MAXIMIZE）；
+    // false → 框架吃掉 WM_NCLBUTTONDBLCLK，双击无反应。
+    // 仅 frameless 有效（有边框窗口的系统标题栏本来就是这个行为，框架不碰）；
+    // 仅对 app-region: drag 的区域有意义 —— 整窗 drag 的窗口（如圆形小挂件）
+    // 双击任意位置都最大化往往不是想要的。默认 true（与原生窗口一致）。
+    bool doubleClickMaximize = true;
+};
+
+class Window {
 public:
-    NativeWindow() = default;
-    ~NativeWindow();
+    explicit Window(const WindowOptions& options = {});
+    virtual ~Window();
 
-    NativeWindow(const NativeWindow&) = delete;
-    NativeWindow& operator=(const NativeWindow&) = delete;
+    Window(const Window&) = delete;
+    Window& operator=(const Window&) = delete;
 
-    // 创建（保持隐藏）→ 按窗口所在显示器 DPI 定最终尺寸 → OnNativeCreated。
-    // 失败时返回 false 并填 error（无异常约定，ADR-007）。
-    // borderless = true → 无系统边框（WS_POPUP）+ DWM 阴影，业务自绘标题栏。
-    //   注意：无边框时 widthDip/heightDip 就是**整窗**尺寸（客户区覆盖全窗，
-    //   WM_NCCALCSIZE 处理），不再做 AdjustWindowRect 边框补偿。
-    // doubleClickMaximize = false → 无边框窗口双击拖动区不最大化（吃掉
-    //   WM_NCLBUTTONDBLCLK）；true = 系统原生行为（默认）。
-    bool Create(const wchar_t* title, float widthDip, float heightDip,
-                NativeWindowHost& host, String& error, bool borderless = false,
-                bool doubleClickMaximize = true);
-
-    void Show();
-    // 把窗口移到所在显示器工作区正中（尺寸不变）。显示前调用，构建过程仍不可见。
-    // 用 MonitorFromWindow → MONITORINFO.rcWork，跨屏 / 任务栏 / DPI 都按物理像素算。
-    void CenterOnScreen();
-    bool Valid() const noexcept { return hwnd_ != nullptr; }
-    HWND Handle() const noexcept { return hwnd_; }
-    float Scale() const noexcept { return scale_; }
+    // 12-Windowing §9-3：scale = dpi / 96；窗口级（多窗口可各在不同 DPI 显示器）
+    float Scale()   const noexcept { return scale_; }
+    float DipToPx(float dip) const noexcept { return dip * scale_; }
+    float PxToDip(float px)  const noexcept { return px / scale_; }
 
     // 窗口操作（无边框窗口的自绘标题栏按钮需要）
-    void Minimize();                // 最小化
-    void MaximizeOrRestore();       // 最大化 / 从最大化还原
-    void RequestClose();            // 请求关闭（走 WM_CLOSE → 业务可拦截）
-    bool IsMaximized() const;       // 当前是否最大化
+    void Minimize();              // 最小化
+    void MaximizeOrRestore();     // 最大化 / 从最大化还原
+    void Close();                 // 请求关闭（走 WM_CLOSE → OnClosing 可拦截）
+    bool IsMaximized() const;     // 当前是否最大化
 
-    // 窗口定时器（上层按需启停；节拍经 NativeWindowHost::OnTimer 上抛）
-    void StartTimer(uintptr_t id, unsigned ms);
-    void StopTimer(uintptr_t id);
+    // 客户区尺寸（DIP）：自绘边框热区判定用（OnNcHitTest）
+    Vec2 ClientSizeDip() const;
 
-    // 隐形系统 caret（IME 插入点）：IME 依 GetCaretPos() 把候选窗口定位到
-    // 光标处。我们自绘光标，故另建一个不可见的系统 caret 专门报告插入点。
-    //
-    // 高度不可为 1px：IME 依 caret 的**底边**摆放候选窗口，零高度插入点会让
-    // 输入法把候选窗下移一整行。高度变化时重建位图。
-    void EnsureImeCaret();
-    void UpdateImeCaretPos(int pxX, int pyY, int pxHeight);
-    void RemoveImeCaret();
+    // 原生窗口句柄：OnCreate 起有效（此时 HWND 已建、窗口尚未显示）。
+    HWND NativeHandle() const noexcept;
 
-    // 指针形态（鼠标光标）：idc = Windows 预定义光标资源（IDC_ARROW / IDC_IBEAM …）
-    void SetCursorShape(LPCWSTR idc) const;
+    // 本窗口所属的 App（AddWindow 起有效，堆对象地址稳定）。
+    // 用途：OnClosing 里查 WindowCount() 判断是不是最后一个窗口再决定是否弹确认框。
+    dui::App* App() noexcept { return app_; }
 
-    Vec2 ClientSizePx() const;      // 客户区物理像素
-    Vec2 ClientSizeDip() const;     // 客户区 DIP（12-Windowing §3）
-    // 已最小化（IsIconic）：客户区尺寸为 0 → 不能进帧（App 层据此停表/阻塞）
-    bool IsMinimized() const noexcept;
+    // ---- 系统原生弹出菜单（App/Menu.h）------------------------------------
+    // 同步模态：菜单弹出期间框架主消息循环挂起，返回后执行选中项回调。
+    // 不传位置 → 弹在当前鼠标位置；posDip 为客户区 DIP 坐标。
+    // 框架不自动挂钩右键：何时弹出由业务决定（如 OnPointerUp 里判断
+    // ev.button == PointerButton::Right）。
+    void ShowMenu(const Menu& menu);
+    void ShowMenu(const Menu& menu, Vec2 posDip);
 
-    // 应用退出时先摘掉宿主再析构：否则 DestroyWindow 同步发出的 WM_DESTROY
-    // 会回调已析构的宿主（多窗口 Application 的记录清理路径）
-    void DetachHost() noexcept { host_ = nullptr; }
+    // ---- 系统对话框（17-Dialogs）：同步模态，UI 线程、Run 建好 HWND 后调用 ----
+    // 结果三态：IsOk / IsCancelled / IsError；只返回路径，不读写文件。
+    // 调用期间系统接管消息泵，框架主循环挂起（Dispatcher 回投延后但不丢）。
+    DialogResult<std::vector<String>> OpenFile  (const OpenFileOptions&   options = {});
+    DialogResult<String>             SaveFile  (const SaveFileOptions&   options = {});
+    DialogResult<String>             OpenFolder(const OpenFolderOptions& options = {});
+    MessageResult                    MessageBox(const MessageOptions&    options);
+
+    // Win32 同名宏（#define MessageBox MessageBoxW）兼容别名：仅当业务 TU 在
+    // DUI.h 之后才 include windows.h 时被预处理命中；业务不要主动调用。
+    MessageResult MessageBoxW(const MessageOptions& options);
+
+    MessageResult Warn(const wchar_t* text, const wchar_t* title = nullptr);
+    bool          Confirm(const wchar_t* text, const wchar_t* title = nullptr);
+
+protected:
+    // 原生窗口已创建、尚未显示：唯一搭界面的地方（构建期间窗口不可见）
+    virtual void OnCreate() {}
+    virtual void OnDpiChanged(const DpiChanged&) {}
+    virtual bool OnClosing() { return true; }   // 返回 false 阻止关闭（M2）
+
+    // 非客户区命中（仅 frameless 有意义）：ptDip = 客户区 DIP。
+    // 返回 true → 采用 hit：Caption = 拖动可移动窗口；Left/Right/Top/Bottom/
+    // 四个角 = 拖边框可缩放（由系统接管，业务不必自己处理鼠标与移动逻辑）。
+    virtual bool OnNcHitTest(Vec2 ptDip, HitTestCode& hit) {
+        (void)ptDip; (void)hit;
+        return false;
+    }
+    // 窗口状态变化（尺寸改变 / 最大化还原）：业务可刷新自绘按钮的图标等
+    virtual void OnStateChanged() {}
+
+    // 文件拖放（M5.85）：paths = 完整路径，ptDip = 悬停/释放点客户区 DIP。
+    // Enter/Over 返回 true 表示有元素接受（光标 COPY，否则 NONE）；默认走元素级
+    // 路由（命中元素隧道+冒泡，控件可绑 OnDragOverFiles / 覆写
+    // HandleDragOverFiles 显示插入预览）。重写可自己处理或拦下不派发。
+    virtual bool OnDragEnterFiles(const std::vector<String>& paths, Vec2 ptDip);
+    virtual bool OnDragOverFiles(const std::vector<String>& paths, Vec2 ptDip);
+    virtual void OnDragLeaveFiles();
+    virtual void OnDropFiles(const std::vector<String>& paths, Vec2 ptDip);
+
+    Panel* Root() noexcept { return root_.get(); }
 
 private:
-    static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
-    static bool EnsureClassRegistered(String& error);
-    Vec2 DipFromLParam(LPARAM lp) const noexcept;
+    friend class dui::App;
+    friend class WindowHostAdapter;    // App.cpp：平台事件 → 本类事件的适配器
 
-    HWND  hwnd_ = nullptr;
+    WindowOptions options_;
     float scale_ = 1.f;
-    bool   borderless_ = false;   // 无边框（业务自绘标题栏与边框）
-    bool   dblClickMaximize_ = true;   // 无边框窗口双击拖动区是否最大化（原生行为）
-    NativeWindowHost* host_ = nullptr;
-    DropTarget* dropTarget_ = nullptr;   // 独立 COM 对象（M5.85；另持一引用）
-    static float ScaleOf(void* ctx) noexcept;   // DropTarget 的 scale 提供者
-    HBITMAP caretBmp_ = nullptr;   // 隐形系统 caret 的位图（1×N 全透明）
-    int caretHeight_ = 0;         // 当前 caret 位图高度（变化时重建）
+    void* native_ = nullptr;           // NativeWindow*（App 层窗口壳对象）
+    dui::App* app_ = nullptr;  // 所属 App（AddWindow 设置）
+    std::unique_ptr<Panel> root_;
+    uintptr_t tickTimer_ = 0;          // UI 统一节拍定时器（0 = 未启动）
+    unsigned  tickPeriodMs_ = 0;       // 当前周期（变化时才重设 SetTimer）
+    // 系统对话框弹出期间 > 0：宿主失活不按「切到别的应用」清焦点（17-Dialogs §6.2）
+    int       dialogDepth_ = 0;
+
+    // UI 统一节拍（内部）：App 层只启停一个窗口定时器，需求与周期问 AnimationClock
+    void SyncTickTimer();
+    void OnTimer(uintptr_t id);
+    // IME 插入点：把系统 caret（隐形）移到焦点控件的光标处 —— IME 依
+    // GetCaretPos() 把候选窗口定位到光标下方。
+    void SyncImeCaret();
 };
 
 }  // namespace dui

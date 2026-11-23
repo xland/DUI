@@ -5,18 +5,116 @@
 #include "App/App.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <map>
 #include <memory>
 #include <vector>
 
 #include "Graphics/Graphics.h"
 #include "Graphics/Device.h"
-#include "App/Window.h"
+#include "App/NativeWindow.h"
 #include "Graphics/TextEngine.h"
 #include "UI/Scroller.h"
 
 namespace dui {
 
 namespace {
+
+// ---------------------------------------------------------------------------
+// 线性渐变 LUT（CSS linear-gradient 语义）：把色标烘焙成 256×1 BGRA8 色带，
+// 登记到进程级 TextureStore 并按内容缓存（渐变是静态声明，不逐帧重烘焙）。
+// shader 只按投影 u 采样，spread 由 sampler 地址模式处理（见 Graphics.cpp）。
+// ---------------------------------------------------------------------------
+constexpr uint32_t kLutSize = 256;
+
+std::string GradientLutKey(const LinearGradient& g) {
+    std::string key;
+    key.reserve(1 + g.stops.size() * 8 + 1);
+    const uint8_t sp = static_cast<uint8_t>(g.spread);
+    key.push_back(static_cast<char>(sp));
+    for (const GradientStop& s : g.stops) {
+        uint8_t buf[8];
+        std::memcpy(buf, &s.offset, 4);
+        std::memcpy(buf + 4, &s.color, 4);
+        key.append(reinterpret_cast<const char*>(buf), 8);
+    }
+    return key;
+}
+
+struct LutEntry {
+    std::shared_ptr<graphics::ImageTexture> tex;
+    float period = 1.f;   // 一个 LUT 周期占整条渐变线的比例（Pad=1）
+};
+
+// 返回 LUT 纹理 id 与 period；shared_ptr 由静态缓存持有，保证 Sync 不回收。
+// Pad：LUT 按色标原始 offset 覆盖整条渐变线，period=1（盒内一次，端点色延伸）。
+// Repeat/Reflect：LUT 只存色标自身跨度 [first,last] 的一个周期，period=跨度；
+//   发射期把盒内 u 除以 period → 跨多个周期，由 sampler WRAP/MIRROR 展开。
+LutEntry GradientLut(const LinearGradient& g) {
+    static std::map<std::string, LutEntry> cache;
+    const std::string key = GradientLutKey(g);
+    if (auto it = cache.find(key); it != cache.end()) return it->second;
+
+    const size_t n = g.stops.size();
+    const bool repeat = g.spread != GradientSpread::Pad && n >= 2;
+    const float first = g.stops.front().offset;
+    const float last = g.stops.back().offset;
+    const float span = (repeat && last > first) ? (last - first) : 1.f;
+
+    std::vector<uint8_t> px(static_cast<size_t>(kLutSize) * 4);
+    for (uint32_t i = 0; i < kLutSize; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(kLutSize - 1);
+        // 烘焙采样点：Pad 用 t∈[0,1]；Repeat/Reflect 映射到色标自身一个周期
+        const float s = repeat ? (first + t * span) : t;
+        uint32_t color = g.stops.front().color;
+        if (n >= 2 && s > g.stops.front().offset) {
+            // 找最大的 lo 使 stops[lo].offset <= s
+            size_t lo = 0;
+            for (size_t k = 1; k < n; ++k) {
+                if (g.stops[k].offset <= s) lo = k;
+                else break;
+            }
+            if (lo >= n - 1) {
+                color = g.stops[n - 1].color;
+            } else {
+                const GradientStop& a = g.stops[lo];
+                const GradientStop& b = g.stops[lo + 1];
+                const float segSpan = b.offset - a.offset;
+                // 同 offset 两色 = 硬边：直接用后者（CSS 规则）
+                const float f = segSpan > 0.f ? (s - a.offset) / segSpan : 1.f;
+                const auto ch = [](uint32_t c, int sh) -> float {
+                    return static_cast<float>((c >> sh) & 0xFF);
+                };
+                const auto lerp = [&](int sh) -> uint8_t {
+                    const float v = ch(a.color, sh) * (1.f - f) + ch(b.color, sh) * f;
+                    return static_cast<uint8_t>(v < 0.f ? 0.f : v > 255.f ? 255.f : v);
+                };
+                // 0xAARRGGBB → BGRA8 内存序
+                px[i * 4 + 0] = lerp(0);  // B
+                px[i * 4 + 1] = lerp(8);  // G
+                px[i * 4 + 2] = lerp(16); // R
+                px[i * 4 + 3] = lerp(24); // A
+                continue;
+            }
+        }
+        // 端点色（straight BGRA8）
+        px[i * 4 + 0] = (color >> 0) & 0xFF;
+        px[i * 4 + 1] = (color >> 8) & 0xFF;
+        px[i * 4 + 2] = (color >> 16) & 0xFF;
+        px[i * 4 + 3] = (color >> 24) & 0xFF;
+    }
+    auto tex = graphics::TextureStore::Instance().Register(kLutSize, 1, std::move(px));
+    LutEntry entry{tex, span};          // 缓存持一份 shared_ptr
+    cache.emplace(std::move(key), entry);
+    return entry;                       // 调用方拿另一份，两者都保活纹理
+}
+
+// CSS 角度（0° 上 / 90° 右，顺时针）→ DIP 坐标方向向量（y 向下）
+Vec2 GradientDirection(float angleDeg) {
+    const float rad = angleDeg * 3.14159265f / 180.f;
+    return Vec2{std::sin(rad), -std::cos(rad)};
+}
 
 void DrawTextContent(Element* e, const StyleContext& ctx, graphics::Painter& p, float scale) {
     const Text* t = static_cast<const Text*>(e);
@@ -375,31 +473,12 @@ private:
         }
     }
 
-    // 沿折线按 dash 图案切段描边（CPU 端切分，零 GPU 改动）：
-    // Dashed = 实 3w / 空 3w；Dotted = 实 1 DIP / 空 2w（CSS 未规定，取浏览器观感）。
+    // 沿折线按 dash 图案切段描边：转发到 Graphics 公共工具，与 Canvas 虚线共用。
+    // Dashed = 实 3w / 空 3w；Dotted = 实 1 DIP / 空 2w（见 Dash 工厂）。
     void AppendDashPolyline(const Vec2* pts, size_t n, uint32_t style, float widthDip,
                              uint32_t col, float scale) {
-        if (n < 2 || widthDip <= 0.f) return;
-        const float onLen = style == 1 ? widthDip * 3.f : 1.f;
-        const float offLen = style == 1 ? widthDip * 3.f : widthDip * 2.f;
-        bool on = true;
-        float remain = onLen;
-        for (size_t i = 0; i + 1 < n; ++i) {
-            const Vec2 a = pts[i], b = pts[i + 1];
-            const float dx = b.x - a.x, dy = b.y - a.y;
-            const float segLen = std::sqrt(dx * dx + dy * dy);
-            if (segLen <= 1e-6f) continue;
-            float t = 0.f;
-            while (t < segLen) {
-                const float step = std::min(remain, segLen - t);
-                const Vec2 s{a.x + dx * (t / segLen), a.y + dy * (t / segLen)};
-                const Vec2 e{s.x + dx * (step / segLen), s.y + dy * (step / segLen)};
-                if (on) painter_->StrokeLine(s, e, col, widthDip, scale);
-                t += step;
-                remain -= step;
-                if (remain <= 1e-4f) { on = !on; remain = on ? onLen : offLen; }
-            }
-        }
+        const Dash dash = style == 1 ? Dash::Dashed(widthDip) : Dash::Dotted(widthDip);
+        graphics::StrokeDashedPolyline(*painter_, pts, n, col, widthDip, dash, scale);
     }
 
     // 圆角矩形轮廓离散为折线（每角 8 段），供虚线沿中心线切段。
@@ -445,12 +524,21 @@ private:
 
     void DrawBackground(Element* e, const StyleContext& ctx) {
         DrawShadow(e, ctx);
-        const StyleValue bg = ResolveProperty(e, Prop::BackgroundColor, ctx);
         const CornerRadii radii = ValueAsCornerRadii(ResolveProperty(e, Prop::CornerRadius, ctx));
         // 元素自身 Opacity 已折进 Painter 的累计不透明度（Collect 里设置），
         // 这里不再单独乘 —— 文字与子树用的是同一个因子。
-        if (bg.u != 0) {
-            painter_->FillRoundedRect(e->Bounds(), radii, bg.u, 1.f, scale_);
+        const LinearGradient* grad = ResolveGradient(e);
+        if (grad != nullptr && !grad->stops.empty()) {
+            const Rect b = e->Bounds();
+            const LutEntry lut = GradientLut(*grad);
+            const Vec2 dir = GradientDirection(grad->angleDeg);
+            painter_->AddGradientQuad(lut.tex->id, b, radii, dir,
+                                      static_cast<uint8_t>(grad->spread), lut.period, scale_);
+        } else {
+            const StyleValue bg = ResolveProperty(e, Prop::BackgroundColor, ctx);
+            if (bg.u != 0) {
+                painter_->FillRoundedRect(e->Bounds(), radii, bg.u, 1.f, scale_);
+            }
         }
         DrawBorder(e, ctx);   // 边框画在背景之上（CSS 同序）
     }
@@ -520,7 +608,7 @@ private:
 // 帧路径（10-Rendering §2，按需全量光栅）：
 // 尺寸同步 → 失效检查（布局脏才重排；只重绘的帧跳过 Measure/Arrange）
 // → 图集页同步 → 收集顶点 → 光栅 → Present。
-void Application::RenderFrame(Window& window, const NativeWindow& native,
+void App::RenderFrame(Window& window, const NativeWindow& native,
                               graphics::Device& device) {
     const Vec2 px = native.ClientSizePx();
     if (px.x <= 0.f || px.y <= 0.f) return;   // 最小化：不进帧

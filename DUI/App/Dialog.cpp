@@ -124,10 +124,10 @@ DialogResult<std::vector<String>> RunFileDialog(Mode mode, void* owner,
                                                 bool multiSelect) {
     if (owner == nullptr) {
         return DialogResult<std::vector<String>>::Failed(
-            L"窗口尚未创建（需在 Application::Run 之后调用）");
+            L"窗口尚未创建（需在 App::Run 之后调用）");
     }
 
-    // UI 线程由 Application::Run 用 OleInitialize 建成 STA；此处再请求 STA 只返回
+    // UI 线程由 App::Run 用 OleInitialize 建成 STA；此处再请求 STA 只返回
     // S_FALSE。若线程已被别人初始化成 MTA（RPC_E_CHANGED_MODE），Common Item Dialog
     // 的 Show() 会在创建窗口前死锁 —— 明确报错而不是把界面挂死。
     static const HRESULT comInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -335,7 +335,7 @@ MessageResult ShowMessageBox(void* owner, const MessageOptions& options) {
 
 namespace {
 
-const String kNoWindowError = L"窗口尚未创建（需在 Application::Run 之后调用）";
+const String kNoWindowError = L"窗口尚未创建（需在 App::Run 之后调用）";
 
 }  // namespace
 

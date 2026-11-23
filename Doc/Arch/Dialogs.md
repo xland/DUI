@@ -128,7 +128,7 @@ private:
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-    dui::Application app;
+    dui::App app;
     DialogWindow window;
     return app.Run(window);
 }
@@ -218,7 +218,7 @@ if (r.IsOk())       { /* 用 r.Value() */ }
 ## 4. 使用约束（重要）
 
 1. **只在 UI 线程调用**：`OnCreate()`、`OnClick` 等事件回调里；协程里须先 `co_await dui::Foreground()` 切回 UI 线程。后台线程直接调用不在支持范围。
-2. **必须在 `Application::Run` 建立 HWND 之后**：构造 `Window` 但还没 `Run` 时调用 → `OpenFile` / `SaveFile` / `OpenFolder` 返回 `Error`，`MessageBox` 返回 `Failed`。`OnCreate()` 里 HWND 已建但窗口尚未显示，此时弹窗会挡住首帧显示，**允许但不推荐**。
+2. **必须在 `App::Run` 建立 HWND 之后**：构造 `Window` 但还没 `Run` 时调用 → `OpenFile` / `SaveFile` / `OpenFolder` 返回 `Error`，`MessageBox` 返回 `Failed`。`OnCreate()` 里 HWND 已建但窗口尚未显示，此时弹窗会挡住首帧显示，**允许但不推荐**。
 3. **同步阻塞**：函数返回 = 对话框已关闭，无需回调 / `Then()`。期间框架主消息循环挂起：界面不刷新、动画/GIF/光标闪烁停摆、后台任务的 `PostUi` 回投延后到关闭后执行（**不会丢**）。不要在此期间依赖持续 UI 更新。
 4. **字符串**：一律 UTF-16（`String` / `const wchar_t*` / `L"..."`），中文路径直接可用；返回的也是绝对路径。
 5. **指针 / span 生命周期**：`title` / `initialPath` / `defaultExtension` / `filters[].name|pattern` 只需在**调用期间**有效，框架不长期持有；`span` 的底层数组必须活到调用返回，用字面量 + `static`/具名数组，别把即将销毁的 `String::c_str()` 传进去。
@@ -248,7 +248,7 @@ if (r.IsOk())       { /* 用 r.Value() */ }
 ## 6. 构建与排错
 
 - 无需改业务工程配置、无需手动加 lib：`ole32` / `shell32` 等系统库由库内 `#pragma comment(lib)` 携带（与 WIC 的 `windowscodecs.lib` 同一做法）。
-- 只支持 Windows 10 1703+ / x64、C++20（过滤器用 `std::span`）；**业务不需要初始化 COM**：`Application::Run` 已用 `OleInitialize` 把 UI 线程建成 **STA**（ADR-027）。若不用 `Run` 而自建宿主，必须自己初始化 STA，否则文件类弹窗返回 `Error`。
+- 只支持 Windows 10 1703+ / x64、C++20（过滤器用 `std::span`）；**业务不需要初始化 COM**：`App::Run` 已用 `OleInitialize` 把 UI 线程建成 **STA**（ADR-027）。若不用 `Run` 而自建宿主，必须自己初始化 STA，否则文件类弹窗返回 `Error`。
 - 本次已在 Debug/Release x64 全解决方案编译验证（含 `MacroCompat.cpp` 两种包含顺序守卫），`/W4` 无新增警告；四类弹窗的弹出 / 关闭已自动化点击复测，其余人工实测项见 `Arch/17-Dialogs.md §7` D4。
 
 | 现象 | 原因 / 处理 |

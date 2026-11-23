@@ -101,6 +101,15 @@
     <ClInclude Include="App\Window.h">
       <Filter>头文件\App</Filter>
     </ClInclude>
+    <ClInclude Include="App\NativeWindow.h">
+      <Filter>头文件\App</Filter>
+    </ClInclude>
+    <ClInclude Include="App\NativeWindowHost.h">
+      <Filter>头文件\App</Filter>
+    </ClInclude>
+    <ClInclude Include="App\WindowHostAdapter.h">
+      <Filter>头文件\App</Filter>
+    </ClInclude>
     <ClInclude Include="App\Dialog.h">
       <Filter>头文件\App</Filter>
     </ClInclude>
@@ -220,7 +229,16 @@
     <ClCompile Include="App\Frame.cpp">
       <Filter>源文件\App</Filter>
     </ClCompile>
+    <ClCompile Include="App\NativeWindow.cpp">
+      <Filter>源文件\App</Filter>
+    </ClCompile>
+    <ClCompile Include="App\NativeWindowHost.cpp">
+      <Filter>源文件\App</Filter>
+    </ClCompile>
     <ClCompile Include="App\Window.cpp">
+      <Filter>源文件\App</Filter>
+    </ClCompile>
+    <ClCompile Include="App\WindowHostAdapter.cpp">
       <Filter>源文件\App</Filter>
     </ClCompile>
     <ClCompile Include="Graphics\Graphics.cpp">

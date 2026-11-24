@@ -39,8 +39,9 @@ Win32 消息 ──Platform.Input──▶ 归一化事件 ──UI.Event──�
 - **一层 API + 阶段参数**：具名语义糖（`OnClick` / `OnPointerDown` / `OnKeyDown` /
   `OnDropFiles`…）直接承载全部**内建**可路由事件，末尾可选 `Phase` 参数声明阶段（默认
   `Phase::Bubble`，`Phase::Tunnel` 为隧道）。内建事件按具体类型分发、不引入事件 ID 表（R1/R3，见 §5.1）；
-  应用自定义的具名事件另走 `CustomEvent`（面向使用者的说明见 [Event.md](../Event.md) §9.1），
-  它是内建固定槽之外的按名路由通道，二者并存。
+  应用自定义的具名事件走进程级事件总线 `Core/EventBus`（`dui::On<T>` / `dui::Emit`，
+  面向使用者的说明见 [Event.md](../Event.md) §9.1）：按名广播、无元素树路由、
+  任意线程可发射，元素注册自动绑 `Lifetime`；与内建固定槽二者并存。
 - **拖放文件（M5.84/85）**：建窗时框架 `RegisterDragDrop`（独立 COM 对象 `App/DropTarget`，
   自计数、STA）。`DragEnter/DragOver` 取 `CF_HDROP` 路径 + 屏幕坐标转客户区 DIP，经
   `OnDragEnterFiles/OnDragOverFiles` → `HitTest` → `DragOverFilesEvent`（双阶段），控件

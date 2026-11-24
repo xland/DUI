@@ -80,6 +80,7 @@
     <ClInclude Include="Core\Core.h" />
     <ClInclude Include="Core\Dispatcher.h" />
     <ClInclude Include="Core\Threading.h" />
+    <ClInclude Include="Core\EventBus.h" />
     <ClInclude Include="Core\Utf8.h" />
     <ClInclude Include="Core\Json.h" />
     <ClInclude Include="UI\RichDoc.h" />
@@ -120,6 +121,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Core\Dispatcher.cpp" />
+    <ClCompile Include="Core\EventBus.cpp" />
     <ClCompile Include="Core\Clipboard.cpp" />
     <ClCompile Include="Core\Utf8.cpp" />
     <ClCompile Include="Core\Json.cpp" />

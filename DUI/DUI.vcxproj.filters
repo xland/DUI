@@ -50,6 +50,9 @@
     <ClInclude Include="Core\Threading.h">
       <Filter>头文件\Core</Filter>
     </ClInclude>
+    <ClInclude Include="Core\EventBus.h">
+      <Filter>头文件\Core</Filter>
+    </ClInclude>
     <ClInclude Include="Core\Utf8.h">
       <Filter>头文件\Core</Filter>
     </ClInclude>
@@ -152,6 +155,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Core\Dispatcher.cpp">
+      <Filter>源文件\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\EventBus.cpp">
       <Filter>源文件\Core</Filter>
     </ClCompile>
     <ClCompile Include="Core\Clipboard.cpp">

@@ -777,6 +777,13 @@ uint32_t Engine::HitTestPoint(Paragraph* p, Vec2 localDip) {
 bool Engine::CaretRect(Paragraph* p, uint32_t index, Rect& out) {
     if (p == nullptr || p->layout == nullptr) return false;
     const uint32_t len = static_cast<uint32_t>(p->text.size());
+    // 空文本：Shape 跳过整块样式下发（字号/行距都在 len>0 分支里），空 layout 沿用
+    // baseFormat_ 默认行高，与 p->size.y（fontSize×lineHeight）不一致。光标改为按
+    // 段落行盒定位，匹配 TextOrigin 的单行居中假设（否则空输入框光标垂直偏下）。
+    if (len == 0) {
+        out = Rect{0.f, 0.f, 1.f, p->size.y};
+        return true;
+    }
     // isTrailingHit：该位置是否为"尾随"（位于行/文本末）。
     //   末尾（index == len）必须传 TRUE —— 否则 DWrite 返回的是**最后一个字符的
     //   前缘**，光标会压在最后一个字符上（位置错、且与文字粘连显得粗）。

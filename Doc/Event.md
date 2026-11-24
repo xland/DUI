@@ -411,58 +411,49 @@ panel->OnPointerUp([this](dui::PointerEvent& ev) {
 
 ## 9. 组件间通信与自定义事件
 
-两个自定义组件之间通信有两类做法：**内建 `CustomEvent`**（Web `CustomEvent` 语义，按事件名路由、支持冒泡与解绑，见 §9.1）适合"广播 / 通知 / 祖先监听子孙"；**直接通信**（持有指针或回调注入）适合固定关系的点对点调用，见 §9.2 起。
+两个自定义组件之间通信有两类做法：**全局事件总线**（`dui::On<T>` / `dui::Emit`，见 §9.1）适合"广播 / 通知 / 跨窗口跨组件解耦"；**直接通信**（持有指针或回调注入）适合固定关系的点对点调用，见 §9.2 起。
 
-### 9.1 内建自定义事件 `CustomEvent` ★
+### 9.1 全局自定义事件 ★
 
-框架自带 Web `CustomEvent` 语义的实现：`dui::CustomEvent` + `Element::AddEventListener` / `RemoveEventListener` / `DispatchEvent`。按 `String` 事件名路由，`std::any detail` 携带任意负载，沿元素树走**捕获 → 目标 → 冒泡**三阶段。
+框架自带进程级事件总线：`dui::Emit(type, value)` 任意逻辑 / 任意线程发射，`Element::On<T>` 或 `dui::On<T>` 按事件名监听，负载用 `std::any` 承载。没有元素树路由（无 `target` / 冒泡 / 阶段），任意监听器都能收到。
 
 ```cpp
-// 发送方：在任意元素上派发
-dui::CustomEvent ev;
-ev.type = L"item-selected";
-ev.detail = 42;                     // 任意类型，整数 / 结构体 / 指针均可
-ev.bubbles = true;
-ev.cancelable = true;
-bool notPrevented = sender->DispatchEvent(ev);   // 返回 !defaultPrevented
+// 发射方：任意逻辑、任意线程，一行
+dui::Emit(L"user-login", UserInfo{L"张三", 3});
+dui::Emit(L"score", 100);
 
-// 接收方：监听（可在任意元素，含祖先）
-uint64_t id = card->AddEventListener(L"item-selected", [](dui::CustomEvent& e) {
-    int value = std::any_cast<int>(e.detail);     // 取负载
-    dui::Element* from = e.target;                // 派发目标（sender）
-    dui::Element* here = e.source;                // 当前宿主（= DOM currentTarget）
-});
-card->RemoveEventListener(id);                    // 精确解绑
+// 使用方：元素注册（自动绑定 Lifetime，销毁即失效）
+class UserPanel : public dui::Panel {
+protected:
+    void OnCreate() override {
+        label_ = Root()->AddChild<dui::Text>(/* ... */);
+        On<UserInfo>(L"user-login", [this](const UserInfo& u) {
+            label_->SetText(u.name);
+        });
+    }
+private:
+    dui::Text* label_ = nullptr;
+};
+
+// 非元素逻辑注册：返回 id，必要时 dui::OffCustomListener(id) 解绑
+uint64_t id = dui::On<int>(L"score", [](int n) { /* ... */ });
 ```
 
-**事件对象字段**（对齐 DOM Event）：
+**事件对象 `CustomEvent`**（`Core/EventBus.h`）：只有 `type`（事件名）与 `detail`（`std::any` 负载），`Get<T>()` 取强类型负载（类型不符返回 `nullptr`，监听器静默跳过，不抛异常）。
 
-| 字段 | 说明 |
+**API 约定**：
+
+| API | 说明 |
 | --- | --- |
-| `type` | 事件名（`String`），`AddEventListener` 按它匹配 |
-| `detail` | 任意负载（`std::any`），`std::any_cast<T>()` 取；类型不符抛异常（框架无异常约定，取前自己保证类型） |
-| `target` | 派发目标（`DispatchEvent` 的调用元素），全程不变；未手填时框架自动设为派发者 |
-| `source` | 当前处理器宿主（DOM `currentTarget`），路由中逐站变化 |
-| `bubbles` | `false` 时跳过冒泡阶段（捕获与目标阶段仍走），默认 `true` |
-| `cancelable` | `true` 时 `PreventDefault()` 才生效，默认 `false` |
-| `handled` | `StopPropagation()` 置位：阻止进入后续节点，但**同节点其余监听器仍执行** |
-| `defaultPrevented` | `PreventDefault()` 的结果；`DispatchEvent` 返回其反值 |
-| `immediateStop` | `StopImmediatePropagation()` 置位：连同同节点后续监听器一起阻止 |
-| `eventPhase` | `1` 捕获 / `2` 目标 / `3` 冒泡 / `0` 派发前或派发后 |
+| `element->On<T>(type, fn)` | 元素注册，`fn` 签名 `void(const T&)`；自动绑 Lifetime，元素销毁失效，通常无需解绑 |
+| `element->On<T>(type, ctx, &Ctx::fn)` | 成员函数形式 |
+| `dui::On<T>(type, fn)` | 非元素注册，返回 `uint64_t` id |
+| `dui::OffCustomListener(id)` | 按 id 解绑（仅非元素注册需要） |
+| `dui::Emit(type, value)` | 任意线程发射；监听器在下轮 UI 消息循环按注册顺序执行 |
 
-**三阶段路由**（与内建事件的隧道 / 冒泡同构，但多了独立的目标阶段）：
-
-```
-[捕获] 根 ──▶ … ──▶ 目标的父      只触发 capture = true 的监听器
-[目标] 目标元素                    capture / bubble 监听器都按注册顺序触发
-[冒泡] 目标的父 ──▶ … ──▶ 根       只触发 capture = false 的监听器；bubbles = false 时跳过
-```
-
-- `AddEventListener(type, fn, capture = false)`：`capture = true` 只在捕获阶段收到，默认在目标 / 冒泡阶段收。同一 type 可绑**多个**监听器（与固定 `OnXxx` 单槽不同）。也有 `AddEventListener(type, ctx, &Ctx::fn, capture)` 成员函数重载。
-- 返回 `uint64_t id`（>0）供 `RemoveEventListener(id)` 精确解绑；**派发中解绑安全**（每站先把监听器拷快照再调用）。
-- 监听器里 `StopPropagation()` 不截断同节点其余监听器（对齐 DOM）；要截断用 `StopImmediatePropagation()`。
-- 目标元素自身无监听器时，`DispatchEvent` 仍会沿祖先链路由 —— 适合祖先统一监听子孙事件（无需知道具体哪个子项，`target` 就是来源）。
-- `std::any` 取负载前须保证类型正确（`std::any_cast` 类型不符会抛异常）。
+- **异步派发**：`Emit` 把事件回投 UI 线程（`Dispatcher::Ui()->Post`），下一轮 `Drain` 执行；无窗口阶段的后台发射同样有效。
+- **负载类型**：发射的值类型须与监听的 `T` 一致；不一致时该监听器跳过。负载按值拷贝进事件，发射后修改原对象不影响已排队事件。
+- **事件名约定**：建议 `L"域:动作"`（如 `L"user:login"`）避免模块间撞名。
 
 下面的直接通信手段在**点对点、关系固定**时依然更简单，按需选用：
 
@@ -532,19 +523,14 @@ dui::PostUi(life, [target] { target->SetText(L"后台任务完成"); });
 
 ### 9.6 跨线程派发
 
-`DispatchEvent` 必须在 UI 线程调用（它触碰元素树）。后台线程要发自定义事件，用 `PostUi` 回投，带 `Lifetime` 令牌防元素销毁后回调悬空：
+`dui::Emit` **任意线程可直接调用**——它内部回投 UI 线程，监听器在下轮 `Drain` 执行，无需自己 `PostUi` 或带 `Lifetime` 令牌：
 
 ```cpp
-auto life = target->Lifetime();          // UI 线程取
-dui::PostUi(life, [target, life] {
-    dui::CustomEvent ev;
-    ev.type = L"job-done";
-    ev.detail = result;
-    target->DispatchEvent(ev);
-});
+// 后台线程
+dui::Emit(L"job-done", result);
 ```
 
-详见 [Async.md](./Async.md)。
+元素销毁后其监听器自动失效（注册时绑定了 Lifetime），不会悬空。详见 [Async.md](./Async.md)。
 
 ---
 
@@ -564,4 +550,4 @@ dui::PostUi(life, [target, life] {
 12. **`Enter` / `Leave` 的 `pos` 是新命中元素的坐标**（`leave` 也用新坐标）。
 13. **`Scroller` 没有自己的事件 API**（滚动进度、滚动结束都无通知）；`RichEditor` 也没有内容变更事件。
 14. **指针形态（`cursor`）不是事件**：由命中链就近者胜决定，不走事件系统。
-15. **自定义事件不支持跨窗口**：`CustomEvent` 沿元素树路由，只能在单个窗口的树内传播；跨窗口 / 全局广播需应用层自行桥接（见 §9 的回调注入或 `PostUi`）。`std::any` 取负载前须保证类型正确（`any_cast` 类型不符会抛异常）。
+15. **全局事件是异步广播**：`Emit` 在下轮 UI 消息循环执行，不提供同步返回 / 结果回收；需要点对点同步调用请用直接通信（§9.1 起）。负载类型须与监听 `T` 一致，不一致静默跳过。

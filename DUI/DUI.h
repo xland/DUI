@@ -16,6 +16,7 @@
 
 #include "Core/Core.h"
 #include "Core/Threading.h"
+#include "Core/EventBus.h"
 #include "Core/Utf8.h"
 #include "Core/Json.h"
 #include "Graphics/Graphics.h"

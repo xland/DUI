@@ -5,8 +5,6 @@
 
 #include "UI/Element.h"
 
-#include <algorithm>
-
 #include "UI/Focus.h"
 
 namespace dui {
@@ -17,96 +15,6 @@ Element::~Element() {
     lifetime_.Kill();   // 生命周期令牌置否：延迟回投的回调据此丢弃（06-Events D7）
     detail::UnregisterAnimatedElement(this);   // 动画句柄随元素销毁自动失效
     for (Element* c : children_) delete c;
-}
-
-// ---------------------------------------------------------------------------
-// 自定义事件（Web CustomEvent 语义）：按 type 名路由，捕获 → 目标 → 冒泡三阶段。
-// ---------------------------------------------------------------------------
-uint64_t Element::AddEventListener(const String& type,
-                                   std::function<void(CustomEvent&)> fn, bool capture) {
-    if (!fn) return 0;
-    if (!customListeners_)
-        customListeners_ = std::make_unique<std::unordered_map<String, std::vector<CustomListener>>>();
-    auto& list = (*customListeners_)[type];
-    const uint64_t id = nextListenerId_++;
-    list.push_back(CustomListener{id, capture, std::move(fn)});
-    return id;
-}
-
-bool Element::RemoveEventListener(uint64_t id) noexcept {
-    if (!customListeners_) return false;
-    for (auto& [type, list] : *customListeners_) {
-        for (auto it = list.begin(); it != list.end(); ++it) {
-            if (it->id != id) continue;
-            list.erase(it);
-            if (list.empty()) customListeners_->erase(type);
-            return true;
-        }
-    }
-    return false;
-}
-
-// 调用本元素某阶段的监听器。先拷贝快照：监听器里可能 RemoveEventListener /
-// AddEventListener，直接遍历 map 里的 vector 会迭代器失效或漏掉新绑的。
-void Element::InvokeCustomListeners(CustomEvent& ev) {
-    if (!customListeners_) return;
-    auto it = customListeners_->find(ev.type);
-    if (it == customListeners_->end()) return;
-    // 目标阶段 capture / bubble 都触发；捕获阶段只 capture；冒泡阶段只 bubble。
-    const bool wantCapture = ev.eventPhase == CustomEvent::kCapturing;
-    const bool wantBubble  = ev.eventPhase == CustomEvent::kBubbling;
-    std::vector<std::function<void(CustomEvent&)>> snapshot;
-    snapshot.reserve(it->second.size());
-    for (const CustomListener& l : it->second) {
-        if (wantCapture && !l.capture) continue;
-        if (wantBubble && l.capture) continue;
-        snapshot.push_back(l.fn);
-    }
-    for (auto& fn : snapshot) {
-        if (ev.immediateStop) break;
-        ev.source = this;   // DOM currentTarget = 当前处理器宿主
-        fn(ev);
-    }
-}
-
-bool Element::DispatchEvent(CustomEvent& ev) {
-    if (ev.target == nullptr) ev.target = this;   // 允许直接构造后派发，无需手填 target
-    ev.source = nullptr;
-    ev.handled = false;
-    ev.defaultPrevented = false;
-    ev.immediateStop = false;
-
-    // 祖先链：this → … → 根。捕获阶段逆序走（根先），冒泡阶段正序走。
-    // 局部而非 static：监听器可能嵌套派发另一个事件，复用同一缓冲会改写外层链。
-    std::vector<Element*> chain;
-    chain.reserve(8);
-    for (Element* e = this; e != nullptr; e = e->Parent()) chain.push_back(e);
-
-    // 捕获阶段：根 → 目标的父（chain[n-1] … chain[1]，不含目标 chain[0]）
-    if (chain.size() > 1) {
-        ev.eventPhase = CustomEvent::kCapturing;
-        for (size_t i = chain.size() - 1; i >= 1; --i) {
-            chain[i]->InvokeCustomListeners(ev);
-            if (ev.handled) return !ev.defaultPrevented;
-        }
-    }
-
-    // 目标阶段：capture / bubble 监听器都按注册顺序触发
-    ev.eventPhase = CustomEvent::kAtTarget;
-    InvokeCustomListeners(ev);
-    if (ev.handled) return !ev.defaultPrevented;
-
-    // 冒泡阶段：目标的父 → 根（bubbles = false 时跳过）
-    if (ev.bubbles) {
-        ev.eventPhase = CustomEvent::kBubbling;
-        for (size_t i = 1; i < chain.size(); ++i) {
-            chain[i]->InvokeCustomListeners(ev);
-            if (ev.handled) break;
-        }
-    }
-
-    ev.eventPhase = CustomEvent::kNone;
-    return !ev.defaultPrevented;
 }
 
 void Element::AttachChild(Element* child) {

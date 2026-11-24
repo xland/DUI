@@ -73,8 +73,9 @@ public:
 
     // ---- 应用级定时器（M5.78，窗口无关）----
     // 与窗口无关：全部窗口销毁后仍周期触发。回调在 UI 线程消息循环里执行。
-    // ms 为周期（夹紧到 >=1），返回 id（>0）传给 KillTimer 取消；
-    // 同 id 重复设置会先取消旧的。fn 不要做重活（与 OnTimer 同属 UI 线程节拍）。
+    // ms 为周期（夹紧到 >=1），返回 id（>0）传给 KillTimer 取消；每次调用
+    // 分配新 id（不会取消旧定时器）。要一次性触发就在 fn 里 KillTimer(自身 id)。
+    // fn 不要做重活（与 OnTimer 同属 UI 线程节拍）。
     unsigned SetTimer(unsigned ms, std::function<void()> fn);
     void     KillTimer(unsigned id) noexcept;
 
@@ -97,7 +98,6 @@ private:
     void DispatchAppTimer(unsigned id);
 
     std::vector<std::unique_ptr<WindowRecord>> windows_;
-    Dispatcher dispatcher_;   // UI 任务队列（07-Threading：[调度] 步排空）
     String lastError_;
 
     bool quitOnLastWindowClosed_ = true;

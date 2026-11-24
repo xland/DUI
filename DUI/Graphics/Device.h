@@ -57,6 +57,11 @@ public:
     void UploadImage(uint32_t id, uint32_t w, uint32_t h, const uint8_t* bgra);
     void ReleaseImage(uint32_t id);
 
+    // 清理本设备上"全局资源已回收但本设备纹理仍在"的残留（多窗口场景）。
+    // 每个 Device 每帧渲染前调用：页 id 不在图集、纹理 id 不在仓库 → 释放。
+    // 替代原来"淘汰/回收只通知当前 Device"的做法，避免其它窗口的 GPU 资源泄漏。
+    void PruneStaleResources();
+
 private:
     bool CreateSizeDependent(const Vec2& clientPx, String& error);
     void EnsureVertexBuffer(uint32_t vertexCount);

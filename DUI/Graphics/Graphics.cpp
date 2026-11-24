@@ -4,6 +4,8 @@
 
 #include "Graphics/Graphics.h"
 #include "Graphics/Device.h"
+#include "Graphics/GlyphAtlas.h"
+#include "Graphics/TextEngine.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1451,6 +1453,28 @@ void Device::ReleaseImage(uint32_t id) {
     }
 }
 
+void Device::PruneStaleResources() {
+    // 多窗口：全局图集/仓库回收资源时只通知了触发回收的那个 Device，
+    // 其它 Device 仍持有已失效的纹理。每帧渲染前自查一遍，清掉"全局已无、
+    // 本设备还有"的残留；Release 找不到 id 是 no-op，故可安全重复调用。
+    const auto& atlas = text::Engine::Get().Atlas();
+    for (size_t i = 0; i < pages_.size();) {
+        if (!atlas.HasPage(pages_[i].id)) {
+            ReleaseGlyphPage(pages_[i].id);
+        } else {
+            ++i;
+        }
+    }
+    TextureStore& store = TextureStore::Instance();
+    for (size_t i = 0; i < images_.size();) {
+        if (!store.Has(images_[i].id)) {
+            ReleaseImage(images_[i].id);
+        } else {
+            ++i;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 纹理仓库（进程级单例）：控件登记纹理 → App 层每帧同步到 GPU
 // ---------------------------------------------------------------------------
@@ -1458,6 +1482,10 @@ void Device::ReleaseImage(uint32_t id) {
 TextureStore& TextureStore::Instance() {
     static TextureStore inst;
     return inst;
+}
+
+bool TextureStore::Has(uint32_t id) const noexcept {
+    return ids_.find(id) != ids_.end();
 }
 
 std::shared_ptr<ImageTexture> TextureStore::Register(uint32_t w, uint32_t h,
@@ -1469,6 +1497,7 @@ std::shared_ptr<ImageTexture> TextureStore::Register(uint32_t w, uint32_t h,
     tex->pixels = std::move(pixels);
     tex->dirty = true;
     textures_.push_back(tex);
+    ids_.insert(tex->id);
     return tex;
 }
 
@@ -1477,6 +1506,7 @@ void TextureStore::Sync(Device& dev) {
         if (it->use_count() == 1) {
             // 只有仓库还持有 → 控件已释放该纹理：回收 GPU 资源
             dev.ReleaseImage((*it)->id);
+            ids_.erase((*it)->id);
             it = textures_.erase(it);
             continue;
         }

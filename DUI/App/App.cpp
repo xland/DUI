@@ -106,7 +106,7 @@ bool App::AddWindow(Window& window) {
 
     // 后台完成回投 → PostMessage 唤醒泵 → [调度] 排空。唤醒目标 = 主窗口
     // （任一窗口收到该消息都足以让全局 PeekMessage 醒来；主窗口关闭后切换）。
-    dispatcher_.SetWakeTarget(r.native->Handle(), kWakeMessage);
+    Dispatcher::Shared().SetWakeTarget(r.native->Handle(), kWakeMessage);
 
     window.OnCreate();
     r.native->Show();
@@ -131,8 +131,8 @@ bool App::OnWindowDestroyed(WindowHostAdapter* host) {
         //   false → 不投退出消息；窗口数组清空，Run 继续（托盘 / 后台阶段），
         //           唤醒目标切到 UI 线程，保证后台 PostUi 仍能叫醒泵。
         if (quitOnLastWindowClosed_) return true;
-        dispatcher_.SetWakeTarget(nullptr, kWakeMessage);
-        dispatcher_.SetWakeThread(::GetCurrentThreadId());
+        Dispatcher::Shared().SetWakeTarget(nullptr, kWakeMessage);
+        Dispatcher::Shared().SetWakeThread(::GetCurrentThreadId());
         return false;
     }
 
@@ -140,7 +140,7 @@ bool App::OnWindowDestroyed(WindowHostAdapter* host) {
     bool wakeUpdated = false;
     for (const auto& rec : windows_) {
         if (rec->closed) continue;
-        dispatcher_.SetWakeTarget(rec->native->Handle(), kWakeMessage);
+        Dispatcher::Shared().SetWakeTarget(rec->native->Handle(), kWakeMessage);
         wakeUpdated = true;
         break;
     }
@@ -157,7 +157,7 @@ size_t App::WindowCount() const noexcept {
 void App::Quit(int exitCode) noexcept {
     // 经 UI 任务队列回投：PostQuitMessage 必须在 UI 线程执行才生效
     // （后台线程直接调只会投到自己队列）。Post 同时唤醒泵；无窗口时走线程唤醒。
-    dispatcher_.Post([exitCode] { ::PostQuitMessage(exitCode); });
+    Dispatcher::Shared().Post([exitCode] { ::PostQuitMessage(exitCode); });
 }
 
 unsigned App::SetTimer(unsigned ms, std::function<void()> fn) {
@@ -177,13 +177,16 @@ void App::KillTimer(unsigned id) noexcept {
 void App::DispatchAppTimer(unsigned id) {
     auto it = timers_.find(id);
     if (it == timers_.end()) return;
-    it->second();   // 周期定时器：系统继续投递后续 WM_TIMER
+    // 先拷贝再调用：回调里常会 KillTimer(自身 id) 实现一次性定时器，
+    // 那会 erase 容器中的闭包 —— 直接 it->second() 等于执行中被析构（UB）。
+    auto fn = it->second;
+    fn();           // 周期定时器：系统继续投递后续 WM_TIMER
 }
 
 int App::Run() {
     EnsureUiCom();
     if (windows_.empty()) return 1;
-    Dispatcher::SetUi(&dispatcher_);
+    Dispatcher::SetUi(&Dispatcher::Shared());
 
     // 按需渲染循环：[调度] 排空 → 每个窗口各自有失效才进帧 → 空闲 WaitMessage。
     // PeekMessageW(nullptr) 收取**所有**窗口的消息；DispatchMessage 按 HWND
@@ -193,6 +196,7 @@ int App::Run() {
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) {
                 Dispatcher::SetUi(nullptr);
+                Element::FlushDeferredDeleted();   // 最小化期间积攒的延迟删除，退出前统一释放
                 // 退出前清掉应用定时器（连同系统 timer），避免遗留到进程结束
                 for (const auto& kv : timers_) ::KillTimer(nullptr, static_cast<UINT_PTR>(kv.first));
                 timers_.clear();
@@ -213,7 +217,7 @@ int App::Run() {
             else ++it;
         }
 
-        dispatcher_.Drain();
+        Dispatcher::Shared().Drain();
 
         bool rendered = false;
         for (const auto& rec : windows_) {

@@ -500,6 +500,12 @@ public:
     // 子元素之上、裁剪之外。坐标与 Bounds() 同空间（父单元空间）。
     virtual void PaintOverlay(graphics::Painter&, float) {}
 
+    /// 从父元素摘除子元素；不立即 delete，延迟到下一帧渲染前统一析构，
+    /// 避免在事件回调栈上持有正在被派发的对象指针而悬空。
+    void RemoveChild(Element* child);
+    /// 冲刷延迟删除队列（每帧渲染前由 App 调用；一般无需手动调用）。
+    static void FlushDeferredDeleted();
+
 protected:
     void AttachChild(Element* child);
     void SetOverride(const StyleValue& v);

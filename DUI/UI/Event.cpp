@@ -49,6 +49,9 @@ Element* HitTestInner(Element* e, const Vec2& ptAbs, Vec2* outLocal,
                       bool inFixedLayer = false, uint32_t depth = 0) {
     const std::vector<Element*>& cs = e->Children();
     auto TryHit = [&](Element* c) -> Element* {
+        // display:none → 不参与布局与绘制，同样不参与命中。子树一并排除
+        // （布局期对 Display::None 直接 return，后代 Bounds 是上一帧的旧值）。
+        if (ResolveProperty(c, Prop::Display).u == static_cast<uint32_t>(Display::None)) return nullptr;
         if (!inFixedLayer && FixedCount() != 0 && IsFixed(c)) return nullptr;
         const Transform2D t = ElementTransform(c);
         if (!t.IsInvertible()) return nullptr;   // Scale → 0：元素缩没，不可命中

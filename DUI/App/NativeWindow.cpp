@@ -76,13 +76,14 @@ Rect ToDip(const RECT& px, float scale) {
 
 NativeWindow::~NativeWindow() {
     RemoveImeCaret();
-    // dropTarget_ 由 OLE 持一引用，本类另持一引用；WM_DESTROY 时已 RevokeDragDrop
-    // （OLE 引用归还），这里归还本类引用。若窗口未创建成功 dropTarget_ 为空。
+    // 先销毁窗口：WM_DESTROY 会 RevokeDragDrop（归还 OLE 那一引用）。
+    // 必须在此之后才归还本类引用 —— 顺序反了会让 WM_DESTROY 见到 dropTarget_
+    // 已空、跳过 Revoke，OLE 永久保留一个引用和已销毁 HWND 的注册。
+    if (hwnd_) DestroyWindow(hwnd_);
     if (dropTarget_ != nullptr) {
-        dropTarget_->Release();
+        dropTarget_->Release();   // 归还本类引用（new 时那一份）
         dropTarget_ = nullptr;
     }
-    if (hwnd_) DestroyWindow(hwnd_);
 }
 
 float NativeWindow::ScaleOf(void* ctx) noexcept {
@@ -299,11 +300,12 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
-            // 先撤销 OLE 拖放注册（OLE 归还它持有的引用）；必须在 hwnd 仍有效时。
+            // 撤销 OLE 拖放注册（OLE 归还它持有的引用）；必须在 hwnd 仍有效时。
+            // 只 Revoke、不动类引用：本类引用由 ~NativeWindow 在 DestroyWindow
+            // 返回后归还。若在这里 Release 并置空，从析构路径触发的销毁会
+            // 让类引用无人归还（OLE 注册残留）。
             if (self->dropTarget_ != nullptr) {
                 ::RevokeDragDrop(hwnd);
-                self->dropTarget_->Release();   // 归还 OLE 那一引用（本类引用留到析构）
-                self->dropTarget_ = nullptr;
             }
             // 窗口已进入销毁：立刻把 self 的句柄副本置空。否则 ~NativeWindow 会拿
             // 这个悬空值二次 DestroyWindow；而 HWND 值会被随后新建的窗口复用，

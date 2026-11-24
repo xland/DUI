@@ -54,6 +54,10 @@ public:
                        uint32_t pixelSize, uint32_t phase, RasterFn raster);
 
     std::vector<AtlasPage>& Pages() noexcept { return pages_; }
+    bool HasPage(uint32_t id) const noexcept {
+        for (const AtlasPage& p : pages_) if (p.id == id) return true;
+        return false;
+    }
     const std::vector<uint32_t>& FreedPages() const noexcept { return freed_; }
     void ClearFreed() noexcept { freed_.clear(); }
 

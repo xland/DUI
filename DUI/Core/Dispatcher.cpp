@@ -4,10 +4,14 @@
 
 #include "Core/Dispatcher.h"
 
+#include <atomic>
+
 namespace dui {
 
 namespace {
-Dispatcher* g_uiDispatcher = nullptr;   // 仅 UI 线程读写（SetUi 安装于 Run）
+// PostUi / Foreground / ScheduleThen / Emit 都会在后台线程读，SetUi 在 UI 线程
+// 写；用原子指针避免数据竞争（release/acquire 保证安装/卸载对读者可见）。
+std::atomic<Dispatcher*> g_uiDispatcher{nullptr};
 }
 
 // ---------------------------------------------------------------------------
@@ -40,7 +44,12 @@ ThreadPool::~ThreadPool() {
         stop = true;
     }
     cv.notify_all();
-    for (std::thread& t : threads) t.detach();   // 进程退出随 OS 回收（R6 排空列 P1）
+    // 必须 join：worker 捕获 [this] 访问 mtx/cv/queue/stop，detach 后成员析构
+    // 而 worker 仍在跑 → UAF。worker 循环在 stop && queue.empty() 时退出，
+    // 所以 join 会把已排队的任务执行完再返回。
+    for (std::thread& t : threads) {
+        if (t.joinable()) t.join();
+    }
 }
 
 ThreadPool& ThreadPool::Shared() {
@@ -92,8 +101,13 @@ void Dispatcher::Drain() {
     for (std::function<void()>& fn : batch) fn();   // 执行期间新 Post 的进下一轮
 }
 
-Dispatcher* Dispatcher::Ui() { return g_uiDispatcher; }
+Dispatcher* Dispatcher::Ui() { return g_uiDispatcher.load(std::memory_order_acquire); }
 
-void Dispatcher::SetUi(Dispatcher* d) { g_uiDispatcher = d; }
+void Dispatcher::SetUi(Dispatcher* d) { g_uiDispatcher.store(d, std::memory_order_release); }
+
+Dispatcher& Dispatcher::Shared() noexcept {
+    static Dispatcher inst;
+    return inst;
+}
 
 }  // namespace dui

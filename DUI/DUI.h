@@ -51,11 +51,10 @@ String LoadFontFamily(const wchar_t* fontFilePath);
 // in-memory loader），调用返回后源缓冲可立即释放。
 // 其余约定与 LoadFontFamily 相同：返回字体族名，失败返回空串。
 //   HMODULE  hmod  = GetModuleHandleW(nullptr);
-//   HRSRC    hres  = FindResourceW(hmod, L"IDR_FONT", L"RT_RCDATA");
+//   HRSRC    hres  = FindResourceW(hmod, L"IDR_FONT", RT_RCDATA);
 //   HGLOBAL  hglob = LoadResource(hmod, hres);
-//   const void* bytes = GlobalLock(hglob);
+//   const void* bytes = LockResource(hglob);
 //   String family = dui::LoadFontFamilyFromMemory(bytes, SizeofResource(hmod, hres));
-//   GlobalUnlock(hglob);
 String LoadFontFamilyFromMemory(const void* fontData, size_t fontDataSize);
 
 // 本机是否存在该字体族：系统已安装的族，或经 LoadFontFamily /
@@ -63,5 +62,13 @@ String LoadFontFamilyFromMemory(const void* fontData, size_t fontDataSize);
 // 用途：族名拼错时 DWrite 会静默回退默认字体（不报错），需要显式降级时用它判定；
 //       CSS font-family 列表取"第一个可用族名"也走同一判定。
 bool HasFontFamily(const wchar_t* family);
+
+// 从模块资源（RCDATA）加载嵌入字体，一步完成「读资源 → LoadFontFamilyFromMemory
+// → 族名常驻」。resourceName 为资源 ID（字符串宏 / MAKEINTRESOURCE 均可）；
+// hmod = nullptr 表示主 exe。返回的族名由框架持有到进程结束（Style::FontFamily
+// 只存指针），可直接传入；加载失败返回 nullptr。
+// 典型用法：dui::Style().FontFamily(dui::LoadFontFamilyFromResource(L"IDR_FONT"))
+const wchar_t* LoadFontFamilyFromResource(const wchar_t* resourceName,
+                                          void* hmod = nullptr);
 
 }  // namespace dui

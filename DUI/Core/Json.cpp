@@ -359,6 +359,15 @@ private:
         int& ref;
     };
 
+    struct PathSeg {
+        bool isIndex = false;
+        String key;
+        size_t index = 0;
+
+        static PathSeg Key(const String& k) { return {false, k, 0}; }
+        static PathSeg Index(size_t i) { return {true, String{}, i}; }
+    };
+
     void SkipWs() noexcept {
         while (i_ < s_.size()) {
             const wchar_t c = s_[i_];
@@ -393,12 +402,12 @@ private:
 
     String BuildPath() const {
         String out;
-        for (const String& seg : path_) {
-            if (!seg.empty() && seg[0] == L'[') {
-                out += seg;
+        for (const PathSeg& seg : path_) {
+            if (seg.isIndex) {
+                out += L"[" + std::to_wstring(seg.index) + L"]";
             } else {
                 if (!out.empty()) out.push_back(L'.');
-                out += seg;
+                out += seg.key;
             }
         }
         return out;
@@ -416,7 +425,7 @@ private:
     Error& err_;
     size_t i_ = 0;
     int depth_ = 0;
-    std::vector<String> path_;
+    std::vector<PathSeg> path_;
 };
 
 bool Parser::ParseValue(Value& out) {
@@ -480,7 +489,7 @@ bool Parser::ParseObject(Value& out) {
             ok = Fail(L"expected ':' after object key");
         } else {
             ++i_;
-            path_.push_back(key);
+            path_.push_back(PathSeg::Key(key));
             Value v;
             ok = ParseValue(v);
             if (ok) obj.Set(key.c_str(), std::move(v));
@@ -517,7 +526,7 @@ bool Parser::ParseArray(Value& out) {
     }
 
     for (size_t index = 0;; ++index) {
-        path_.push_back(L"[" + std::to_wstring(index) + L"]");
+        path_.push_back(PathSeg::Index(index));
         Value v;
         const bool ok = ParseValue(v);
         path_.pop_back();
@@ -640,10 +649,26 @@ bool Parser::ParseNumber(Value& out) {
         while (i_ < s_.size() && IsDigit(s_[i_])) ++i_;
     }
 
-    const String token = s_.substr(begin, i_ - begin);
-    wchar_t* end = nullptr;
-    const double value = std::wcstod(token.c_str(), &end);
-    if (end != token.c_str() + token.size()) return Fail(L"invalid number");
+    const size_t len = i_ - begin;
+    double value = 0.0;
+    bool parsed = false;
+    if (len <= 64) {
+        char buf[64];
+        for (size_t k = 0; k < len; ++k) buf[k] = static_cast<char>(s_[begin + k]);
+        const auto r = std::from_chars(buf, buf + len, value);
+        if (r.ec == std::errc{} && r.ptr == buf + len) {
+            parsed = true;
+        } else if (r.ec != std::errc::result_out_of_range) {
+            return Fail(L"invalid number");
+        }
+        // 溢出/下溢：交给下面的 wcstod 慢路径，保持原有 inf/0 语义
+    }
+    if (!parsed) {
+        const String token = s_.substr(begin, len);
+        wchar_t* end = nullptr;
+        value = std::wcstod(token.c_str(), &end);
+        if (end != token.c_str() + token.size()) return Fail(L"invalid number");
+    }
     out = Number(value);
     return true;
 }

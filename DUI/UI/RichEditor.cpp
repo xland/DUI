@@ -1111,9 +1111,8 @@ void RichEditor::Impl::PaintItem(const Item& it, graphics::Painter& p, const Sty
         // run 高亮盒：垂直收紧到基线附近的**文字带**（上 0.94em / 下 0.20em，含拉丁
         // 降部余量，总高 1.14em），不再用整行高 —— 行高含行距 leading，盒子会远
         // 高于文字且文字不居中。宽度仍用逐行 hit-test 矩形 + padding。
-        std::vector<text::LineInfo> lineInfos;
         if (!it.highlights.empty()) {
-            text::Engine::Get().LineInfos(it.para, lineInfos);
+            text::Engine::Get().LineInfos(it.para, lineScratch);
         }
         for (const Highlight& hl : it.highlights) {
             if (hl.color == 0) continue;
@@ -1122,7 +1121,7 @@ void RichEditor::Impl::PaintItem(const Item& it, graphics::Painter& p, const Sty
                 // 该矩形所在行的基线（HitTestTextRange 的 top 即行顶，与 LineInfos 同源；
                 // 找不到行时按行内 80% 处兜底）
                 float baseline = r.y + r.h * 0.8f;
-                for (const text::LineInfo& li : lineInfos) {
+                for (const text::LineInfo& li : lineScratch) {
                     if (r.y >= li.top && r.y < li.top + li.height) {
                         baseline = li.top + li.baseline;
                         break;
@@ -2433,6 +2432,7 @@ RichEditor::~RichEditor() {
 
 void RichEditor::SetDoc(const richtext::RichDoc& doc) {
     impl_->Discard(false);     // 旧 layout 先丢：Item 里的 Block* 随即失效
+    impl_->images.clear();     // 旧文档的纹理与失败负缓存一并释放，下一帧 Sync 回收 GPU 资源
     impl_->doc = doc;
     impl_->undo.clear();
     impl_->redo.clear();

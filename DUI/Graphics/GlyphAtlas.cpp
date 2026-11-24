@@ -15,6 +15,7 @@ namespace {
 // ClearType 每像素 3 个覆盖率通道，同一页面能放的字形数不变。
 constexpr uint32_t kPageSize = 512;
 constexpr size_t   kBudgetBytes = 8 << 20;  // 8MB 上限，超出淘汰最久未用（ADR-003）
+constexpr size_t   kEmptyEntryBytes = 64;   // 空占位条目的虚拟占用，使其参与 LRU 预算
 
 }  // namespace
 
@@ -47,7 +48,13 @@ const GlyphUV& GlyphAtlas::Get(void* ctx, const void* face, uint32_t glyph,
     }
 
     Entry e;
-    if (w > 0) e.uv = Place(bits, left, top, w, h);
+    if (w > 0) {
+        e.uv = Place(bits, left, top, w, h);
+    } else {
+        // 空占位也占预算：否则 bytes_ 不增长、永不触发淘汰，不同字形持续累积
+        while (bytes_ + kEmptyEntryBytes > kBudgetBytes && !lru_.empty()) EvictBack();
+        bytes_ += kEmptyEntryBytes;
+    }
     lru_.push_front(key);
     e.lru = lru_.begin();
     return map_.emplace(key, e).first->second.uv;
@@ -116,12 +123,16 @@ void GlyphAtlas::EvictBack() {
         lru_.pop_back();
         return;
     }
-    for (auto pit = pages_.begin(); pit != pages_.end(); ++pit) {
-        if (pit->id == it->second.uv.page && --pit->live == 0) {
-            bytes_ -= pit->bits.size();
-            freed_.push_back(pit->id);
-            pages_.erase(pit);
-            break;
+    if (it->second.uv.page == 0) {
+        bytes_ -= kEmptyEntryBytes;   // 空占位：只退还虚拟占用
+    } else {
+        for (auto pit = pages_.begin(); pit != pages_.end(); ++pit) {
+            if (pit->id == it->second.uv.page && --pit->live == 0) {
+                bytes_ -= pit->bits.size();
+                freed_.push_back(pit->id);
+                pages_.erase(pit);
+                break;
+            }
         }
     }
     map_.erase(it);

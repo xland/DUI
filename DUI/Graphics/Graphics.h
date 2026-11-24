@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <unordered_set>
 #include <vector>
 
 #include "Core/Core.h"
@@ -222,9 +223,12 @@ public:
 
     // 每帧同步：上传脏纹理 + 回收控件已释放的纹理
     void Sync(Device& dev);
+    // 纹理 id 是否仍在仓库中（供各 Device 清理自己持有的已回收纹理）
+    bool Has(uint32_t id) const noexcept;
 
 private:
     std::vector<std::shared_ptr<ImageTexture>> textures_;
+    std::unordered_set<uint32_t> ids_;   // Has() 的 O(1) 索引，与 textures_ 同步增删
     uint32_t nextId_ = 1;
 };
 

@@ -58,6 +58,9 @@ public:
 
     static Dispatcher* Ui();           // 进程级 UI Dispatcher（未安装返回 nullptr）
     static void SetUi(Dispatcher* d);  // UI 线程安装/卸载
+    // 进程级唯一实例（静态存储，活到进程退出）。后台线程经 Ui() 拿到的指针
+    // 即使跨过 UI 卸载也不会悬空；SetUi(nullptr) 只让后续 Ui() 返回 nullptr。
+    static Dispatcher& Shared() noexcept;
 
 private:
     std::mutex mtx;

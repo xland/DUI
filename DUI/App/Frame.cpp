@@ -9,6 +9,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include "Graphics/Graphics.h"
@@ -28,6 +29,27 @@ namespace {
 // ---------------------------------------------------------------------------
 constexpr uint32_t kLutSize = 256;
 
+constexpr size_t kMaxLutKeyStops = 32;   // 栈上 key 容量上限，超限走堆分配慢路径
+constexpr size_t kLutCacheLimit = 64;    // 缓存条目上限，超出淘汰最久未用
+
+struct LutKeyLess {
+    using is_transparent = void;
+    bool operator()(std::string_view a, std::string_view b) const noexcept { return a < b; }
+};
+
+// 命中路径：直接写栈缓冲，零分配；色标过多时返回 false 退到堆 key。
+bool BuildLutKey(const LinearGradient& g, char* buf, size_t& len) noexcept {
+    if (g.stops.size() > kMaxLutKeyStops) return false;
+    len = 1;
+    buf[0] = static_cast<char>(static_cast<uint8_t>(g.spread));
+    for (const GradientStop& s : g.stops) {
+        std::memcpy(buf + len, &s.offset, 4);
+        std::memcpy(buf + len + 4, &s.color, 4);
+        len += 8;
+    }
+    return true;
+}
+
 std::string GradientLutKey(const LinearGradient& g) {
     std::string key;
     key.reserve(1 + g.stops.size() * 8 + 1);
@@ -45,16 +67,35 @@ std::string GradientLutKey(const LinearGradient& g) {
 struct LutEntry {
     std::shared_ptr<graphics::ImageTexture> tex;
     float period = 1.f;   // 一个 LUT 周期占整条渐变线的比例（Pad=1）
+    uint64_t used = 0;    // LRU 时间戳
 };
+
+// LRU 淘汰项延后一帧释放：本帧绘制命令只记 texture id，若纹理在 Render 前被
+// Sync 回收会引用失效。帧开头 ClearRetiredLuts 后，下一帧 Sync 才安全回收。
+std::vector<LutEntry>& RetiredLuts() {
+    static std::vector<LutEntry> v;
+    return v;
+}
+void ClearRetiredLuts() noexcept { RetiredLuts().clear(); }
 
 // 返回 LUT 纹理 id 与 period；shared_ptr 由静态缓存持有，保证 Sync 不回收。
 // Pad：LUT 按色标原始 offset 覆盖整条渐变线，period=1（盒内一次，端点色延伸）。
 // Repeat/Reflect：LUT 只存色标自身跨度 [first,last] 的一个周期，period=跨度；
 //   发射期把盒内 u 除以 period → 跨多个周期，由 sampler WRAP/MIRROR 展开。
 LutEntry GradientLut(const LinearGradient& g) {
-    static std::map<std::string, LutEntry> cache;
-    const std::string key = GradientLutKey(g);
-    if (auto it = cache.find(key); it != cache.end()) return it->second;
+    static std::map<std::string, LutEntry, LutKeyLess> cache;
+    static uint64_t clock = 0;
+
+    char stackKey[1 + kMaxLutKeyStops * 8];
+    size_t stackLen = 0;
+    const bool onStack = BuildLutKey(g, stackKey, stackLen);
+
+    auto hit = onStack ? cache.find(std::string_view(stackKey, stackLen))
+                       : cache.find(GradientLutKey(g));
+    if (hit != cache.end()) {
+        hit->second.used = ++clock;
+        return hit->second;
+    }
 
     const size_t n = g.stops.size();
     const bool repeat = g.spread != GradientSpread::Pad && n >= 2;
@@ -105,8 +146,19 @@ LutEntry GradientLut(const LinearGradient& g) {
         px[i * 4 + 3] = (color >> 24) & 0xFF;
     }
     auto tex = graphics::TextureStore::Instance().Register(kLutSize, 1, std::move(px));
-    LutEntry entry{tex, span};          // 缓存持一份 shared_ptr
-    cache.emplace(std::move(key), entry);
+    LutEntry entry{tex, span, ++clock}; // 缓存持一份 shared_ptr
+    const std::string key = onStack ? std::string(stackKey, stackLen) : GradientLutKey(g);
+    cache.emplace(key, entry);
+
+    // 超限淘汰最久未用：释放缓存持有的 shared_ptr，下一帧 Sync 回收 GPU 纹理
+    if (cache.size() > kLutCacheLimit) {
+        auto victim = cache.begin();
+        for (auto it = cache.begin(); it != cache.end(); ++it) {
+            if (it->second.used < victim->second.used) victim = it;
+        }
+        RetiredLuts().push_back(victim->second);
+        cache.erase(victim);
+    }
     return entry;                       // 调用方拿另一份，两者都保活纹理
 }
 
@@ -114,6 +166,17 @@ LutEntry GradientLut(const LinearGradient& g) {
 Vec2 GradientDirection(float angleDeg) {
     const float rad = angleDeg * 3.14159265f / 180.f;
     return Vec2{std::sin(rad), -std::cos(rad)};
+}
+
+// Style 侧枚举 {Pad=0, Reflect=1, Repeat=2} → Graphics sampler 索引
+// {CLAMP=0, WRAP=1, MIRROR=2}。两侧顺序不同，必须显式映射，否则
+// Reflect / Repeat 用错 sampler，效果互换。
+uint8_t GradientSpreadIndex(GradientSpread spread) noexcept {
+    switch (spread) {
+    case GradientSpread::Reflect: return 2;   // MIRROR
+    case GradientSpread::Repeat:  return 1;   // WRAP
+    default:                      return 0;   // Pad → CLAMP
+    }
 }
 
 void DrawTextContent(Element* e, const StyleContext& ctx, graphics::Painter& p, float scale) {
@@ -487,39 +550,41 @@ private:
     //   右下 0°→90°：右边→底边；左下 90°→180°：底边→左边）。
     // 路径首尾相接，四条直边由相邻弧的端点连线构成（顶/右/底），
     // 左边由末尾补回首点闭合 —— 缺这一步左边整条不画。
+    // 角度按 11.25° 离散，cos/sin 用编译期基准表 + 象限对称，避免每帧 36 次三角调用。
+    static constexpr float kArcCos[9] = {
+        1.f, 0.98078528f, 0.92387953f, 0.83146961f, 0.70710678f,
+        0.55557023f, 0.38268343f, 0.19509032f, 0.f,
+    };
+    static constexpr float kArcSin[9] = {
+        0.f, 0.19509032f, 0.38268343f, 0.55557023f, 0.70710678f,
+        0.83146961f, 0.92387953f, 0.98078528f, 1.f,
+    };
     void AppendDashRoundRect(const Rect& r, const CornerRadii& rad, float widthDip,
                              uint32_t col, uint32_t style, float scale) {
         const float lim = std::min(r.w, r.h) * 0.5f;
         const float tl = std::min(rad.tl, lim), tr = std::min(rad.tr, lim);
         const float br = std::min(rad.br, lim), bl = std::min(rad.bl, lim);
         const float x0 = r.x, y0 = r.y, x1 = r.Right(), y1 = r.Bottom();
-        const int kSteps = 8;
-        std::vector<Vec2> path;
-        path.reserve(4 * (kSteps + 1) + 8);
-        const float PI_ = 3.14159265358979f;
-        const float HALF = PI_ * 0.5f;
-        // 左上：180° → 270°（左边 → 顶边）
-        for (int i = 0; i <= kSteps; ++i) {
-            const float a = PI_ + HALF * (static_cast<float>(i) / kSteps);
-            path.push_back({x0 + tl + tl * std::cos(a), y0 + tl + tl * std::sin(a)});
+        Vec2 path[4 * 9 + 1];
+        size_t n = 0;
+        for (int i = 0; i <= 8; ++i) {
+            const float c = kArcCos[i], s = kArcSin[i];
+            path[n++] = {x0 + tl - tl * c, y0 + tl - tl * s};   // 左上 π+θ
         }
-        // 右上：270° → 360°（顶边 → 右边）
-        for (int i = 0; i <= kSteps; ++i) {
-            const float a = PI_ + HALF + HALF * (static_cast<float>(i) / kSteps);
-            path.push_back({x1 - tr + tr * std::cos(a), y0 + tr + tr * std::sin(a)});
+        for (int i = 0; i <= 8; ++i) {
+            const float c = kArcCos[i], s = kArcSin[i];
+            path[n++] = {x1 - tr + tr * s, y0 + tr - tr * c};   // 右上 3π/2+θ
         }
-        // 右下：0° → 90°（右边 → 底边）
-        for (int i = 0; i <= kSteps; ++i) {
-            const float a = HALF * (static_cast<float>(i) / kSteps);
-            path.push_back({x1 - br + br * std::cos(a), y1 - br + br * std::sin(a)});
+        for (int i = 0; i <= 8; ++i) {
+            const float c = kArcCos[i], s = kArcSin[i];
+            path[n++] = {x1 - br + br * c, y1 - br + br * s};   // 右下 θ
         }
-        // 左下：90° → 180°（底边 → 左边）
-        for (int i = 0; i <= kSteps; ++i) {
-            const float a = HALF + HALF * (static_cast<float>(i) / kSteps);
-            path.push_back({x0 + bl + bl * std::cos(a), y1 - bl + bl * std::sin(a)});
+        for (int i = 0; i <= 8; ++i) {
+            const float c = kArcCos[i], s = kArcSin[i];
+            path[n++] = {x0 + bl - bl * s, y1 - bl + bl * c};   // 左下 π/2+θ
         }
-        path.push_back(path.front());   // 闭合：补左边
-        AppendDashPolyline(path.data(), path.size(), style, widthDip, col, scale);
+        path[n++] = path[0];   // 闭合：补左边
+        AppendDashPolyline(path, n, style, widthDip, col, scale);
     }
 
     void DrawBackground(Element* e, const StyleContext& ctx) {
@@ -533,7 +598,7 @@ private:
             const LutEntry lut = GradientLut(*grad);
             const Vec2 dir = GradientDirection(grad->angleDeg);
             painter_->AddGradientQuad(lut.tex->id, b, radii, dir,
-                                      static_cast<uint8_t>(grad->spread), lut.period, scale_);
+                                      GradientSpreadIndex(grad->spread), lut.period, scale_);
         } else {
             const StyleValue bg = ResolveProperty(e, Prop::BackgroundColor, ctx);
             if (bg.u != 0) {
@@ -613,6 +678,9 @@ void App::RenderFrame(Window& window, const NativeWindow& native,
     const Vec2 px = native.ClientSizePx();
     if (px.x <= 0.f || px.y <= 0.f) return;   // 最小化：不进帧
 
+    Element::FlushDeferredDeleted();   // 上一帧派发期摘除的子元素，此刻已脱离事件栈
+    ClearRetiredLuts();                 // 上一帧 LRU 淘汰的渐变纹理此刻释放，本帧 Render 已结束
+
     device.Resize(px);
 
     Element* root = window.Root();
@@ -621,7 +689,10 @@ void App::RenderFrame(Window& window, const NativeWindow& native,
         ClearDirtyTree(root);
     }
 
-    // 字形图集：整页释放先行，收集（可能触发新字形光栅）后上传脏页
+    // 字形图集：整页释放先行，收集（可能触发新字形光栅）后上传脏页。
+    // 先让本 Device 自查清理"全局已回收但本设备仍持有"的纹理（多窗口场景：
+    // 别的窗口触发的页淘汰 / 纹理回收不会通知到本设备，靠每帧自查兜底）。
+    device.PruneStaleResources();
     text::Engine& en = text::Engine::Get();
     text::GlyphAtlas& atlas = en.Atlas();
     for (const uint32_t id : atlas.FreedPages()) device.ReleaseGlyphPage(id);

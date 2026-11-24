@@ -5,6 +5,8 @@
 
 #include "UI/Element.h"
 
+#include <algorithm>
+
 #include "UI/Focus.h"
 
 namespace dui {
@@ -21,6 +23,29 @@ void Element::AttachChild(Element* child) {
     child->parent_ = this;
     children_.push_back(child);
     MarkDirty(kFlagLayout);   // 子项集合变化 → 重排
+}
+
+namespace {
+std::vector<Element*>& DeferredDeleted() {
+    static std::vector<Element*> q;
+    return q;
+}
+}
+
+void Element::RemoveChild(Element* child) {
+    if (child == nullptr || child->parent_ != this) return;
+    auto it = std::find(children_.begin(), children_.end(), child);
+    if (it == children_.end()) return;
+    children_.erase(it);
+    child->parent_ = nullptr;
+    MarkDirty(kFlagLayout);
+    DeferredDeleted().push_back(child);   // 帧末再 delete，避开事件栈
+}
+
+void Element::FlushDeferredDeleted() {
+    auto& q = DeferredDeleted();
+    for (Element* e : q) delete e;
+    q.clear();
 }
 
 void Element::SetOverride(const StyleValue& nv) {

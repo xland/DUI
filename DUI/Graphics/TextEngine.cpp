@@ -4,12 +4,15 @@
 
 #include "Graphics/TextEngine.h"
 
+#include <windows.h>
+
 #include <dwrite_3.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cwchar>
+#include <map>
 
 #include "Graphics/Graphics.h"
 
@@ -747,16 +750,15 @@ namespace {
 
 // 取全部行度量（E_NOT_SUFFICIENT_BUFFER 时扩容重试）
 bool FetchLineMetrics(IDWriteTextLayout* layout, std::vector<DWRITE_LINE_METRICS>& out) {
-    out.clear();
     UINT32 count = 0;
-    std::vector<DWRITE_LINE_METRICS> buf(64);
-    HRESULT hr = layout->GetLineMetrics(buf.data(), static_cast<UINT32>(buf.size()), &count);
+    out.resize(64);   // 直接复用调用方的 vector，省掉临时 buf + assign 的双重分配
+    HRESULT hr = layout->GetLineMetrics(out.data(), static_cast<UINT32>(out.size()), &count);
     if (hr == E_NOT_SUFFICIENT_BUFFER) {
-        buf.resize(count);
-        hr = layout->GetLineMetrics(buf.data(), static_cast<UINT32>(buf.size()), &count);
+        out.resize(count);
+        hr = layout->GetLineMetrics(out.data(), static_cast<UINT32>(out.size()), &count);
     }
     if (FAILED(hr)) return false;
-    out.assign(buf.begin(), buf.begin() + count);
+    out.resize(count);
     return true;
 }
 
@@ -1100,6 +1102,40 @@ String LoadFontFamilyFromMemory(const void* fontData, size_t fontDataSize) {
 
 bool HasFontFamily(const wchar_t* family) {
     return text::Engine::Get().HasFamily(family);
+}
+
+const wchar_t* LoadFontFamilyFromResource(const wchar_t* resourceName, void* hmod) {
+    if (resourceName == nullptr || *resourceName == L'\0') return nullptr;
+
+    // 族名必须活到进程结束（Style::FontFamily 只存指针、不拷贝字符串）。
+    // 用 map 按资源名缓存；std::map 节点稳定，插入不搬动已有 value 的 c_str()。
+    // static 初始化用 lambda + if/else，不用三元 —— MSVC 对「函数内 static +
+    // 非平凡类型 + 条件运算符初始化器」会生成错误代码（结果恒空）。
+    static std::map<String, String> families = [] {
+        std::map<String, String> m;
+        return m;
+    }();
+
+    auto it = families.find(resourceName);
+    if (it != families.end())
+        return it->second.empty() ? nullptr : it->second.c_str();
+
+    String family;
+    HMODULE mod = hmod != nullptr ? static_cast<HMODULE>(hmod) : GetModuleHandleW(nullptr);
+    // 资源类型必须传 RT_RCDATA 宏（MAKEINTRESOURCE(10)）；字符串 L"RT_RCDATA"
+    // 表示自定义类型名，会找不到资源。
+    HRSRC res = FindResourceW(mod, resourceName, RT_RCDATA);
+    if (res != nullptr) {
+        HGLOBAL mem = LoadResource(mod, res);
+        if (mem != nullptr) {
+            const void* data = LockResource(mem);
+            const DWORD size = SizeofResource(mod, res);
+            if (data != nullptr && size != 0)
+                family = LoadFontFamilyFromMemory(data, size);
+        }
+    }
+    auto inserted = families.emplace(String(resourceName), std::move(family));
+    return inserted.first->second.empty() ? nullptr : inserted.first->second.c_str();
 }
 
 }  // namespace dui

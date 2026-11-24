@@ -4,7 +4,9 @@
 //  · 文件 / 保存 / 文件夹：Common Item Dialog（IFileDialog，Vista+，系统 PMv2
 //    自动缩放）；保存走 IFileSaveDialog，文件夹走 FOS_PICKFOLDERS。
 //  · 消息框：MessageBoxW。
-//  · COM 沿用 WIC 的进程级 CoInitializeEx(COINIT_MULTITHREADED)，不 CoUninitialize。
+//  · COM：WIC 图像处理走进程级 MTA（别处初始化，不在此释放）；文件对话框要求
+//    STA，若当前线程未初始化则本函数内 CoInitializeEx(STA) 并用 RAII 配对
+//    CoUninitialize（已是 STA/MAIN_STA 则不动）。被初始化成 MTA 则明确报错。
 //  · 无异常：失败经 DialogResult / MessageResult 返回；COM 接口用 ComReleaser
 //    兜底 Release。
 //  · Window 侧只做 owner 取值 + dialogDepth_（弹窗期宿主失活不清焦点，§6.2）。
@@ -130,11 +132,19 @@ DialogResult<std::vector<String>> RunFileDialog(Mode mode, void* owner,
     // UI 线程由 App::Run 用 OleInitialize 建成 STA；此处再请求 STA 只返回
     // S_FALSE。若线程已被别人初始化成 MTA（RPC_E_CHANGED_MODE），Common Item Dialog
     // 的 Show() 会在创建窗口前死锁 —— 明确报错而不是把界面挂死。
-    static const HRESULT comInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    // 不能把结果缓存成 static：COM 单元是**线程级**状态，首次调用者若是非 STA
+    // 线程得到 CHANGED_MODE，缓存后会让它永久污染后续所有 UI 线程调用。
+    // S_OK = 本次调用新建了单元（需配对 CoUninitialize）；S_FALSE = 该线程
+    // 已初始化过（OleInitialize 或前次），不增引用、无需配对。
+    const HRESULT comInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (comInit == RPC_E_CHANGED_MODE) {
         return DialogResult<std::vector<String>>::Failed(
             L"文件对话框需要 STA 单元（UI 线程 COM 已被初始化为 MTA）");
     }
+    struct ComUnitGuard {
+        bool own;
+        ~ComUnitGuard() { if (own) CoUninitialize(); }
+    } unitGuard{comInit == S_OK};
 
     APTTYPE apt = APTTYPE_CURRENT;
     APTTYPEQUALIFIER qual = APTTYPEQUALIFIER_NONE;

@@ -20,8 +20,10 @@
 | `OnKeyDown`      | `KeyEvent`     | 隧道 / 冒泡 | 从**焦点元素**出发                         |
 | `OnKeyUp`        | `KeyEvent`     | 隧道 / 冒泡 | 同上                                       |
 | `OnChar`         | `KeyEvent`     | 隧道 / 冒泡 | 字符输入（IME 提交也走这里）               |
+| `OnFocus`        | 无             | 直达        | 取得焦点，由 `SetFocus` 同步派发           |
+| `OnBlur`         | 无             | 直达        | 失去焦点，同上                             |
 
-**除 `OnPointerEnter` / `OnPointerLeave` 外，其余绑定都接受可选的 `Phase` 参数**（默认 `Phase::Bubble`）。
+**除 `OnPointerEnter` / `OnPointerLeave` / `OnFocus` / `OnBlur` 外，其余绑定都接受可选的 `Phase` 参数**（默认 `Phase::Bubble`）。
 
 > **按下 / 抬起覆盖左键、右键与中键**。`PointerEvent::button` 标明是哪个键（`Left` / `Right` / `Middle`）。
 >
@@ -43,8 +45,8 @@ btn->OnClick(&OnButtonC);
 要点：
 
 - **签名统一为 `void (E&)`**；成员函数形态要求**精确匹配**（不能带 `const`、不能有额外参数）。
-- 成员函数形态与 lambda 形态可以混用，**互不覆盖**。
-- 同一个事件在同一阶段**重复绑定 → 后者覆盖前者**（槽是赋值语义）；隧道槽与冒泡槽各一个，互不覆盖。
+- 成员函数形态、lambda 形态与自由函数形态**写到同一个槽**：同一事件同一阶段重复绑定时**后绑覆盖先绑**（隧道槽与冒泡槽彼此独立）。
+- 需要多个处理器时，自己在一个 lambda 里依次调用，或改用 §9.1 的全局事件总线。
 - **所有绑定返回 `void`** —— 不能写成 `btn->OnClick(fn).Padding(8)` 那样链式。
 - 派发时**只经过有绑定的元素**（无绑定直接跳过）。
 - **不做防抖 / 节流**，高频事件（`OnPointerMove`）请自行限流。
@@ -129,16 +131,22 @@ struct DragOverFilesEvent {
 
 ![示例 EV1-1：三种绑定形态](Event/EV1-1.png)
 
-上图三个按钮分别用 lambda、成员函数 + 上下文、自由函数绑定 `OnClick` —— 签名一致，写法不同。
+上图三个按钮分别用 lambda、成员函数 + 上下文、自由函数绑定 `OnClick` —— 签名一致，写法不同。注意**每个按钮只绑一种**：同一按钮重复绑会互相覆盖（§1.1）。
 
 ```cpp
-dui::Panel* btn = root->AddChild<dui::Panel>(buttonStyle);
-btn->AddChild<dui::Text>(L"确定");
-btn->OnClick([this](dui::PointerEvent& ev) {
+dui::Panel* btnA = root->AddChild<dui::Panel>(buttonStyle);
+btnA->AddChild<dui::Text>(L"A：lambda");
+btnA->OnClick([this](dui::PointerEvent& ev) {
     LogLine(L"按钮 A：lambda 绑定收到 Click");
 });
-btn->OnClick(this, &MyPage::OnButtonClicked);   // 成员函数 + 上下文
-btn->OnClick(&OnButtonC);                       // 自由函数
+
+dui::Panel* btnB = root->AddChild<dui::Panel>(buttonStyle);
+btnB->AddChild<dui::Text>(L"B：成员函数");
+btnB->OnClick(this, &MyPage::OnButtonClicked);
+
+dui::Panel* btnC = root->AddChild<dui::Panel>(buttonStyle);
+btnC->AddChild<dui::Text>(L"C：自由函数");
+btnC->OnClick(&OnButtonC);
 ```
 
 > DUI 没有**带皮肤的**按钮控件：`dui::Button` 只是 `dui::Text` 的别名（可点击文本），按钮的内边距与背景要自己用样式写 —— 常见做法是 `Panel` + `OnClick`。需要外观变化时用状态变体：
@@ -457,7 +465,7 @@ uint64_t id = dui::On<int>(L"score", [](int n) { /* ... */ });
 
 下面的直接通信手段在**点对点、关系固定**时依然更简单，按需选用：
 
-### 9.1 直接持有指针（最常用）
+### 9.2 直接持有指针（最常用）
 
 建组件时把对方指针存成成员，在事件处理器里直接调用。`Samples/Event` 的日志面板就是这么做的：
 
@@ -476,7 +484,7 @@ class MyPage : public dui::Window {
 
 适合父子 / 同窗内的固定关系；指针生命周期自负（存成窗口成员最简单）。
 
-### 9.2 `std::function` 回调注入（可复用控件推荐）
+### 9.3 `std::function` 回调注入（可复用控件推荐）
 
 控件暴露一个回调槽，外部决定接到谁身上 —— 框架自己的 `TextBox::OnTextChanged` / `OnSubmit`、`AnimationHandle::OnFinished` 就是这个形态。`Samples/CustomCtrl` 的滑块：
 
@@ -494,7 +502,7 @@ slider->OnChanged([label](float v) { label->SetText(std::to_wstring(v)); });
 
 **单槽赋值语义**：同一事件后绑覆盖先绑；没有多订阅者，也没有解绑 API（元素销毁时处理器一并析构）。与 `Element::OnXxx` 的规则一致。
 
-### 9.3 冒泡 + `handled`（祖先监听子孙）
+### 9.4 冒泡 + `handled`（祖先监听子孙）
 
 祖先能在隧道 / 冒泡阶段收到子孙的内建事件并拦截（见 §4），适合"父容器统一管理子项交互"：
 
@@ -504,13 +512,13 @@ card->OnPointerDown([](dui::PointerEvent& ev) {
 }, dui::Phase::Tunnel);
 ```
 
-注意 `ev.source` 是**当前收到事件的元素**（冒泡到祖先时就是祖先），不是原始命中项。要区分具体哪个子项，用 9.1 / 9.2 显式传。
+注意 `ev.source` 是**当前收到事件的元素**（冒泡到祖先时就是祖先），不是原始命中项。要区分具体哪个子项，用 §9.2 / §9.3 显式传。
 
-### 9.4 手工遍历元素树
+### 9.5 手工遍历元素树
 
-框架**没有** `FindByName` / `FindById` / `GetElementById`，`Element` 也没有 `Name` / `Id` 字段。只有 `Root()`、`Element::Parent()` / `Children()`；跨组件定位要自己按业务标记递归找。组件之间大量互找时，更简单的做法是在建窗时把指针存成成员（9.1）。
+框架**没有** `FindByName` / `FindById` / `GetElementById`，`Element` 也没有 `Name` / `Id` 字段。只有 `Root()`、`Element::Parent()` / `Children()`；跨组件定位要自己按业务标记递归找。组件之间大量互找时，更简单的做法是在建窗时把指针存成成员（§9.2）。
 
-### 9.5 跨线程回投（`PostUi`）
+### 9.6 跨线程回投（`PostUi`）
 
 后台线程不能直接碰 UI。取目标元素的 `Lifetime` 令牌（**必须在 UI 线程取**），用 `PostUi` 回投；令牌失效后回调自动丢弃：
 
@@ -521,7 +529,7 @@ dui::PostUi(life, [target] { target->SetText(L"后台任务完成"); });
 
 无令牌的裸投是 `dui::Dispatcher::Ui()->Post(fn)`，自行保证执行时元素仍存活。详见 [Async.md](./Async.md)。
 
-### 9.6 跨线程派发
+### 9.7 跨线程派发
 
 `dui::Emit` **任意线程可直接调用**——它内部回投 UI 线程，监听器在下轮 `Drain` 执行，无需自己 `PostUi` 或带 `Lifetime` 令牌：
 
@@ -540,7 +548,7 @@ dui::Emit(L"job-done", result);
 2. **无 `PointerCancel`、无触摸 / 触控笔**：平台层转发左键 / 右键 / 中键的按下与抬起。
 3. **无 IME 组合串事件**与组合串内联预览；IME 提交经 `WM_IME_CHAR` 走 `OnChar`。
 4. **无加速键 / 快捷键表**：键盘事件只冒泡到根，框架不做匹配。
-5. **无焦点事件绑定**（`GotFocus` / `LostFocus`）：只有 `protected` 虚钩子 `OnFocusChanged(bool)`；焦点变化通常用 `State::Focused` 状态变体感知。
+5. **焦点事件绑定**：`OnFocus` / `OnBlur` 可绑（无事件对象、无阶段、直达本元素，由 `SetFocus` 同步派发），与 `protected` 虚钩子 `OnFocusChanged(bool)` 并存（钩子先执行）；也可用 `State::Focused` 状态变体感知。
 6. **无 `Loaded` / `Unloaded` 生命周期事件**。
 7. **分发中销毁元素不安全**：没有延迟删除队列；处理器里不要销毁自己或祖先（要删就延后到下一轮）。
 8. **处理器上下文是裸指针**，生命周期自负 —— 没有 weak token / `Lifetime` 托管。
@@ -550,4 +558,4 @@ dui::Emit(L"job-done", result);
 12. **`Enter` / `Leave` 的 `pos` 是新命中元素的坐标**（`leave` 也用新坐标）。
 13. **`Scroller` 没有自己的事件 API**（滚动进度、滚动结束都无通知）；`RichEditor` 也没有内容变更事件。
 14. **指针形态（`cursor`）不是事件**：由命中链就近者胜决定，不走事件系统。
-15. **全局事件是异步广播**：`Emit` 在下轮 UI 消息循环执行，不提供同步返回 / 结果回收；需要点对点同步调用请用直接通信（§9.1 起）。负载类型须与监听 `T` 一致，不一致静默跳过。
+15. **全局事件是异步广播**：`Emit` 在下轮 UI 消息循环执行，不提供同步返回 / 结果回收；需要点对点同步调用请用直接通信（§9.2 起）。负载类型须与监听 `T` 一致，不一致静默跳过。

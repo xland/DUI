@@ -50,10 +50,11 @@ String LoadFontFamily(const wchar_t* fontFilePath);
 // SFNT 文件字节、fontDataSize 为其长度。引擎内部拷贝一份（DirectWrite 的
 // in-memory loader），调用返回后源缓冲可立即释放。
 // 其余约定与 LoadFontFamily 相同：返回字体族名，失败返回空串。
-//   HRSRC    hres  = FindResourceW(nullptr, L"IDR_FONT", L"RT_RCDATA");
-//   HGLOBAL  hglob = LoadResource(hres);
+//   HMODULE  hmod  = GetModuleHandleW(nullptr);
+//   HRSRC    hres  = FindResourceW(hmod, L"IDR_FONT", L"RT_RCDATA");
+//   HGLOBAL  hglob = LoadResource(hmod, hres);
 //   const void* bytes = GlobalLock(hglob);
-//   String family = dui::LoadFontFamilyFromMemory(bytes, SizeofResource(hres, RT_RCDATA));
+//   String family = dui::LoadFontFamilyFromMemory(bytes, SizeofResource(hmod, hres));
 //   GlobalUnlock(hglob);
 String LoadFontFamilyFromMemory(const void* fontData, size_t fontDataSize);
 

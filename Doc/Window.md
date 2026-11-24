@@ -344,7 +344,7 @@ root->SetStyle(dui::Style()
 | 拖边框缩放 | 框架生成的热区被系统接管，拖动过程中内容跟手（不等松手才更新）                                          |
 | 最大化后   | `IsMaximized()` 为真 → 框架自动停用缩放热区                                                             |
 | 失活       | `WM_ACTIVATE` → 编辑控件失焦（光标停闪）                                                                |
-| 拖入文件   | 框架启用 `DragAcceptFiles`，走 `WM_DROPFILES` → `OnDropFiles()` → 元素级 `OnDropFiles` 事件（见 §6.2）  |
+| 拖入文件   | 框架用 OLE `IDropTarget`（`RegisterDragDrop`，见 §6.2）→ `OnDragEnterFiles` / `OnDragOverFiles` / `OnDropFiles` → 元素级 `OnDragOverFiles` / `OnDropFiles` 事件 |
 
 ### 6.1 窗口操作与业务重写点
 
@@ -369,7 +369,7 @@ root->SetStyle(dui::Style()
 - **悬停预览（M5.85）**：鼠标尚未释放、在窗口上移动时，持续派发 `DragOverFilesEvent` —— 隧道 + 冒泡；控件置 `handled=true` 表示接受（系统光标变 COPY，否则 NONE）。任意元素可绑 `OnDragOverFiles` 或覆写 `HandleDragOverFiles`。`DragEnter` 同理（`ev.enter=true`）：
   ```cpp
   editor->OnDragOverFiles([](dui::DragOverFilesEvent& ev) {
-      // ev.paths / ev.pos（命中元素局部 DIP）；ev.handled = true 接受
+      // ev.paths 为文件路径；ev.pos 与命中元素 Bounds() 同空间（滚动容器内为内容空间）；ev.handled = true 接受
   });
   ```
   离开窗口或释放后，框架递归清掉所有元素的预览态（`ClearDropPreview`）。

@@ -119,7 +119,7 @@ void OnPaint(dui::graphics::Painter& p, const StyleContext& ctx, float scale) ov
 
 - **坐标是绝对布局坐标（DIP）**，不是元素局部坐标 —— 用 `Bounds()` 取自己的盒子。
 - 滚动偏移由 Painter 处理，**不要自己减滚动偏移**。
-- `scale` 是 DPI 缩放：所有绘图指令的**最后一个参数**都是它。
+- `scale` 是 DPI 缩放：除 `AddGlyphQuad` 这类已绑定当前 DPI 的物理像素原语外，所有接收 DIP 几何的绘图指令**最后一个参数**都是它。
 - `ctx` 是继承后的样式上下文，用来 `ResolveProperty` 取样式值。
 
 ### 3.2 绘图指令清单
@@ -193,7 +193,7 @@ protected:
 - **Click 不经过 `Handle*` 钩子** —— Click 是框架在"同一元素上按下 + 抬起"后合成的独立事件，只走 `OnClick` 绑定。
 - `Handle*` 钩子只在**冒泡阶段**执行（隧道阶段不执行）。
 
-### 4.2 钩子清单
+### 4.2 常用钩子
 
 ```cpp
 bool HandlePointerDown(dui::PointerEvent&) override;   // 按下
@@ -203,6 +203,8 @@ bool HandleKeyDown(dui::KeyEvent&) override;           // 键盘按下
 bool HandleKeyUp(dui::KeyEvent&) override;             // 键盘抬起
 bool HandleChar(dui::KeyEvent&) override;              // 字符输入
 ```
+
+另有 `HandleWheel(WheelEvent&)`、`HandleDropFiles(DropFilesEvent&)`、`HandleDragOverFiles(DragOverFilesEvent&)`、`ClearDropPreview()`、`PaintOverlay(...)` 等钩子，按需重写。
 
 返回 `true` = 已消费（事件不再向上冒泡）；返回 `false` = 交给父级继续处理。
 
@@ -381,16 +383,18 @@ private:
 
 `dui::Canvas` 是**声明式图元列表**：业务追加图元，框架统一重放。适合"画一张静态矢量图"，不适合每帧按状态重算。
 
+下表签名中描边方法的 `width` 均为可省略参数（默认 `1.f`），`dash = {}` 表示实线。
+
 | 方法                                                                              | 说明                               |
 | --------------------------------------------------------------------------------- | ---------------------------------- |
-| `AddLine(p0, p1, color, width, dash = {})`                                        | 直线                               |
-| `AddPolyline(points, count, color, width, dash = {})`                             | 折线（**不闭合**）                 |
-| `AddPolygon(points, count, color, width, dash = {})`                              | 多边形（闭合**描边**；不支持填充） |
-| `AddRect(r, color)` / `AddRectOutline(r, color, width, dash = {})`                | 矩形填充 / 描边                    |
-| `AddRoundRect(r, radius, color)` / `AddRoundRectOutline(r, radius, color, width, dash = {})` | 圆角矩形填充 / 描边      |
-| `AddEllipse(center, rx, ry, color)` / `AddEllipseOutline(..., dash = {})`          | 椭圆填充 / 描边                    |
-| `AddCircle(center, r, color)` / `AddCircleOutline(center, r, color, width, dash = {})` | 圆填充 / 描边                   |
-| `AddArc(center, r, startDeg, endDeg, color, width, dash = {})`                    | 圆弧                               |
+| `AddLine(p0, p1, color, width = 1.f, dash = {})`                                  | 直线                               |
+| `AddPolyline(points, count, color, width = 1.f, dash = {})`                       | 折线（**不闭合**）                 |
+| `AddPolygon(points, count, color, width = 1.f, dash = {})`                        | 多边形（闭合**描边**；不支持填充） |
+| `AddRect(r, color)` / `AddRectOutline(r, color, width = 1.f, dash = {})`          | 矩形填充 / 描边                    |
+| `AddRoundRect(r, radius, color)` / `AddRoundRectOutline(r, radius, color, width = 1.f, dash = {})` | 圆角矩形填充 / 描边  |
+| `AddEllipse(center, rx, ry, color)` / `AddEllipseOutline(center, rx, ry, color, width = 1.f, dash = {})` | 椭圆填充 / 描边   |
+| `AddCircle(center, r, color)` / `AddCircleOutline(center, r, color, width = 1.f, dash = {})` | 圆填充 / 描边                   |
+| `AddArc(center, r, startDeg, endDeg, color, width = 1.f, dash = {})`              | 圆弧                               |
 | `Clear()`                                                                         | 清空图元                           |
 | `Items()`                                                                         | 只读图元列表                       |
 

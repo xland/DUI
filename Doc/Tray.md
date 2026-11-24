@@ -113,7 +113,7 @@ tray.OnContextMenu([&](dui::Vec2 posPx){ ... }); // 右键，参数是屏幕物�
 ```
 
 - `OnDoubleClick` 未绑定时，双击**退化为一次 `OnClick`**。
-- Windows 双击会先发一次单击抬起再发双击，所以**同时绑单击和双击会各触发一次**；通常只绑其一。
+- Windows 双击的消息序列是「按下 → 抬起 → 双击 → 抬起」，所以**同时绑单击和双击时 `OnClick` 会触发两次、`OnDoubleClick` 一次**；通常只绑其一，或在 `OnClick` 里自己做连击判定。
 
 ### 3.2 右键菜单
 

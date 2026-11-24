@@ -235,7 +235,7 @@ hover->AddChild<dui::Text>(L"悬停我：变体换橙底，指针为手型");
 
 ### 4.2 级联优先级
 
-同一个属性可能来自多处。优先级从高到低是：**状态变体 > 本地 `Set` > 元素 Style**。
+同一个属性可能来自多处。优先级从高到低是：**动画值 > 状态变体 > 本地 `Set` > 元素 Style**（继承属性在元素自身没写时才回退到父级，内建默认最低）。动画值由 `Animate` 写入，运行期间压住下面所有层，详见 [Animation.md](./Animation.md) §4.3。
 
 ```cpp
 dui::Panel* cascade = root->AddChild<dui::Panel>(dui::Style()
@@ -246,7 +246,7 @@ dui::Panel* cascade = root->AddChild<dui::Panel>(dui::Style()
     .JustifyContent(dui::Justify::Center)
     .AlignItems(dui::Align::Center));
 
-// 层 2：状态变体（优先级最高）
+// 层 2：状态变体（低于动画层，高于本地 Set）
 cascade->When(dui::State::Hover, dui::Style()
     .Background(0xFFED7D31)
     .Color(0xFFFFFFFF));
@@ -318,7 +318,7 @@ dui::Panel* borderBox = row->AddChild<dui::Panel>(dui::Style()
 
 ### 6.1 边框与圆角
 
-`BorderWidth` + `BorderColor` 画一条**内描边**（画在盒内缘，**不改变布局盒**，因此不挤压内容）；`CornerRadius` 设圆角，边框会沿圆角路径绘制。
+`BorderWidth` + `BorderColor` 画一条**内描边**（画在盒内缘）；`CornerRadius` 设圆角，边框会沿圆角路径绘制。是否挤压内容取决于 `box-sizing`（§5.2）：默认 `PaddingBox` 下边框不占盒、压在内容上；`BorderBox` 下边框占盒内空间、内容区相应缩小。
 
 ```cpp
 // 四边等宽实线 + 四角同值圆角
@@ -529,7 +529,7 @@ normal->AddChild<dui::Text>(L"④ 正常显示的一格", dui::Style().FontSize(
 
 #### 10.1.1 渐变背景 `LinearGradient`
 
-`Background` 除纯色外还接受 `dui::LinearGradient`（CSS `linear-gradient` 语义），与纯色互斥、后设者胜。渐变沿元素盒铺开并自动按 `CornerRadius` 裁形，与 `Opacity` 叠加。
+`Background` 除纯色外还接受 `dui::LinearGradient`（CSS `linear-gradient` 语义）。同一条 `Style` 链上渐变与纯色互斥、后设者胜；跨派生 / 本地覆盖时渐变优先（解析渐变时不看 `BackgroundColor`）。渐变沿元素盒铺开并自动按 `CornerRadius` 裁形，与 `Opacity` 叠加。
 
 ```cpp
 root->AddChild<dui::Panel>(dui::Style()
@@ -589,7 +589,7 @@ dui::Style().Background(dui::LinearGradient(45.f, {
 | `FlexWrap`                                            | `bool`（true = 换行）                                                       | `false`            | 否   |
 | `FlexGrow` / `FlexShrink` / `FlexBasis`               | `float`                                                                     | 0 / 1 / auto       | 否   |
 | `JustifyContent`                                      | `Start` / `Center` / `End` / `SpaceBetween` / `SpaceAround` / `SpaceEvenly` | `Start`            | 否   |
-| `AlignItems` / `AlignSelf`                            | `Stretch` / `Start` / `Center` / `End` / `Baseline`                         | `Stretch` / `Auto` | 否   |
+| `AlignItems` / `AlignSelf`                            | `Stretch` / `Start` / `Center` / `End` / `Baseline`                         | `Stretch` / 未设（跟随父 `AlignItems`） | 否   |
 | `Position` + `Left`/`Top`/`Right`/`Bottom` / `ZIndex` | `Static` / `Relative` / `Absolute` / `Fixed`                                | `Static`           | 否   |
 | `Display`                                             | `Flex` / `Grid` / `None`                                                    | `Flex`             | 否   |
 
@@ -599,6 +599,6 @@ dui::Style().Background(dui::LinearGradient(45.f, {
 | ----------------------------- | ----------------------------- | -------------- |
 | `element->Set(prop, value)`   | 改单个属性                    | 高于元素 Style |
 | `element->SetStyle(style)`    | 整份替换（内部拷贝持有）      | 高于元素 Style |
-| `element->When(state, style)` | 状态变体（如 `State::Hover`） | **最高**       |
+| `element->When(state, style)` | 状态变体（如 `State::Hover`） | 高于本地 `Set`，低于动画值 |
 
-> 级联优先级：**状态变体 > 本地 `Set` > 元素 Style**；继承属性在元素自身没写时才回退到父级计算值。
+> 级联优先级：**动画值 > 状态变体 > 本地 `Set` > 元素 Style**；继承属性在元素自身没写时才回退到父级计算值。

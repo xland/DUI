@@ -179,11 +179,12 @@ dui::String family = dui::LoadFontFamilyFromMemory(bytes, size);
 字体作为 exe 资源（`RT_RCDATA`）：
 
 ```cpp
-HRSRC    hres  = FindResourceW(nullptr, L"IDR_FONT", L"RT_RCDATA");
-HGLOBAL  hglob = LoadResource(hres);
+HMODULE  hmod  = GetModuleHandleW(nullptr);
+HRSRC    hres  = FindResourceW(hmod, L"IDR_FONT", L"RT_RCDATA");
+HGLOBAL  hglob = LoadResource(hmod, hres);
 const void* bytes = GlobalLock(hglob);
 dui::String family =
-    dui::LoadFontFamilyFromMemory(bytes, SizeofResource(hres, RT_RCDATA));
+    dui::LoadFontFamilyFromMemory(bytes, SizeofResource(hmod, hres));
 GlobalUnlock(hglob);
 ```
 

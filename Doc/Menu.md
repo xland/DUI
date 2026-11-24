@@ -113,7 +113,7 @@ root->OnPointerUp([this](dui::PointerEvent& ev) {
 });
 ```
 
-> **右键的"按下"只派事件，不改状态**：`OnPointerDown` 能收到 `PointerButton::Right`，但框架**不会**因此设置 `State::Pressed`、**不会**改焦点、**不会**取指针捕获（这些都是左键语义，见 `Doc/Event.md` §元素级指针事件）。所以右键按下不会让按钮亮起，也不会抢焦点。中键（`PointerButton::Middle`）同此规则。
+> **右键的"按下"只派事件，不改状态**：`OnPointerDown` 能收到 `PointerButton::Right`，但框架**不会**因此设置 `State::Pressed`、**不会**改焦点、**不会**取指针捕获（这些都是左键语义，见 `Doc/Event.md` §1.1 与 §3）。所以右键按下不会让按钮亮起，也不会抢焦点。中键（`PointerButton::Middle`）同此规则。
 >
 > `OnPointerUp` 是**冒泡**事件 —— 挂在根面板上就能收到整个客户区的右键；挂在具体元素上则只收到该元素及其子树。
 

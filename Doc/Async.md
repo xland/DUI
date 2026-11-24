@@ -168,7 +168,7 @@ if (!life) co_return;      // 元素已销毁 → 直接结束，别再碰界面
 4. **`Then` 只在完成时触发一次**：过程中的界面更新靠循环里的 `co_await dui::Foreground()`。
 5. **`Task` 不能被 `co_await`**：没有 awaiter，也没有 `WhenAll` / `WhenAny` 组合子 → 只能靠 `Then` 串联。
 6. **`Task<T>` 没有错误通道**：错误用 `bool` / 输出参数 / 自定义结构体传。
-7. **异常 = 终止进程**：协程体里抛异常走 `unhandled_exception` → `std::terminate`；协程里不要 try/catch。
+7. **逃逸异常 = 终止进程**：协程体内未被捕获、逃逸出去的异常走 `unhandled_exception` → `std::terminate`；别指望在协程外捕获兜底（协程内自行 try/catch 当然有效）。
 8. **UI 退出后 `Foreground()` 销毁协程帧**：未完成的任务静默丢弃（不崩溃、不泄漏帧），但也不会再执行后续代码。
 9. **没有取消令牌**：排队中的任务不能撤销；运行中的任务不被强杀。
 10. **回投延迟到下一帧**：界面更新不是立刻可见。

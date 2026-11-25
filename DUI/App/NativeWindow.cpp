@@ -6,6 +6,7 @@
 // ============================================================================
 
 #include "App/NativeWindow.h"
+#include "App/Window.h"   // WindowOptions 完整定义（Create 需读字段）
 
 #include <cstring>
 #include <dwmapi.h>
@@ -110,25 +111,31 @@ bool NativeWindow::EnsureClassRegistered(String& error) {
     return true;
 }
 
-bool NativeWindow::Create(const wchar_t* title, float widthDip, float heightDip,
-                          NativeWindowHost& host, String& error, bool borderless,
-                          bool doubleClickMaximize) {
+bool NativeWindow::Create(const WindowOptions& o,
+                          NativeWindowHost& host, String& error) {
     if (!EnsureClassRegistered(error)) return false;
 
     host_ = &host;
-    borderless_ = borderless;
-    dblClickMaximize_ = doubleClickMaximize;
+    borderless_ = o.frameless;
+    dblClickMaximize_ = o.doubleClickMaximize;
 
-    const DWORD style = borderless ? kStyleBorderless : kStyleSystem;
+    const DWORD style = borderless_ ? kStyleBorderless : kStyleSystem;
     // 所有窗口统一不建系统重定向表面，内容由 DirectComposition 视觉树交给
-    // DWM 合成（ADR-010）；WS_EX_APPWINDOW 仅用于让无边框窗口进任务栏。
-    const DWORD exStyle = (borderless ? kExStyleBorderless : 0)
-                          | WS_EX_NOREDIRECTIONBITMAP;
+    // DWM 合成（ADR-010）。WS_EX_APPWINDOW 仅用于让无边框窗口进任务栏，
+    // 与 WS_EX_TOOLWINDOW 互斥：同设时窗口仍会出现在任务栏，故二选一。
+    DWORD exStyle = WS_EX_NOREDIRECTIONBITMAP;
+    if (o.toolWindow) {
+        exStyle |= WS_EX_TOOLWINDOW;
+    } else if (borderless_) {
+        exStyle |= kExStyleBorderless;   // WS_EX_APPWINDOW
+    }
+    if (o.noActivate)   exStyle |= WS_EX_NOACTIVATE;
+    if (o.mouseThrough) exStyle |= WS_EX_TRANSPARENT;
 
     // 先按 96dpi 占位尺寸创建（隐藏），拿到真实显示器 DPI 后再定最终尺寸，
     // 中间过程不可见（App.h OnCreate 契约：构建期间窗口不可见）。
-    const RECT initial = OuterRectForDip(widthDip, heightDip, 96, style, borderless);
-    hwnd_ = CreateWindowExW(exStyle, kClassName, title, style,
+    const RECT initial = OuterRectForDip(o.width, o.height, 96, style, borderless_);
+    hwnd_ = CreateWindowExW(exStyle, kClassName, o.title, style,
                             CW_USEDEFAULT, CW_USEDEFAULT,
                             initial.right - initial.left, initial.bottom - initial.top,
                             nullptr, nullptr, GetModuleHandleW(nullptr), this);
@@ -149,19 +156,126 @@ bool NativeWindow::Create(const wchar_t* title, float widthDip, float heightDip,
     const UINT dpi = GetDpiForWindow(hwnd_);
     scale_ = static_cast<float>(dpi) / 96.0f;
 
-    const RECT rc = OuterRectForDip(widthDip, heightDip, dpi, style, borderless);
+    const RECT rc = OuterRectForDip(o.width, o.height, dpi, style, borderless_);
     SetWindowPos(hwnd_, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 
     // 无边框：阴影 / 圆角由 DWM 提供（WS_POPUP 没有系统阴影）
-    if (borderless) ApplyDwmFrame(hwnd_);
+    if (borderless_) ApplyDwmFrame(hwnd_);
+
+    // 依赖 HWND 的两项：在固定尺寸 / DWM 之后应用，显示之前生效。
+    if (o.topmost)            SetTopmost(true);
+    if (o.excludeFromCapture) SetExcludeFromCapture(true);
 
     host.OnNativeCreated(hwnd_, scale_);
     return true;
 }
 
+// ---- 运行期窗口形态切换 ----------------------------------------------------
+
+void NativeWindow::SetTopmost(bool on) {
+    if (hwnd_ == nullptr) return;
+    // SWP_NOACTIVATE：置顶切换不改变焦点；NOMOVE/NOSIZE 保持几何不变。
+    // HWND_TOPMOST / HWND_NOTOPMOST 是 SetWindowPos 的特殊 z-order 插入点。
+    SetWindowPos(hwnd_, on ? HWND_TOPMOST : HWND_NOTOPMOST,
+                 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+void NativeWindow::SetMouseThrough(bool on) {
+    if (hwnd_ == nullptr) return;
+    // 改 exStyle 后必须带 SWP_FRAMECHANGED 才生效；其余位保持几何 / z-order / 焦点不变。
+    const LONG_PTR ex = GetWindowLongPtrW(hwnd_, GWL_EXSTYLE);
+    const LONG_PTR next = on ? (ex | WS_EX_TRANSPARENT) : (ex & ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT));
+    if (next == ex) return;
+    SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, next);
+    SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void NativeWindow::SetExcludeFromCapture(bool on) {
+    if (hwnd_ == nullptr) return;
+    // WDA_EXCLUDEFROMCAPTURE = 0x00000011，Win10 2004（19041）新增；
+    // SetWindowDisplayAffinity 本身从 Win7 就有，旧系统对该值返回 FALSE → 静默降级。
+    constexpr DWORD kWdaExcludeFromCapture = 0x00000011;
+    SetWindowDisplayAffinity(hwnd_, on ? kWdaExcludeFromCapture : WDA_NONE);
+}
+
+void NativeWindow::FlashFrame(bool on, unsigned count, unsigned intervalMs) {
+    if (hwnd_ == nullptr) return;
+    FLASHWINFO fwi{};
+    fwi.cbSize = sizeof(fwi);
+    fwi.hwnd = hwnd_;
+    if (on) {
+        // ALL = 标题栏 + 任务栏；TIMERNOFG = 窗口获焦点自动停止（Electron flashFrame 同款）。
+        // count=0 配合 TIMERNOFG 即持续闪烁；count>0 则闪 N 次。
+        fwi.dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG;
+        fwi.uCount = count;
+        fwi.dwTimeout = intervalMs;
+    } else {
+        fwi.dwFlags = FLASHW_STOP;
+    }
+    ::FlashWindowEx(&fwi);
+}
+
 void NativeWindow::Show() {
     if (hwnd_) ShowWindow(hwnd_, SW_SHOW);
+}
+
+void NativeWindow::Hide() {
+    if (hwnd_) ShowWindow(hwnd_, SW_HIDE);
+}
+
+bool NativeWindow::IsVisible() const noexcept {
+    return hwnd_ != nullptr && ::IsWindowVisible(hwnd_) != FALSE;
+}
+
+void NativeWindow::Activate() {
+    if (hwnd_ == nullptr) return;
+    // SetForegroundWindow 受 Windows 前台锁限制：无用户交互的进程可能失败，
+    // 失败时静默忽略（业务不该因此崩）。
+    ::SetForegroundWindow(hwnd_);
+}
+
+Rect NativeWindow::BoundsPx() const {
+    RECT rc{};
+    if (hwnd_ != nullptr) ::GetWindowRect(hwnd_, &rc);
+    return Rect{static_cast<float>(rc.left), static_cast<float>(rc.top),
+                static_cast<float>(rc.right - rc.left),
+                static_cast<float>(rc.bottom - rc.top)};
+}
+
+void NativeWindow::SetBoundsPx(const Rect& r) {
+    if (hwnd_ == nullptr) return;
+    ::SetWindowPos(hwnd_, nullptr,
+                   static_cast<int>(r.x), static_cast<int>(r.y),
+                   static_cast<int>(r.w), static_cast<int>(r.h),
+                   SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void NativeWindow::MoveToPx(float x, float y) {
+    if (hwnd_ == nullptr) return;
+    ::SetWindowPos(hwnd_, nullptr, static_cast<int>(x), static_cast<int>(y),
+                   0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void NativeWindow::Resize(float wDip, float hDip) {
+    if (hwnd_ == nullptr) return;
+    // 尺寸用 DIP（与 Style 一致），内部按本窗口 scale 换算成物理像素。
+    // 整窗尺寸：无边框时客户区=整窗；有边框时按当前 rect 的边框补偿换算，
+    // 这里用 AdjustWindowRectEx 得到对应整窗外框。
+    LONG w = static_cast<LONG>(wDip * scale_ + 0.5f);
+    LONG h = static_cast<LONG>(hDip * scale_ + 0.5f);
+    if (!borderless_) {
+        RECT adjusted{0, 0, w, h};
+        const DWORD style = static_cast<DWORD>(::GetWindowLongPtrW(hwnd_, GWL_STYLE));
+        const DWORD ex = static_cast<DWORD>(::GetWindowLongPtrW(hwnd_, GWL_EXSTYLE));
+        ::AdjustWindowRectEx(&adjusted, style, FALSE, ex);
+        w = adjusted.right - adjusted.left;
+        h = adjusted.bottom - adjusted.top;
+    }
+    ::SetWindowPos(hwnd_, nullptr, 0, 0, w, h,
+                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void NativeWindow::CenterOnScreen() {
@@ -294,6 +408,13 @@ LRESULT CALLBACK NativeWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         const auto* cs = reinterpret_cast<const CREATESTRUCTW*>(lp);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
     } else if (auto* self = reinterpret_cast<NativeWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA))) {
+        // 宿主已摘除（App 退出：WindowRecord 析构先 DetachHost，之后 ~NativeWindow
+        // 才 DestroyWindow）。这段窗口期系统仍可能发 WM_ACTIVATE(WA_INACTIVE)、
+        // WM_SIZE、WM_MOUSEMOVE 等——所有 host_ 回调都不再安全。
+        // 只放行不依赖 host_ 的销毁收尾消息，其余交系统默认处理。
+        if (self->host_ == nullptr && msg != WM_DESTROY && msg != WM_NCDESTROY) {
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        }
         switch (msg) {
         case WM_CLOSE:
             if (!self->host_->OnCloseRequest()) return 0;

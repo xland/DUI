@@ -76,6 +76,8 @@ public:
     // ms 为周期（夹紧到 >=1），返回 id（>0）传给 KillTimer 取消；每次调用
     // 分配新 id（不会取消旧定时器）。要一次性触发就在 fn 里 KillTimer(自身 id)。
     // fn 不要做重活（与 OnTimer 同属 UI 线程节拍）。
+    // 注意：回调若捕获窗口 / 控件指针，窗口销毁后本定时器仍触发 → UAF。
+    // 这类需求请用 Window::SetTimer（绑定 HWND，随窗口销毁自动失效）。
     unsigned SetTimer(unsigned ms, std::function<void()> fn);
     void     KillTimer(unsigned id) noexcept;
 

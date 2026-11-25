@@ -78,6 +78,7 @@
   <ItemGroup>
     <ClInclude Include="DUI.h" />
     <ClInclude Include="Core\Core.h" />
+    <ClInclude Include="Core\Screen.h" />
     <ClInclude Include="Core\Dispatcher.h" />
     <ClInclude Include="Core\Threading.h" />
     <ClInclude Include="Core\EventBus.h" />
@@ -120,6 +121,7 @@
     <ClInclude Include="Graphics\TextEngine.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Core\Screen.cpp" />
     <ClCompile Include="Core\Dispatcher.cpp" />
     <ClCompile Include="Core\EventBus.cpp" />
     <ClCompile Include="Core\Clipboard.cpp" />

@@ -79,10 +79,7 @@ bool App::AddWindow(Window& window) {
     rec->host = std::make_unique<WindowHostAdapter>(*this, window, *rec->native, *rec->device);
 
     // 建 HWND（隐藏、按显示器 DPI 定尺寸）
-    if (!rec->native->Create(window.options_.title, window.options_.width,
-                             window.options_.height, *rec->host, lastError_,
-                             window.options_.frameless,
-                             window.options_.doubleClickMaximize)) {
+    if (!rec->native->Create(window.options_, *rec->host, lastError_)) {
         return false;
     }
     window.native_ = rec->native.get();
@@ -188,6 +185,14 @@ int App::Run() {
     if (windows_.empty()) return 1;
     Dispatcher::SetUi(&Dispatcher::Shared());
 
+    // Element 延迟删除前先清各窗口的瞬时指针状态（hover_/pressed_/dragging_）：
+    // 否则下一帧 OnPointerMove 沿已 delete 的 hover_ 走 Parent() 崩溃。
+    Element::SetBeforeDeletedHook([this](Element* dying) {
+        for (auto& rec : windows_) {
+            if (rec->host != nullptr) rec->host->ClearPointerStateFor(dying);
+        }
+    });
+
     // 按需渲染循环：[调度] 排空 → 每个窗口各自有失效才进帧 → 空闲 WaitMessage。
     // PeekMessageW(nullptr) 收取**所有**窗口的消息；DispatchMessage 按 HWND
     // 的 GWLP_USERDATA 路由到对应 NativeWindow → 对应宿主（天然多实例隔离）。
@@ -197,6 +202,7 @@ int App::Run() {
             if (msg.message == WM_QUIT) {
                 Dispatcher::SetUi(nullptr);
                 Element::FlushDeferredDeleted();   // 最小化期间积攒的延迟删除，退出前统一释放
+                Element::SetBeforeDeletedHook({}); // App 即将析构，注销捕获 this 的 hook
                 // 退出前清掉应用定时器（连同系统 timer），避免遗留到进程结束
                 for (const auto& kv : timers_) ::KillTimer(nullptr, static_cast<UINT_PTR>(kv.first));
                 timers_.clear();
@@ -239,7 +245,8 @@ int App::Run() {
 
             // 最小化：客户区尺寸为 0 → RenderFrame 直接返回且不清脏标记，若仍按
             // dirty 进帧，主循环永远进不了 WaitMessage → 退化成忙转（CPU 100%）。
-            if (!rec->native->IsMinimized() &&
+            // 隐藏窗口同样不渲染（Hide() 语义：停止绘制、省 CPU）。
+            if (!rec->native->IsMinimized() && rec->native->IsVisible() &&
                 (rec->framePending || rec->window->Root()->SubtreeDirty())) {
                 rec->framePending = false;
                 RenderFrame(*rec->window, *rec->native, *rec->device);   // 不等 vblank

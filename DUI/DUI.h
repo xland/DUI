@@ -15,6 +15,7 @@
 #pragma once
 
 #include "Core/Core.h"
+#include "Core/Screen.h"
 #include "Core/Threading.h"
 #include "Core/EventBus.h"
 #include "Core/Utf8.h"

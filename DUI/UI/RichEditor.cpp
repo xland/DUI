@@ -201,6 +201,25 @@ uint32_t NextIndex(const String& s, uint32_t i, int dir) {
     return i + 1;
 }
 
+richtext::StyleState StateFromBool(bool on) noexcept {
+    return on ? richtext::StyleState::On : richtext::StyleState::Off;
+}
+
+richtext::StyleState MergeStyleState(bool anyOn, bool anyOff) noexcept {
+    if (anyOn && anyOff) return richtext::StyleState::Mixed;
+    return anyOn ? richtext::StyleState::On : richtext::StyleState::Off;
+}
+
+void SetStyleState(richtext::InlineStyleState& out, richtext::InlineStyle style,
+                   richtext::StyleState state) noexcept {
+    switch (style) {
+    case richtext::InlineStyle::Bold:      out.bold = state; break;
+    case richtext::InlineStyle::Italic:    out.italic = state; break;
+    case richtext::InlineStyle::Underline: out.underline = state; break;
+    case richtext::InlineStyle::Strike:    out.strike = state; break;
+    }
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -343,6 +362,7 @@ struct RichEditor::Impl {
     float        layoutLetterSpacing = -1.f;
     float        layoutWordSpacing = -1.f;
     const Element* host = nullptr;   // 宿主元素（查元素自身的 textDecoration）
+    std::function<void()> onLayoutRebuilt;  // editables 刷新后同步外部样式状态
 
     // 段落池：编辑后重建时按文本复用（引擎自己判定 layout 是否真的重建）
     std::vector<text::Paragraph*> poolMain;
@@ -427,6 +447,8 @@ struct RichEditor::Impl {
     static bool BlockLess(Cursor a, Cursor b) noexcept {
         return a.block != b.block ? a.block < b.block : a.offset < b.offset;
     }
+    richtext::InlineStyleState ActiveInlineStyles() const;
+    richtext::InlineStyleState StyleAtCursor(Cursor c) const;
     Cursor   ClampToDoc(Cursor c) const;
     uint32_t TextLenOf(size_t block) const;
     Cursor   EndCursor(size_t block) const;
@@ -935,6 +957,66 @@ RichEditor::Impl::Cursor RichEditor::Impl::ClampToDoc(Cursor c) const {
     return c;
 }
 
+richtext::InlineStyleState RichEditor::Impl::StyleAtCursor(Cursor c) const {
+    richtext::InlineStyleState out;
+    if (editables.empty()) return out;
+    c = ClampToDoc(c);
+    const RunStyle style = richtext::StyleAt(*editables[c.block].block, c.offset);
+    SetStyleState(out, richtext::InlineStyle::Bold,
+                  StateFromBool(richtext::HasInlineStyle(style, richtext::InlineStyle::Bold)));
+    SetStyleState(out, richtext::InlineStyle::Italic,
+                  StateFromBool(richtext::HasInlineStyle(style, richtext::InlineStyle::Italic)));
+    SetStyleState(out, richtext::InlineStyle::Underline,
+                  StateFromBool(richtext::HasInlineStyle(style, richtext::InlineStyle::Underline)));
+    SetStyleState(out, richtext::InlineStyle::Strike,
+                  StateFromBool(richtext::HasInlineStyle(style, richtext::InlineStyle::Strike)));
+    return out;
+}
+
+richtext::InlineStyleState RichEditor::Impl::ActiveInlineStyles() const {
+    richtext::InlineStyleState out;
+    if (editables.empty()) return out;
+
+    const bool hasSelection = HasSelection();
+    Cursor a = ClampToDoc(caret);
+    Cursor b = ClampToDoc(anchor);
+    if (!hasSelection) return StyleAtCursor(a);
+    if (BlockLess(b, a)) std::swap(a, b);
+
+    constexpr richtext::InlineStyle styles[] = {
+        richtext::InlineStyle::Bold, richtext::InlineStyle::Italic,
+        richtext::InlineStyle::Underline, richtext::InlineStyle::Strike,
+    };
+    bool anyOn[4] = {};
+    bool anyOff[4] = {};
+
+    for (size_t i = a.block; i <= b.block && i < editables.size(); ++i) {
+        const Block* block = editables[i].block;
+        if (block->kind == BlockKind::Image || block->kind == BlockKind::Code) continue;
+        const uint32_t start = (i == a.block) ? a.offset : 0u;
+        const uint32_t end = (i == b.block) ? b.offset
+            : static_cast<uint32_t>(richtext::TextLength(block->runs));
+        if (end <= start) continue;
+
+        uint32_t pos = 0;
+        for (const Run& run : block->runs) {
+            const uint32_t len = static_cast<uint32_t>(run.text.size());
+            const uint32_t runEnd = pos + len;
+            if (runEnd > start && pos < end && len > 0) {
+                for (int k = 0; k < 4; ++k) {
+                    if (richtext::HasInlineStyle(run.style, styles[k])) anyOn[k] = true;
+                    else anyOff[k] = true;
+                }
+            }
+            pos = runEnd;
+        }
+    }
+
+    for (int k = 0; k < 4; ++k)
+        SetStyleState(out, styles[k], MergeStyleState(anyOn[k], anyOff[k]));
+    return out;
+}
+
 size_t RichEditor::Impl::IndexOf(const Block* block) const {
     if (block == nullptr) return kNoEditable;
     for (size_t i = 0; i < editables.size(); ++i) {
@@ -1203,6 +1285,7 @@ void RichEditor::Impl::EnsureLayout(const StyleContext& ctx, float width) {
     layoutLetterSpacing = letterSpacing;
     layoutWordSpacing = wordSpacing;
     laidOut = true;
+    if (onLayoutRebuilt) onLayoutRebuilt();
 }
 
 void RichEditor::Impl::Rebuild() {
@@ -1526,13 +1609,7 @@ bool RichEditor::Impl::ToggleStyle(richtext::InlineStyle style) {
     // 判定 toggle 方向：选区内可见文本全部已开启 → 关闭；否则 → 开启。
     // 图片块只有定位点、代码块无行内样式，均不参与判定与应用。
     auto isOn = [style](const richtext::RunStyle& s) {
-        switch (style) {
-        case richtext::InlineStyle::Bold:      return s.weight >= 600u;
-        case richtext::InlineStyle::Italic:    return s.italic;
-        case richtext::InlineStyle::Underline: return s.underline;
-        case richtext::InlineStyle::Strike:    return s.strike;
-        }
-        return false;
+        return richtext::HasInlineStyle(s, style);
     };
     bool allOn = true;
     bool hasText = false;
@@ -2423,6 +2500,7 @@ RichEditor::Impl::KeyResult RichEditor::Impl::HandleKey(int key, bool shift, boo
 
 RichEditor::RichEditor() : impl_(std::make_unique<Impl>()) {
     impl_->host = this;
+    impl_->onLayoutRebuilt = [this] { NotifyActiveStylesChanged(); };
     SetFocusable(true);
 }
 
@@ -2441,6 +2519,7 @@ void RichEditor::SetDoc(const richtext::RichDoc& doc) {
     impl_->anchor = Impl::Cursor{};
     ++impl_->version;
     MarkDirty(kFlagLayout | kFlagPaint);
+    NotifyActiveStylesChanged();
 }
 
 bool RichEditor::InsertImage(const String& imagePath) {
@@ -2450,6 +2529,7 @@ bool RichEditor::InsertImage(const String& imagePath) {
         MarkDirty(kFlagLayout | kFlagPaint);
         RevealCaret();
     }
+    NotifyActiveStylesChanged();
     return ok;
 }
 
@@ -2457,6 +2537,7 @@ bool RichEditor::ToggleBold() {
     if (!editable_) return false;
     const bool ok = impl_->ToggleStyle(richtext::InlineStyle::Bold);
     if (ok) MarkDirty(kFlagLayout | kFlagPaint);
+    NotifyActiveStylesChanged();
     return ok;
 }
 
@@ -2464,6 +2545,7 @@ bool RichEditor::ToggleItalic() {
     if (!editable_) return false;
     const bool ok = impl_->ToggleStyle(richtext::InlineStyle::Italic);
     if (ok) MarkDirty(kFlagLayout | kFlagPaint);
+    NotifyActiveStylesChanged();
     return ok;
 }
 
@@ -2471,6 +2553,7 @@ bool RichEditor::ToggleUnderline() {
     if (!editable_) return false;
     const bool ok = impl_->ToggleStyle(richtext::InlineStyle::Underline);
     if (ok) MarkDirty(kFlagLayout | kFlagPaint);
+    NotifyActiveStylesChanged();
     return ok;
 }
 
@@ -2478,7 +2561,40 @@ bool RichEditor::ToggleStrike() {
     if (!editable_) return false;
     const bool ok = impl_->ToggleStyle(richtext::InlineStyle::Strike);
     if (ok) MarkDirty(kFlagLayout | kFlagPaint);
+    NotifyActiveStylesChanged();
     return ok;
+}
+
+richtext::InlineStyleState RichEditor::ActiveInlineStyles() const {
+    return impl_->ActiveInlineStyles();
+}
+
+bool RichEditor::IsInlineStyleActive(richtext::InlineStyle style) const {
+    const richtext::InlineStyleState s = ActiveInlineStyles();
+    switch (style) {
+    case richtext::InlineStyle::Bold:      return s.bold == richtext::StyleState::On;
+    case richtext::InlineStyle::Italic:    return s.italic == richtext::StyleState::On;
+    case richtext::InlineStyle::Underline: return s.underline == richtext::StyleState::On;
+    case richtext::InlineStyle::Strike:    return s.strike == richtext::StyleState::On;
+    }
+    return false;
+}
+
+void RichEditor::OnActiveStylesChanged(std::function<void(richtext::InlineStyleState)> fn) {
+    onActiveStylesChanged_ = std::move(fn);
+}
+
+void RichEditor::NotifyActiveStylesChanged() {
+    if (!onActiveStylesChanged_ || notifyingActiveStyles_) return;
+    // SetDoc 后 editables 要到首次排版才建立：有文档但还没排版时先不报 Off，
+    // 等布局重建钩子拿到真实光标样式再通知，避免工具栏闪一下。
+    if (impl_->editables.empty() && !impl_->doc.blocks.empty()) return;
+    const richtext::InlineStyleState now = ActiveInlineStyles();
+    if (now == lastActiveStyles_) return;
+    lastActiveStyles_ = now;
+    notifyingActiveStyles_ = true;
+    onActiveStylesChanged_(now);
+    notifyingActiveStyles_ = false;
 }
 
 const richtext::RichDoc& RichEditor::Doc() const noexcept {
@@ -2498,6 +2614,7 @@ void RichEditor::SetEditable(bool on) {
         impl_->anchor = Impl::Cursor{};
     }
     MarkDirty(kFlagPaint);
+    NotifyActiveStylesChanged();
 }
 
 bool RichEditor::HasSelection() const noexcept {
@@ -2599,6 +2716,7 @@ bool RichEditor::HandlePointerDown(PointerEvent& ev) {
     impl_->SetCaret(impl_->HitTestDoc(Vec2{ev.pos.x - origin.x, ev.pos.y - origin.y}), false);
     SetCapture();
     MarkDirty(kFlagPaint);
+    NotifyActiveStylesChanged();
     return true;
 }
 
@@ -2607,6 +2725,7 @@ bool RichEditor::HandlePointerMove(PointerEvent& ev) {
     const Vec2 origin = ContentOrigin();
     impl_->SetCaret(impl_->HitTestDoc(Vec2{ev.pos.x - origin.x, ev.pos.y - origin.y}), true);
     MarkDirty(kFlagPaint);
+    NotifyActiveStylesChanged();
     return true;
 }
 
@@ -2627,6 +2746,7 @@ bool RichEditor::HandleKeyDown(KeyEvent& ev) {
     const bool changed = (result == Impl::KeyResult::Content);
     MarkDirty(changed ? (kFlagLayout | kFlagPaint) : kFlagPaint);
     if (changed) RevealCaret();
+    NotifyActiveStylesChanged();
 
     ev.handled = true;
     return true;
@@ -2641,6 +2761,7 @@ bool RichEditor::HandleChar(KeyEvent& ev) {
     impl_->InsertTyped(String(1, ch));
     MarkDirty(kFlagLayout | kFlagPaint);
     RevealCaret();
+    NotifyActiveStylesChanged();
 
     ev.handled = true;
     return true;
@@ -2673,6 +2794,7 @@ bool RichEditor::HandleDropFiles(DropFilesEvent& ev) {
         RevealCaret();
         ev.handled = true;
     }
+    NotifyActiveStylesChanged();
     return inserted;
 }
 

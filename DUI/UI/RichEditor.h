@@ -21,9 +21,11 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 
 #include "UI/RichDoc.h"
+#include "UI/RichDocEditor.h"
 #include "UI/Panel.h"
 
 namespace dui {
@@ -50,6 +52,15 @@ public:
     bool ToggleItalic();
     bool ToggleUnderline();
     bool ToggleStrike();
+
+    // 当前光标处 / 当前选区的生效行内样式。无选区时取光标所在 run；
+    // 有选区时跨 run 合并：全开 = On、全关 = Off、不一致 = Mixed。
+    richtext::InlineStyleState ActiveInlineStyles() const;
+    bool IsInlineStyleActive(richtext::InlineStyle style) const;  // 仅 On 为 true
+
+    // 光标移动、选区变化、输入/删除、ToggleX、撤销重做、SetDoc 后触发；
+    // UI 线程同步回调。绑定后需要立刻同步时可自行调一次 ActiveInlineStyles()。
+    void OnActiveStylesChanged(std::function<void(richtext::InlineStyleState)> fn);
 
     // 排版后的文档总高（DIP，不含 padding）
     float ContentHeight() const noexcept;
@@ -87,6 +98,11 @@ private:
 
     Vec2 ContentOrigin() const;            // 内容盒左上（绝对 DIP）
     void RevealCaret();                    // 光标跟随：让外层 Scroller 滚到可见
+    void NotifyActiveStylesChanged();
+
+    std::function<void(richtext::InlineStyleState)> onActiveStylesChanged_;
+    richtext::InlineStyleState lastActiveStyles_{};
+    bool notifyingActiveStyles_ = false;
 
     bool editable_ = true;
 };

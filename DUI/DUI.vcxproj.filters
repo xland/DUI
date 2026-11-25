@@ -41,6 +41,9 @@
     <ClInclude Include="Core\Core.h">
       <Filter>头文件\Core</Filter>
     </ClInclude>
+    <ClInclude Include="Core\Screen.h">
+      <Filter>头文件\Core</Filter>
+    </ClInclude>
     <ClInclude Include="Core\Dispatcher.h">
       <Filter>头文件\Core</Filter>
     </ClInclude>
@@ -80,7 +83,19 @@
     <ClInclude Include="UI\TextBox.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
+    <ClInclude Include="UI\TextUtil.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="UI\ScrollBar.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
     <ClInclude Include="UI\Image.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="UI\Gif.h">
+      <Filter>头文件\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="UI\Animation.h">
       <Filter>头文件\UI</Filter>
     </ClInclude>
     <ClInclude Include="UI\Focus.h">
@@ -154,6 +169,9 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Core\Screen.cpp">
+      <Filter>源文件\Core</Filter>
+    </ClCompile>
     <ClCompile Include="Core\Dispatcher.cpp">
       <Filter>源文件\Core</Filter>
     </ClCompile>
@@ -191,6 +209,12 @@
       <Filter>源文件\UI</Filter>
     </ClCompile>
     <ClCompile Include="UI\Image.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\Gif.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="UI\Animation.cpp">
       <Filter>源文件\UI</Filter>
     </ClCompile>
     <ClCompile Include="UI\Focus.cpp">

@@ -17,6 +17,8 @@
 
 namespace dui {
 
+struct WindowOptions;   // App/Window.h 定义；Create 只传引用，避免 10+ 位置参数
+
 class NativeWindow {
 public:
     NativeWindow() = default;
@@ -27,19 +29,23 @@ public:
 
     // 创建（保持隐藏）→ 按窗口所在显示器 DPI 定最终尺寸 → OnNativeCreated。
     // 失败时返回 false 并填 error（无异常约定，ADR-007）。
-    // borderless = true → 无系统边框（WS_POPUP）+ DWM 阴影，业务自绘标题栏。
-    //   注意：无边框时 widthDip/heightDip 就是**整窗**尺寸（客户区覆盖全窗，
-    //   WM_NCCALCSIZE 处理），不再做 AdjustWindowRect 边框补偿。
-    // doubleClickMaximize = false → 无边框窗口双击拖动区不最大化（吃掉
-    //   WM_NCLBUTTONDBLCLK）；true = 系统原生行为（默认）。
-    bool Create(const wchar_t* title, float widthDip, float heightDip,
-                NativeWindowHost& host, String& error, bool borderless = false,
-                bool doubleClickMaximize = true);
+    // options 由 App/Window.h 定义；无边框时 width/height 就是**整窗**尺寸
+    // （客户区覆盖全窗，WM_NCCALCSIZE 处理），不做 AdjustWindowRect 补偿。
+    bool Create(const WindowOptions& options, NativeWindowHost& host, String& error);
 
     void Show();
+    void Hide();
+    bool IsVisible() const noexcept;
+    void Activate();              // SetForegroundWindow（受前台锁限制）
     // 把窗口移到所在显示器工作区正中（尺寸不变）。显示前调用，构建过程仍不可见。
     // 用 MonitorFromWindow → MONITORINFO.rcWork，跨屏 / 任务栏 / DPI 都按物理像素算。
     void CenterOnScreen();
+
+    // 窗口矩形（整窗，物理像素、虚拟桌面全局坐标）——与 Screen 的 Px 口径一致。
+    Rect  BoundsPx() const;
+    void  SetBoundsPx(const Rect& r);      // 一次 SetWindowPos 完成移动 + 改尺寸
+    void  MoveToPx(float x, float y);      // 只移动
+    void  Resize(float wDip, float hDip);  // 只改尺寸（DIP 口径，与 Style 一致）
     bool Valid() const noexcept { return hwnd_ != nullptr; }
     HWND Handle() const noexcept { return hwnd_; }
     float Scale() const noexcept { return scale_; }
@@ -49,6 +55,15 @@ public:
     void MaximizeOrRestore();       // 最大化 / 从最大化还原
     void RequestClose();            // 请求关闭（走 WM_CLOSE → 业务可拦截）
     bool IsMaximized() const;       // 当前是否最大化
+
+    // 任务栏图标 / 标题栏闪烁（FlashWindowEx）。count=0 → 持续到窗口获得焦点；
+    // intervalMs=0 → 系统默认频率。on=false 立即停止。hwnd 为空时 no-op。
+    void FlashFrame(bool on, unsigned count = 0, unsigned intervalMs = 0);
+
+    // 运行期窗口形态切换（hwnd 为空时安全 no-op）
+    void SetTopmost(bool on);
+    void SetMouseThrough(bool on);
+    void SetExcludeFromCapture(bool on);
 
     // 窗口定时器（上层按需启停；节拍经 NativeWindowHost::OnTimer 上抛）
     void StartTimer(uintptr_t id, unsigned ms);

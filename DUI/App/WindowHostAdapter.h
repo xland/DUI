@@ -57,6 +57,10 @@ public:
     // 取"应清焦点"标志（消费一次）：最小化不算失活，保留焦点
     bool TakeDeactivate();
 
+    // 延迟删除的元素即将销毁：清掉本 adapter 里所有指向它（或其子树节点）
+    // 的瞬时指针，避免下一帧沿野指针走 Parent()。由 App 的删除前 hook 调用。
+    void ClearPointerStateFor(Element* dying);
+
 private:
     void RequestFrame() noexcept;
     // 框架默认的非客户区命中（仅无边框窗口有效）

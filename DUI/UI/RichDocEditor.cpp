@@ -53,6 +53,16 @@ RunStyle StyleAt(const Block& block, uint32_t offset) {
     return block.runs.back().style;
 }
 
+bool HasInlineStyle(const RunStyle& style, InlineStyle inlineStyle) noexcept {
+    switch (inlineStyle) {
+    case InlineStyle::Bold:      return style.weight >= 600u;
+    case InlineStyle::Italic:    return style.italic;
+    case InlineStyle::Underline: return style.underline;
+    case InlineStyle::Strike:    return style.strike;
+    }
+    return false;
+}
+
 bool SameRunStyle(const RunStyle& a, const RunStyle& b) {
     return a.family == b.family && a.fontSize == b.fontSize && a.weight == b.weight &&
            a.italic == b.italic && a.underline == b.underline && a.strike == b.strike &&

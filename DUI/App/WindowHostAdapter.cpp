@@ -348,6 +348,22 @@ bool WindowHostAdapter::TakeDeactivate() {
     return !native_.IsMinimized();
 }
 
+void WindowHostAdapter::ClearPointerStateFor(Element* dying) {
+    // p 指向 dying 子树中的节点？从 p 沿 Parent 链上溯是否碰到 dying。
+    auto inDyingTree = [dying](const Element* p) noexcept {
+        for (; p != nullptr; p = p->Parent()) {
+            if (p == dying) return true;
+        }
+        return false;
+    };
+    if (inDyingTree(hover_))    hover_ = nullptr;
+    if (inDyingTree(pressed_))  pressed_ = nullptr;
+    if (inDyingTree(dragging_)) {
+        dragging_->EndBarDrag();   // 结束滑块拖拽态（此刻元素还活着）
+        dragging_ = nullptr;
+    }
+}
+
 void WindowHostAdapter::RequestFrame() noexcept {
     if (framePending_ != nullptr) *framePending_ = true;
 }

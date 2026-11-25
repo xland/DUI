@@ -19,8 +19,14 @@ Element::~Element() {
     for (Element* c : children_) delete c;
 }
 
+void Element::SetWindowTree(Window* w) noexcept {
+    window_ = w;
+    for (Element* c : children_) c->SetWindowTree(w);
+}
+
 void Element::AttachChild(Element* child) {
     child->parent_ = this;
+    child->SetWindowTree(window_);   // 继承所属窗口（含子树）
     children_.push_back(child);
     MarkDirty(kFlagLayout);   // 子项集合变化 → 重排
 }
@@ -30,6 +36,7 @@ std::vector<Element*>& DeferredDeleted() {
     static std::vector<Element*> q;
     return q;
 }
+std::function<void(Element*)> g_beforeDeleted;
 }
 
 void Element::RemoveChild(Element* child) {
@@ -38,14 +45,25 @@ void Element::RemoveChild(Element* child) {
     if (it == children_.end()) return;
     children_.erase(it);
     child->parent_ = nullptr;
+    child->SetWindowTree(nullptr);   // 脱离窗口树：子树里的 GetWindow() 一并失效
     MarkDirty(kFlagLayout);
     DeferredDeleted().push_back(child);   // 帧末再 delete，避开事件栈
 }
 
 void Element::FlushDeferredDeleted() {
     auto& q = DeferredDeleted();
-    for (Element* e : q) delete e;
+    for (Element* e : q) {
+        // delete 前通知 App 层清掉悬空指针（hover_/pressed_/dragging_）：
+        // 此刻元素仍活着，且已脱离树（RemoveChild 里 parent_=nullptr），
+        // hook 用 IsWithin 判断子树归属不受影响。
+        if (g_beforeDeleted) g_beforeDeleted(e);
+        delete e;
+    }
     q.clear();
+}
+
+void Element::SetBeforeDeletedHook(std::function<void(Element*)> hook) {
+    g_beforeDeleted = std::move(hook);
 }
 
 void Element::SetOverride(const StyleValue& nv) {

@@ -12,7 +12,9 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include <windows.h>      // 公共 API 直接使用 HWND 等 Win32 类型
@@ -79,6 +81,23 @@ struct WindowOptions {
     // 仅对 app-region: drag 的区域有意义 —— 整窗 drag 的窗口（如圆形小挂件）
     // 双击任意位置都最大化往往不是想要的。默认 true（与原生窗口一致）。
     bool doubleClickMaximize = true;
+
+    // ---- 窗口层级 / 任务栏 / 输入 / 截屏（创建期声明，业务不接触 Win32 细节）----
+    // true → 置于所有非置顶窗口之上（HWND_TOPMOST）。运行期可用 SetTopmost 切换。
+    bool topmost = false;
+    // true → 不进任务栏 / Alt-Tab（WS_EX_TOOLWINDOW）。与 frameless 的
+    // WS_EX_APPWINDOW 互斥：设此项时框架不再补 APPWINDOW。仅创建期有效。
+    bool toolWindow = false;
+    // true → 窗口不抢输入焦点（WS_EX_NOACTIVATE）。适合悬浮挂件 / 通知类窗口。
+    // 注意：此类窗口不接受键盘输入，除非业务主动 SetForegroundWindow。仅创建期有效。
+    bool noActivate = false;
+    // true → 鼠标事件穿透到下层窗口（WS_EX_TRANSPARENT）。
+    // 运行期可用 SetMouseThrough 切换。
+    bool mouseThrough = false;
+    // true → 阻止屏幕捕获 / 录制窗口内容（WDA_EXCLUDEFROMCAPTURE，Win10 2004+）。
+    // 旧系统 API 返回失败，框架静默忽略，窗口其余行为不受影响。
+    // 运行期可用 SetExcludeFromCapture 切换。
+    bool excludeFromCapture = false;
 };
 
 class Window {
@@ -99,6 +118,39 @@ public:
     void MaximizeOrRestore();     // 最大化 / 从最大化还原
     void Close();                 // 请求关闭（走 WM_CLOSE → OnClosing 可拦截）
     bool IsMaximized() const;     // 当前是否最大化
+
+    // ---- 可见性与几何 ----
+    void Show();
+    void Hide();                  // 隐藏：框架停止为该窗口渲染（省 CPU）
+    bool IsVisible() const noexcept;
+    void Activate();              // 请求前台焦点（受 Windows 前台锁限制，可能失败）
+
+    // 窗口矩形：整窗、**物理像素**、虚拟桌面全局坐标（与 Screen 的 Px 口径一致；
+    // 多屏不同 DPI 时 DIP 全局坐标无统一坐标系，故这里不用 DIP）。
+    Rect  BoundsPx() const;
+    void  SetBoundsPx(Rect r);    // 移动 + 改尺寸（一次 SetWindowPos）
+    void  MoveToPx(float xPx, float yPx);  // 只移动，尺寸不变
+    void  Resize(float wDip, float hDip);  // 只改尺寸，位置不变（尺寸 DIP，与 Style 一致）
+    void  Center();               // 移到所在屏工作区正中（尺寸不变）
+
+    // 运行期切换（对应 WindowOptions 同名配置；native 未建时安全 no-op）
+    void SetTopmost(bool on);              // 置顶 / 取消置顶
+    void SetMouseThrough(bool on);         // 鼠标穿透 / 恢复接收
+    void SetExcludeFromCapture(bool on);   // 防截屏 / 恢复（Win10 2004+ 生效）
+
+    // 闪烁任务栏图标 / 标题栏（后台任务完成、消息到达时唤起注意）。
+    // on=true 开始闪：count=0 持续到窗口获得焦点，count>0 闪 N 次；
+    // intervalMs=0 用系统默认频率。on=false 立即停止。窗口销毁自动清除状态。
+    void FlashFrame(bool on, unsigned count = 0, unsigned intervalMs = 0);
+
+    // ---- 窗口定时器（绑定本窗口，随窗口销毁自动失效）----
+    // 底层 ::SetTimer(hwnd, id, ms, ...)：WM_TIMER 进本窗口过程，HWND 销毁时
+    // 系统自动撤销，回调不会打到已销毁窗口（App::SetTimer 无此保障）。
+    // ms 夹紧到 >=1；返回 id（>1）传给 KillTimer 取消；每次调用分配新 id。
+    // 要一次性触发就在 fn 里 KillTimer(自身 id)。回调在 UI 线程执行，勿做重活。
+    // native 尚未建好（OnCreate 之前）时返回 0。
+    unsigned SetTimer(unsigned ms, std::function<void()> fn);
+    void     KillTimer(unsigned id) noexcept;
 
     // 客户区尺寸（DIP）：自绘边框热区判定用（OnNcHitTest）
     Vec2 ClientSizeDip() const;
@@ -171,6 +223,10 @@ private:
     std::unique_ptr<Panel> root_;
     uintptr_t tickTimer_ = 0;          // UI 统一节拍定时器（0 = 未启动）
     unsigned  tickPeriodMs_ = 0;       // 当前周期（变化时才重设 SetTimer）
+    // 业务定时器：id ≥ 2（1 留给 tickTimer_）。HWND 销毁系统自动撤 timer，
+    // 但 Window 对象可能先于 HWND 析构，故析构时主动停表并释放闭包。
+    unsigned nextTimerId_ = 2;
+    std::unordered_map<unsigned, std::function<void()>> timers_;
     // 系统对话框弹出期间 > 0：宿主失活不按「切到别的应用」清焦点（17-Dialogs §6.2）
     int       dialogDepth_ = 0;
 

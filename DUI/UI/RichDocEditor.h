@@ -25,6 +25,21 @@ namespace richtext {
 // 行内样式种类（工具栏切换用）；粗体映射 RunStyle::weight = 700。
 enum class InlineStyle { Bold, Italic, Underline, Strike };
 
+// 光标 / 选区处的样式状态：Mixed 表示选区跨越的 run 取值不一致。
+enum class StyleState : uint8_t { Off, On, Mixed };
+
+struct InlineStyleState {
+    StyleState bold = StyleState::Off;
+    StyleState italic = StyleState::Off;
+    StyleState underline = StyleState::Off;
+    StyleState strike = StyleState::Off;
+
+    bool operator==(const InlineStyleState&) const noexcept = default;
+};
+
+// run 是否启用了指定行内样式（粗体阈值与 ToggleStyle 一致：weight >= 600）。
+bool HasInlineStyle(const RunStyle& style, InlineStyle inlineStyle) noexcept;
+
 // 把段内 [start, end) 的某个行内样式统一设为 on：相交 run 按区间切成
 // head / 命中 / tail 三段，只改命中段的样式字段，最后合并相邻同样式 run。
 // 代码块（内容在 block.code，无行内样式）直接忽略。

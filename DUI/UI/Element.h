@@ -26,6 +26,8 @@ namespace graphics {
 class Painter;
 }
 
+class Window;   // App 层；Element 只存裸指针，不反向 include
+
 // 元素类别（收集时区分文本/容器/滚动容器/图像；/GR- 下不用 RTTI，用虚函数判定）
 enum class Kind : uint8_t { Node, Text, Scroller, Image };
 
@@ -425,6 +427,9 @@ public:
     // 树结构
     Element* Parent() const noexcept { return parent_; }
     const std::vector<Element*>& Children() const noexcept { return children_; }
+    // 所属窗口（根面板由 Window 构造时挂上；脱离窗口树后为 nullptr）。
+    // 未加入任何窗口树的游离元素返回 nullptr。
+    Window* GetWindow() const noexcept { return window_; }
     // 布局结果（相对父元素，DIP；RunLayout 写入）
     const Rect& Bounds() const noexcept { return bounds_; }
     // Measure 结果（外边距盒 = 元素盒 + margin）：Grid / 自定义布局读子项占位用
@@ -505,6 +510,10 @@ public:
     void RemoveChild(Element* child);
     /// 冲刷延迟删除队列（每帧渲染前由 App 调用；一般无需手动调用）。
     static void FlushDeferredDeleted();
+    /// 注册"元素即将被延迟删除"通知（delete 前调用，供 App 层清理指向它的
+    /// 悬空指针：hover_/pressed_/dragging_）。全局唯一，后注册覆盖先注册；
+    /// 传空 function 注销。由 App 在 Run() 内注册/注销，业务无需调用。
+    static void SetBeforeDeletedHook(std::function<void(Element*)> hook);
 
 protected:
     void AttachChild(Element* child);
@@ -549,6 +558,8 @@ private:
     bool hidden_ = false;      // visible: false（布局期写；命中 / 绘制读）
 
 private:
+    friend class Window;   // 构造根面板时调用 SetWindowTree
+
     // 布局 / 解析 / 事件实现（Layout.cpp、StyleResolve.cpp、Event.cpp）
     friend bool TryResolveElement(const Element* e, Prop p, StyleValue& out);
     friend bool SubtreeLayoutDirty(const Element* e);
@@ -564,7 +575,10 @@ private:
         uint32_t times) noexcept;
 
     Element*                   parent_ = nullptr;
+    Window*                    window_ = nullptr;   // 所属窗口，AttachChild 继承 / RemoveChild 清空
     std::vector<Element*>      children_;     // 父持有子，析构递归删除
+
+    void SetWindowTree(Window* w) noexcept;  // 自身+整棵子树统一挂/摘窗口
     std::vector<std::pair<State, Style>> stateVariants_;   // 状态变体（级联第 2 层）
     std::vector<detail::AnimSlot> anims_;    // 活动补间（完成即移除，终值留在 animated_）
     Rect                       bounds_;       // Arrange 结果（相对父，DIP）
